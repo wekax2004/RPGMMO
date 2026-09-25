@@ -1,0 +1,21 @@
+{
+  "name": "tibia_mmo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-based Tibia-inspired MMORPG prototype",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "npm --prefix server start",
+    "test": "node --test tests/unit/*.test.js",
+    "test:baseline": "node tests/e2e_runner.js --suite=baseline",
+    "test:acceptance": "node tests/e2e_runner.js --suite=acceptance",
+    "test:browser": "node tests/e2e_runner.js --suite=browser",
+    "test:bots": "node tests/e2e_runner.js --suite=bots",
+    "test:all": "npm test && npm run test:baseline && npm run test:acceptance"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}

@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Tibia MMO - V2</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; margin: 0; padding: 8px; overflow: hidden; }
+        canvas { border: 2px solid #555; background: #2a2a3e; cursor: crosshair; }
+        #game-wrapper { display: flex; justify-content: center; align-items: flex-start; gap: 12px; margin-top: 8px; }
+        
+        #left-panel, #right-panel { width: 280px; background: #16213e; padding: 12px; border: 1px solid #444; border-radius: 5px; text-align: left; }
+        
+        .bar-container { background: #444; width: 100%; height: 20px; border-radius: 3px; margin-bottom: 6px; position: relative; }
+        .bar-fill { height: 100%; border-radius: 3px; transition: width 0.2s; }
+        .hp-fill { background: #e53935; }
+        .mana-fill { background: #1e88e5; }
+        .xp-fill { background: #fdd835; }
+        .bar-text { position: absolute; width: 100%; text-align: center; top: 2px; font-size: 12px; font-weight: bold; text-shadow: 1px 1px 0 #000; }
+        
+        .btn-spell { background: #2a2a3e; color: #fff; border: 1px solid #555; width: 100%; padding: 8px; margin-bottom: 6px; cursor: pointer; border-radius: 3px; font-weight: bold; }
+        .btn-spell:hover { background: #3f3f5a; }
+        .btn-skill { background: linear-gradient(to bottom, #d84315, #bf360c); }
+        .btn-item { font-size: 11px; padding: 6px; }
+        
+        .panel-box { background: #111a2e; padding: 8px; border-radius: 4px; margin-top: 10px; border: 1px solid #334; }
+        .panel-box h4 { margin: 0 0 6px 0; font-size: 13px; color: #ffcc44; border-bottom: 1px solid #334; padding-bottom: 4px; }
+        
+        .inv-item { font-size: 11px; padding: 4px; background: #223; margin-bottom: 2px; border-radius: 2px; border: 1px solid #445; }
+        
+        #log-container { background: #0a0f1a; border: 1px solid #334; height: 120px; padding: 6px; font-size: 11px; overflow-y: auto; text-align: left; margin-bottom: 6px; border-radius: 4px; display: flex; flex-direction: column; }
+        #chat-input { width: 100%; background: #111; color: #fff; border: 1px solid #444; padding: 6px; border-radius: 4px; outline: none; }
+        #chat-input:focus { border-color: #ffaa00; }
+        
+        .modal { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #1e1e1e; padding: 20px; border: 2px solid #ffcc44; border-radius: 8px; z-index: 10; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.8); }
+        .class-card { display: inline-block; width: 120px; padding: 15px; margin: 10px; background: #333; cursor: pointer; border: 2px solid #555; border-radius: 5px; transition: transform 0.2s, border-color 0.2s; }
+        .class-card:hover { transform: translateY(-5px); border-color: #ffcc44; }
+        #overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 5; }
+    </style>
+</head>
+<body>
+    <div id="overlay"></div>
+    
+    <div id="class-modal" class="modal">
+        <h2 style="color: #ffcc44; margin-top: 0;">Choose Your Path</h2>
+        <input type="text" id="char-name" placeholder="Character Name" style="width: 80%; padding: 8px; margin-bottom: 10px; background: #222; color: #fff; border: 1px solid #555; text-align: center; font-size: 16px;"><br>
+        <label style="font-size: 14px; color: #ff8888;"><input type="checkbox" id="warmode"> Enable Warmode (PvP on, +20% XP)</label><br>
+        <div class="class-card" onclick="login('warrior')"><h3 style="color:#ffaa00; margin:0">Warrior</h3><p style="font-size:11px; color:#aaa">High HP, Melee Cleave</p></div>
+        <div class="class-card" onclick="login('mage')"><h3 style="color:#00aaff; margin:0">Mage</h3><p style="font-size:11px; color:#aaa">High Mana, Ranged Fireball</p></div>
+        <div class="class-card" onclick="login('ranger')"><h3 style="color:#55ff55; margin:0">Ranger</h3><p style="font-size:11px; color:#aaa">Balanced, Ranged Snipe</p></div>
+        <div class='class-card' onclick='login("healer")'><h3 style='color:#44ff88; margin:0'>Healer</h3><p style='font-size:11px; color:#aaa'>High Mana, Heal Spells</p></div>
+    </div>
+
+    <div id="subclass-modal" class="modal">
+        <h2 style="color: #ffcc44; margin-top: 0;">Choose Subclass</h2>
+        <div id="subclass-options"></div>
+    </div>
+
+    <div id="trade-modal" class="modal" style="width:400px; text-align:left;">
+        <h2 style="color: #ffcc44; margin-top: 0; text-align:center;">Trade</h2>
+        <div id="trade-request-actions" style="display:none; background:#333; padding:8px; margin-bottom:10px; text-align:center;">
+            <span id="trade-request-text" style="font-size:12px;"></span>
+            <div style="margin-top:8px; display:flex; gap:8px; justify-content:center;">
+                <button onclick="acceptTradeRequest()" style="background:#44aa44; color:white; border:none; padding:5px 10px; cursor:pointer">Accept</button>
+                <button onclick="declineTradeRequest()" style="background:#aa4444; color:white; border:none; padding:5px 10px; cursor:pointer">Decline</button>
+            </div>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <div style="flex:1; background:#222; padding:10px; border:1px solid #444;">
+                <h3 style="margin-top:0; font-size:14px;">Your Offer</h3>
+                <div id="trade-my-offer" style="min-height:50px;"></div>
+                <div style="margin-top:10px;">
+                    Gold: <input type="number" id="trade-my-gold" value="0" style="width:80px; background:#111; color:#fff; border:1px solid #444;" onchange="updateTradeGold()">
+                </div>
+            </div>
+            <div style="flex:1; background:#222; padding:10px; border:1px solid #444;">
+                <h3 style="margin-top:0; font-size:14px;">Their Offer</h3>
+                <div id="trade-their-offer" style="min-height:50px;"></div>
+                <div id="trade-their-gold" style="margin-top:10px;">Gold: 0</div>
+            </div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:15px;">
+            <button id="trade-lock-btn" onclick="lockTrade()" style="flex:1; background:#4466aa; color:white; border:none; padding:8px; cursor:pointer">Lock Offer</button>
+            <button id="trade-confirm-btn" onclick="confirmTrade()" style="flex:1; background:#44aa44; color:white; border:none; padding:8px; cursor:pointer">Confirm</button>
+            <button onclick="cancelTrade()" style="flex:1; background:#aa4444; color:white; border:none; padding:8px; cursor:pointer">Cancel</button>
+        </div>
+    </div>
+
+    <div id="npc-dialog" class="modal">
+        <h2 id="dialog-npc-name" style="margin-top:0">NPC</h2>
+        <div id="dialog-content" style="margin-bottom: 15px"></div>
+        <button onclick="closeNpcDialog()" style="background:#884444; color:white; border:none; padding:5px 15px; cursor:pointer">Close</button>
+    </div>
+
+    <div id="shop-modal" class="modal" style="width:400px; text-align:left;">
+        <h2 style="margin-top:0; color:#ffcc44; text-align:center;">🛍️ Merchant Shop</h2>
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+            <span>Your Gold: <strong id="shop-player-gold" style="color:#ffd700;">0</strong></span>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <div style="flex:1; background:#222; padding:10px; height:200px; overflow-y:auto; border:1px solid #444;">
+                <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #444;">Buy</h3>
+                <div id="shop-buy-list"></div>
+            </div>
+            <div style="flex:1; background:#222; padding:10px; height:200px; overflow-y:auto; border:1px solid #444;">
+                <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #444;">Sell</h3>
+                <div id="shop-sell-list"></div>
+            </div>
+        </div>
+        <button onclick="closeShop()" style="margin-top:15px; background:#884444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%;">Leave Shop</button>
+    </div>
+
+    <h2>⚔️ Tibia MMO - V2</h2>
+    <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">Move: WASD | Attack: Click | Talk/Shop: 'E' or Click | Spells: '1','2' | Potions: '3','4'</div>
+    
+    <div id="game-wrapper">
+        <div id="left-panel">
+            <h3 id="player-level-title" style="margin-top:0">⚔️ Level 1 Player</h3>
+            <div class="bar-container"><div id="hp-bar" class="bar-fill hp-fill" style="width:100%"></div><div id="hp-text" class="bar-text">HP: 100/100</div></div>
+            <div class="bar-container"><div id="mana-bar" class="bar-fill mana-fill" style="width:100%"></div><div id="mana-text" class="bar-text">Mana: 50/50</div></div>
+            <div class="bar-container"><div id="xp-bar" class="bar-fill xp-fill" style="width:0%"></div><div id="xp-text" class="bar-text">XP: 0/100</div></div>
+            
+            <div style="margin: 8px 0;">💰 <span id="gold-val" style="color:#ffd700; font-weight:bold;">0</span> Gold</div>
+            <div id="status-val" style="color:#aaa; font-size:12px; margin-bottom:8px;">Status: Normal</div>
+            
+            <button class="btn-spell" onclick="castPurify()">✨ Purify (Press '1') - 20 MP</button>
+            <button class="btn-spell btn-skill" id="btn-skill" onclick="castSkill()">⚔️ Class Skill (Press '2') - 30 MP</button>
+            <button class="btn-spell" id="btn-evolve" onclick="requestEvolve()" disabled>✨ Evolve (Level 10)</button>
+            <div style="display:flex; gap:4px;">
+                <button class="btn-spell btn-item" onclick="useItem('Health Potion')">❤️ HP Potion ('3')</button>
+                <button class="btn-spell btn-item" onclick="useItem('Mana Potion')" style="background: linear-gradient(to bottom, #4444aa, #222288);">🔵 MP Potion ('4')</button>
+            </div>
+            
+            <div class="panel-box">
+                <h4>👕 Equipment</h4>
+                <div id="equip-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+                    <div id="equip-helmet" class="inv-item" onclick="unequip('helmet')" style="cursor:pointer; background:#334">Helmet: None</div>
+                    <div id="equip-amulet" class="inv-item" onclick="unequip('amulet')" style="cursor:pointer; background:#433">Amulet: None</div>
+                    <div id="equip-weapon" class="inv-item" onclick="unequip('weapon')" style="cursor:pointer; background:#422">Weapon: None</div>
+                    <div id="equip-shield" class="inv-item" onclick="unequip('shield')" style="cursor:pointer; background:#242">Shield: None</div>
+                    <div id="equip-armor" class="inv-item" onclick="unequip('armor')" style="cursor:pointer; background:#224">Armor: None</div>
+                    <div id="equip-legs" class="inv-item" onclick="unequip('legs')" style="cursor:pointer; background:#333">Legs: None</div>
+                    <div id="equip-boots" class="inv-item" onclick="unequip('boots')" style="cursor:pointer; background:#443; grid-column: span 2; text-align:center;">Boots: None</div>
+                </div>
+            </div>
+            
+            <div class="panel-box">
+                <h4>🎒 Inventory</h4>
+                <div id="inventory-list"><em style="color:#666">Empty</em></div>
+            </div>
+        </div>
+
+        <div>
+            <canvas id="gameCanvas" width="640" height="480"></canvas>
+        </div>
+        
+        <div id="right-panel">
+            <div class="panel-box" style="margin-top:0">
+                <h4>📜 Quest Journal</h4>
+                <div id="quest-list"><em style="color:#666;font-size:11px">No active quests. Talk to NPCs!</em></div>
+            </div>
+            <div class="panel-box">
+                <h4>🎉 Party</h4>
+                <div id="party-list"><em style="color:#666">No Party</em></div>
+            </div>
+            <div style="margin-top:10px">
+                <div id="log-container"></div>
+                <input type="text" id="chat-input" placeholder="Press Enter to chat..." />
+            </div>
+        </div>
+    </div>
+<script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const chatInput = document.getElementById("chat-input");
+
+        const socketProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(socketProtocol + "//" + window.location.host);
+
+        const MAP_W = 3200, MAP_H = 3200;
+        const SCREEN_W = 640, SCREEN_H = 480;
+
+        let myId = null, myName = "Player";
+        let player = { x: 320, y: 320, classType: "warrior", warmode: false };
+        let myLevel = 1, speedBonus = 0;
+        
+        let otherPlayers = {};
+        let mobs = {};
+        let chests = {};
+        let gatherNodes = {};
+        let npcsLocal = {};
+        
+        let obstacles = [];
+        let fcts = [];
+        let currentTargetId = null;
+        let cameraX = 0, cameraY = 0;
+        let isDay = true;
+        
+        let myGold = 0;
+        let myInventoryData = [];
+        let bossAoeEffects = [];
+        let activeNpcId = null;
+        let activeTradeId = null;
+        let tradeLocked = false;
+        let pendingTradeRequest = null;
+        let pendingPartyInvite = null;
+
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>'"]/g, character => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+            }[character]));
+        }
+
+        function addLog(msg) {
+            const c = document.getElementById("log-container");
+            const d = document.createElement("div");
+            d.innerText = msg;
+            if(msg.includes("DIED") || msg.includes("slain")) d.style.color = "#ff4444";
+            else if(msg.includes("Gold") || msg.includes("XP")) d.style.color = "#ffd700";
+            else if(msg.includes("QUEST")) d.style.color = "#ffcc44";
+            else if(msg.includes("Equipped")) d.style.color = "#aaffaa";
+            else if(msg.startsWith("[Party]")) d.style.color = "#00ff00";
+            else if(msg.startsWith("[Zone]")) d.style.color = "#00ffff";
+            c.appendChild(d);
+            c.scrollTop = c.scrollHeight;
+        }
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.action === "login_error") {
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("class-modal").style.display = "block";
+                addLog("❌ " + (data.message || "Unable to log in."));
+            }
+            else if (data.action === "show_class_select") {
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("class-modal").style.display = "block";
+            }
+            else if (data.action === "show_subclass_select") {
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("subclass-modal").style.display = "block";
+                const options = data.subclasses || data.options || [];
+                let html = "";
+                options.forEach(opt => {
+                    const id = typeof opt === "string" ? opt : opt.id;
+                    const name = typeof opt === "string" ? opt : opt.name;
+                    const description = typeof opt === "string" ? "" : (opt.description || "");
+                    html += "<div id='subclass-card-" + id + "' class='class-card subclass-card' onclick='selectSubclass(\"" + id + "\")'><h3 style='color:#00aaff; margin:0'>" + name + "</h3><p style='font-size:10px;color:#aaa'>" + description + "</p></div>";
+                });
+                document.getElementById("subclass-options").innerHTML = html;
+            }
+            else if (data.action === "evolution_complete") {
+                document.getElementById("overlay").style.display = "none";
+                document.getElementById("subclass-modal").style.display = "none";
+            }
+            else if (data.action === "boss_aoe" || data.action === "aoe_warning" || data.action === "aoe_impact") {
+                handleBossAoe(data);
+            }
+            else if (data.action === "trade_requested") {
+                pendingTradeRequest = {
+                    requestId: data.requestId || data.tradeRequestId || null,
+                    fromPlayer: data.fromPlayer || data.from || null,
+                    fromName: data.fromName || data.from || "A player"
+                };
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("trade-modal").style.display = "block";
+                document.getElementById("trade-request-actions").style.display = "block";
+                document.getElementById("trade-request-text").innerText = pendingTradeRequest.fromName + " requested a trade.";
+                addLog("📨 Trade request received from " + pendingTradeRequest.fromName + ".");
+            }
+            else if (data.action === "trade_open") {
+                activeTradeId = data.tradeId || (data.trade && data.trade.tradeId) || null;
+                tradeLocked = false;
+                pendingTradeRequest = null;
+                document.getElementById("trade-lock-btn").disabled = false;
+                document.getElementById("trade-confirm-btn").disabled = true;
+                document.getElementById("trade-request-actions").style.display = "none";
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("trade-modal").style.display = "block";
+                document.getElementById("trade-my-gold").value = 0;
+                document.getElementById("trade-my-offer").innerHTML = "";
+                document.getElementById("trade-their-offer").innerHTML = "";
+                document.getElementById("trade-their-gold").innerText = "Gold: 0";
+            }
+            else if (data.action === "trade_sync" || data.action === "trade_update") {
+                handleTradeSync(data);
+            }
+            else if (data.action === "trade_locked") {
+                tradeLocked = true;
+                handleTradeSync(data);
+                addLog("🔒 Both players locked the trade. Confirm to complete it.");
+            }
+            else if (data.action === "trade_complete") {
+                addLog("✅ Trade completed.");
+            }
+            else if (data.action === "trade_close") {
+                activeTradeId = null;
+                tradeLocked = false;
+                pendingTradeRequest = null;
+                document.getElementById("trade-request-actions").style.display = "none";
+                document.getElementById("trade-lock-btn").disabled = false;
+                document.getElementById("trade-confirm-btn").disabled = false;
+                document.getElementById("overlay").style.display = "none";
+                document.getElementById("trade-modal").style.display = "none";
+            }
+            else if (data.action === "party_update" || data.action === "party_sync") {
+                if (data.party !== null && data.members && data.members.length > 0) pendingPartyInvite = null;
+                renderParty(data.party || data);
+            }
+            else if (data.action === "party_invited" || data.action === "party_invite") {
+                pendingPartyInvite = { partyId: data.partyId || null, inviter: data.inviter || data.from || "A player" };
+                addLog("📨 " + pendingPartyInvite.inviter + " invited you to a party.");
+                renderParty({ members: [] });
+            }
+            else if (data.action === "map_data") { obstacles = data.obstacles; }
+            else if (data.action === "time_sync") { isDay = data.isDay; }
+            else if (data.action === "fct") { fcts.push({ text: data.text, x: data.x, y: data.y, color: data.color, life: 1.0 }); }
+            else if (data.action === "your_id") { myId = data.id; myName = data.name; }
+            else if (data.action === "force_position") { player.x = data.x; player.y = data.y; }
+            else if (data.action === "mob_update") {
+                if (data.alive) mobs[data.id] = { x: data.x, y: data.y, id: data.id, hp: data.hp, maxHp: data.maxHp, isElite: data.isElite, isBoss: data.isBoss, name: data.name, type: data.type };
+                else { delete mobs[data.id]; if (currentTargetId === data.id) currentTargetId = null; }
+            }
+            else if (data.action === "mob_move") {
+                if (mobs[data.id]) { mobs[data.id].x = data.x; mobs[data.id].y = data.y; }
+            }
+            else if (data.action === "chest_update") { if (data.active) chests[data.id] = { x: data.x, y: data.y }; else delete chests[data.id]; }
+            else if (data.action === "npc_sync") { npcsLocal[data.id] = { x: data.x, y: data.y, name: data.name, id: data.id }; }
+            else if (data.action === "node_sync") { gatherNodes[data.id] = { x: data.x, y: data.y, name: data.name, color: data.color, symbol: data.symbol }; }
+            else if (data.action === "node_remove") { delete gatherNodes[data.id]; }
+            else if (data.action === "players_sync") {
+                otherPlayers = {}; 
+                data.players.forEach(p => { 
+                    if (p.id !== myId) otherPlayers[p.id] = { x: p.x, y: p.y, classType: p.classType, name: p.name, warmode: p.warmode }; 
+                    else { player.x = p.x; player.y = p.y; player.classType = p.classType; player.warmode = p.warmode; }
+                });
+            }
+            else if (data.action === "player_left") { delete otherPlayers[data.id]; }
+            else if (data.action === "status") {
+                player.classType = data.classType;
+                myLevel = data.level;
+                const evolveButton = document.getElementById("btn-evolve");
+                if (evolveButton) evolveButton.disabled = Boolean(data.subclass) || data.level < 10;
+                let subClsStr = data.subclass ? " - " + data.subclass.charAt(0).toUpperCase() + data.subclass.slice(1) : "";
+                document.getElementById("player-level-title").innerText = "Lvl " + data.level + " " + data.classType.charAt(0).toUpperCase() + data.classType.slice(1) + subClsStr + " (" + myName + ")";
+                document.getElementById("hp-bar").style.width = (data.hp/data.maxHp*100)+"%"; document.getElementById("hp-text").innerText = "HP: "+data.hp+"/"+data.maxHp;
+                document.getElementById("mana-bar").style.width = (data.mana/data.maxMana*100)+"%"; document.getElementById("mana-text").innerText = "Mana: "+data.mana+"/"+data.maxMana;
+                document.getElementById("xp-bar").style.width = (data.xp/data.nextXp*100)+"%"; document.getElementById("xp-text").innerText = "XP: "+data.xp+"/"+data.nextXp;
+                
+                myGold = data.gold;
+                document.getElementById("gold-val").innerText = myGold;
+                
+                const btnSkill = document.getElementById("btn-skill");
+                if(data.classType==="warrior") btnSkill.innerText = "Cleave (Press 2)";
+                else if(data.classType==="mage") btnSkill.innerText = "Fireball (Press 2)";
+                else if(data.classType==="ranger") btnSkill.innerText = "Snipe (Press 2)";
+                else if(data.classType==="healer") btnSkill.innerText = "💚 Heal (Press 2)";
+                
+                if (data.equipment) {
+                    document.getElementById("equip-helmet").innerText = "Helmet: " + (data.equipment.helmet || "None");
+                    document.getElementById("equip-amulet").innerText = "Amulet: " + (data.equipment.amulet || "None");
+                    document.getElementById("equip-weapon").innerText = "Weapon: " + (data.equipment.weapon || "None");
+                    document.getElementById("equip-shield").innerText = "Shield: " + (data.equipment.shield || "None");
+                    document.getElementById("equip-armor").innerText = "Armor: " + (data.equipment.armor || "None");
+                    document.getElementById("equip-legs").innerText = "Legs: " + (data.equipment.legs || "None");
+                    document.getElementById("equip-boots").innerText = "Boots: " + (data.equipment.boots || "None");
+                }
+                
+                speedBonus = data.speedBonus || 0;
+                myInventoryData = data.inventory || [];
+                
+                const invEl = document.getElementById("inventory-list");
+                if (myInventoryData.length > 0) {
+                    let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
+                    invEl.innerHTML = Object.keys(counts).map(k => 
+                        "<div class='inv-item' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='Click to equip/use'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
+                    ).join("");
+                } else { invEl.innerHTML = "<em style=\"color:#666\">Empty</em>"; }
+            }
+            else if (data.action === "chat") {
+                const channelLabel = data.channel === "party" ? "[Party]" : data.channel === "zone" ? "[Zone]" : "[Global]";
+                addLog(channelLabel + " " + (data.sender || data.name || "Player") + ": " + (data.text || ""));
+            }
+            else if (data.action === "quest_journal") { renderQuestJournal(data); }
+            else if (data.action === "npc_dialogue") { showNPCDialog(data); }
+            else if (data.action === "log") { addLog(data.message); }
+            else if (data.action === "open_shop") {
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("shop-modal").style.display = "block";
+                document.getElementById("shop-player-gold").innerText = data.gold;
+                
+                let buyHtml = "";
+                for (let item in data.inventory) {
+                    const price = data.inventory[item].price;
+                    buyHtml += "<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span>" + escapeHtml(item) + "</span><button onclick='shopBuy(\"" + escapeHtml(item) + "\")' style='background:#44aa44; border:none; color:white; padding:2px 5px; cursor:pointer'>" + price + "G</button></div>";
+                }
+                document.getElementById("shop-buy-list").innerHTML = buyHtml;
+                renderShopSellList();
+            }
+            else if (data.action === "shop_sync") {
+                myGold = data.gold;
+                document.getElementById("shop-player-gold").innerText = data.gold;
+                renderShopSellList();
+            }
+        };
+
+        function handleBossAoe(data) {
+            const id = data.id || data.spellId;
+            if (!id) return;
+            const phase = data.phase === "detonate" || data.action === "aoe_impact" ? "detonate" : "warning";
+            if (phase === "warning") {
+                if (!bossAoeEffects.some(aoe => aoe.id === id)) {
+                    bossAoeEffects.push({ id, x: data.x, y: data.y, radius: data.radius, type: data.type, state: "warning" });
+                }
+            } else {
+                const aoe = bossAoeEffects.find(effect => effect.id === id);
+                if (aoe) {
+                    aoe.state = "detonate";
+                    setTimeout(() => { bossAoeEffects = bossAoeEffects.filter(effect => effect.id !== id); }, 200);
+                }
+            }
+        }
+
+        function handleTradeSync(data) {
+            const snapshot = data.trade || data;
+            if (snapshot.tradeId) activeTradeId = snapshot.tradeId;
+            document.getElementById("trade-my-gold").value = Number.isFinite(Number(snapshot.myGold)) ? Number(snapshot.myGold) : 0;
+            document.getElementById("trade-their-gold").innerText = "Gold: " + (Number.isFinite(Number(snapshot.theirGold)) ? Number(snapshot.theirGold) : 0);
+            const renderOffer = offer => (Array.isArray(offer) ? offer : []).map(item => "<div style='font-size:11px'>" + escapeHtml(item) + "</div>").join("");
+            document.getElementById("trade-my-offer").innerHTML = renderOffer(snapshot.myOffer);
+            document.getElementById("trade-their-offer").innerHTML = renderOffer(snapshot.theirOffer);
+            tradeLocked = Boolean(snapshot.bothLocked);
+            const lockButton = document.getElementById("trade-lock-btn");
+            const confirmButton = document.getElementById("trade-confirm-btn");
+            if (lockButton) {
+                lockButton.disabled = tradeLocked || Boolean(snapshot.myLocked);
+                lockButton.innerText = tradeLocked ? "Both Locked" : "Lock Offer";
+            }
+            if (confirmButton) confirmButton.disabled = !tradeLocked;
+        }
+
+        function renderParty(data) {
+            const members = Array.isArray(data.members) ? data.members : [];
+            let html = "";
+            if (pendingPartyInvite && members.length === 0) {
+                html += "<div style='font-size:11px; margin-bottom:5px;'>" + escapeHtml(pendingPartyInvite.inviter) + " invited you.</div>" +
+                    "<button onclick='acceptPartyInvite()' style='font-size:10px; margin-right:4px;'>Accept</button>" +
+                    "<button onclick='declinePartyInvite()' style='font-size:10px;'>Decline</button>";
+            }
+            if (members.length > 0) {
+                members.forEach(member => {
+                    const name = typeof member === "string" ? member : (member.name || member.id || "Player");
+                    const hp = typeof member === "string" ? 0 : Number(member.hp || 0);
+                    const maxHp = typeof member === "string" ? 0 : Number(member.maxHp || 0);
+                    html += "<div style='font-size:11px; margin-bottom:2px;'>" + escapeHtml(name) + (maxHp ? " (" + hp + "/" + maxHp + ")" : "") + "</div>";
+                    if (maxHp > 0) html += "<div style='background:#444; width:100%; height:4px; margin-bottom:4px;'><div style='background:#e53935; width:" + Math.max(0, Math.min(100, hp / maxHp * 100)) + "%; height:100%;'></div></div>";
+                });
+                html += "<button onclick='leaveParty()' style='font-size:10px; margin-top:5px;'>Leave</button>";
+            } else {
+                html += "<em style='color:#666'>No Party</em>";
+            }
+            document.getElementById("party-list").innerHTML = html;
+        }
+
+        function renderShopSellList() {
+            let sellHtml = "";
+            let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
+            for (let item in counts) {
+                sellHtml += "<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span>" + item + " x" + counts[item] + "</span><button onclick='shopSell(\"" + item + "\")' style='background:#aa4444; border:none; color:white; padding:2px 5px; cursor:pointer'>Sell</button></div>";
+            }
+            if (myInventoryData.length === 0) sellHtml = "<em>Empty</em>";
+            document.getElementById("shop-sell-list").innerHTML = sellHtml;
+        }
+        function shopBuy(itemName) { socket.send(JSON.stringify({ action: "buy_item", item: itemName })); }
+        function shopSell(itemName) { socket.send(JSON.stringify({ action: "sell_item", item: itemName })); }
+        function closeShop() {
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("shop-modal").style.display = "none";
+        }
+
+        function clickItem(name) {
+            if (activeTradeId) {
+                stageTradeItem(name);
+                return;
+            }
+            if (name.includes("Potion")) useItem(name);
+            else socket.send(JSON.stringify({ action: "equip_item", item: name }));
+        }
+        function stageTradeItem(itemName) {
+            if (!activeTradeId || tradeLocked) return;
+            socket.send(JSON.stringify({ action: "trade_add_item", tradeId: activeTradeId, item: itemName }));
+        }
+        function unequip(slot) { socket.send(JSON.stringify({ action: "unequip_item", slot: slot })); }
+        function useItem(itemName) { socket.send(JSON.stringify({ action: "use_item", item: itemName })); }
+        function castPurify() { socket.send(JSON.stringify({ action: "cast_purify" })); }
+        function castSkill() { 
+            if (player.classType === "healer") socket.send(JSON.stringify({ action: "cast_heal" }));
+            else socket.send(JSON.stringify({ action: "cast_skill" }));
+        }
+        function requestEvolve() {
+            socket.send(JSON.stringify({ action: "evolve" }));
+        }
+
+        function updateTradeGold() {
+            socket.send(JSON.stringify({
+                action: "trade_set_gold",
+                tradeId: activeTradeId,
+                amount: Number(document.getElementById("trade-my-gold").value) || 0
+            }));
+        }
+        function lockTrade() {
+            if (!activeTradeId || tradeLocked) return;
+            socket.send(JSON.stringify({ action: "trade_lock", tradeId: activeTradeId }));
+        }
+        function acceptTradeRequest() {
+            if (!pendingTradeRequest) return;
+            socket.send(JSON.stringify({
+                action: "trade_accept",
+                requestId: pendingTradeRequest.requestId,
+                fromPlayer: pendingTradeRequest.fromPlayer
+            }));
+            document.getElementById("trade-request-actions").style.display = "none";
+        }
+        function declineTradeRequest() {
+            if (pendingTradeRequest) {
+                socket.send(JSON.stringify({
+                    action: "trade_decline",
+                    requestId: pendingTradeRequest.requestId,
+                    fromPlayer: pendingTradeRequest.fromPlayer
+                }));
+            }
+            pendingTradeRequest = null;
+            document.getElementById("trade-request-actions").style.display = "none";
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("trade-modal").style.display = "none";
+        }
+        function confirmTrade() {
+            if (!activeTradeId || !tradeLocked) return;
+            socket.send(JSON.stringify({ action: "trade_confirm", tradeId: activeTradeId }));
+        }
+        function cancelTrade() { socket.send(JSON.stringify({ action: "trade_cancel", tradeId: activeTradeId })); }
+        function leaveParty() { socket.send(JSON.stringify({ action: "party_leave" })); }
+        function acceptPartyInvite() {
+            if (!pendingPartyInvite) return;
+            socket.send(JSON.stringify({ action: "party_accept", partyId: pendingPartyInvite.partyId }));
+            pendingPartyInvite = null;
+            renderParty({ members: [] });
+        }
+        function declinePartyInvite() {
+            if (!pendingPartyInvite) return;
+            socket.send(JSON.stringify({ action: "party_decline", partyId: pendingPartyInvite.partyId }));
+            pendingPartyInvite = null;
+            renderParty({ members: [] });
+        }
+        function selectSubclass(sc) { socket.send(JSON.stringify({ action: "select_subclass", subclassId: sc })); }
+
+        function login(cls) {
+            const name = document.getElementById("char-name").value;
+            const warmode = document.getElementById("warmode").checked;
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("class-modal").style.display = "none";
+            socket.send(JSON.stringify({ action: "login", class: cls, name: name, warmode: warmode }));
+        }
+
+        let lastMoveTime = 0;
+        function isWalkable(nx, ny) {
+            if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) return false;
+            for(let i=0; i<obstacles.length; i++) {
+                if(obstacles[i].x === nx && obstacles[i].y === ny) return false;
+            }
+            return true;
+        }
+
+        document.addEventListener("keydown", (e) => {
+            if (document.getElementById("overlay").style.display === "block") return;
+            if (document.activeElement === chatInput) {
+                if (e.key === "Enter" && chatInput.value.trim() !== "") {
+                    let text = chatInput.value.trim();
+                    let channel = "global";
+                    if (text.startsWith("/p ")) { channel = "party"; text = text.substring(3); }
+                    else if (text.startsWith("/z ")) { channel = "zone"; text = text.substring(3); }
+                    else if (text.startsWith("/g ")) { channel = "global"; text = text.substring(3); }
+                    socket.send(JSON.stringify({ action: "chat", text: text, channel: channel }));
+                    chatInput.value = "";
+                }
+                return;
+            }
+
+            if (!myId) return;
+            const now = Date.now();
+            let dx = 0, dy = 0;
+            if (e.key === "ArrowUp" || e.key === "w") dy = -32;
+            else if (e.key === "ArrowDown" || e.key === "s") dy = 32;
+            else if (e.key === "ArrowLeft" || e.key === "a") dx = -32;
+            else if (e.key === "ArrowRight" || e.key === "d") dx = 32;
+            else if (e.key === "Enter") chatInput.focus();
+            
+            if (dx||dy) {
+                const clientMoveSpeed = Math.max(80, 300 - (myLevel * 3) - speedBonus) + 10;
+                if (now - lastMoveTime < clientMoveSpeed) return;
+                
+                const nx = player.x + dx, ny = player.y + dy;
+                if (isWalkable(nx, ny)) {
+                    lastMoveTime = now;
+                    player.x = nx; player.y = ny; 
+                    socket.send(JSON.stringify({ action: "move", x: nx, y: ny }));
+                }
+            }
+
+            if (e.key === "1") castPurify();
+            if (e.key === "2") castSkill();
+            if (e.key === "3") useItem("Health Potion");
+            if (e.key === "4") useItem("Mana Potion");
+            if (e.key === "Escape") currentTargetId = null;
+            if (e.key === "e" || e.key === "E") {
+                for(let id in npcsLocal) {
+                    const npc = npcsLocal[id];
+                    if(Math.abs(player.x - npc.x) + Math.abs(player.y - npc.y) <= 96) {
+                        socket.send(JSON.stringify({ action: "talk_npc", npc_id: id }));
+                        break;
+                    }
+                }
+            }
+        });
+
+        canvas.addEventListener("mousedown", (e) => {
+            if (document.getElementById("overlay").style.display === "block") return;
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left + cameraX;
+            const clickY = e.clientY - rect.top + cameraY;
+
+            let clicked = null;
+            for (let id in npcsLocal) {
+                if (clickX >= npcsLocal[id].x && clickX <= npcsLocal[id].x + 32 && clickY >= npcsLocal[id].y && clickY <= npcsLocal[id].y + 32) {
+                    socket.send(JSON.stringify({ action: "talk_npc", npc_id: id }));
+                    return;
+                }
+            }
+            
+            for (let id in mobs) {
+                if (clickX >= mobs[id].x && clickX <= mobs[id].x + 32 && clickY >= mobs[id].y && clickY <= mobs[id].y + 32) { clicked = id; break; }
+            }
+            if (!clicked) {
+                for (let id in otherPlayers) {
+                    if (clickX >= otherPlayers[id].x && clickX <= otherPlayers[id].x + 32 && clickY >= otherPlayers[id].y && clickY <= otherPlayers[id].y + 32) { clicked = id; break; }
+                }
+            }
+            
+            if (clicked) {
+                currentTargetId = clicked;
+                socket.send(JSON.stringify({ action: "attack", target_id: currentTargetId }));
+            }
+        });
+
+        canvas.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            if (document.getElementById("overlay").style.display === "block") return;
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left + cameraX;
+            const clickY = e.clientY - rect.top + cameraY;
+            for (const id in otherPlayers) {
+                const other = otherPlayers[id];
+                if (clickX >= other.x && clickX <= other.x + 32 && clickY >= other.y && clickY <= other.y + 32) {
+                    socket.send(JSON.stringify({ action: "trade_request", targetName: other.name }));
+                    return;
+                }
+            }
+        });
+
+        function showNPCDialog(data) {
+            activeNpcId = data.npc_id || null;
+            document.getElementById("overlay").style.display = "block";
+            document.getElementById("npc-dialog").style.display = "block";
+            document.getElementById("dialog-npc-name").innerText = data.npc_name;
+            const content = document.getElementById("dialog-content");
+            let html = "<p>I have some tasks for you:</p>";
+            data.quests.forEach(q => {
+                html += "<div style='background:#2a2a2a; padding:10px; margin-bottom:5px; border-radius:5px;'><strong style='color:#ffcc44'>" + escapeHtml(q.name) + "</strong><br><span style='font-size:12px'>" + escapeHtml(q.description || q.desc || '') + "</span><br><button onclick='acceptQuest(\"" + escapeHtml(q.id) + "\")' style='margin-top:5px; background:#44aa44; color:white; border:none; padding:5px 10px; cursor:pointer'>Accept Quest</button></div>";
+            });
+            content.innerHTML = html;
+        }
+
+        function acceptQuest(qid) {
+            socket.send(JSON.stringify({ action: "accept_quest", quest_id: qid, npc_id: activeNpcId }));
+            closeNpcDialog();
+        }
+        function closeNpcDialog() {
+            activeNpcId = null;
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("npc-dialog").style.display = "none";
+        }
+        function renderQuestJournal(data) {
+            const ql = document.getElementById("quest-list");
+            let html = "<div style=\"font-size:12px; margin-bottom:8px; color:#aaa\">Completed: " + data.completed_count + "</div>";
+            if (data.quests.length === 0) { html += "<em style=\"color:#666;font-size:11px\">No active quests.</em>"; }
+            else {
+                data.quests.forEach(q => {
+                    html += "<div style=\"background:#222; padding:5px; margin-bottom:5px; border-left:3px solid #ffcc44\"><strong style=\"font-size:13px\">" + escapeHtml(q.name) + "</strong><br>";
+                    q.objectives.forEach(o => { html += "<div style=\"font-size:11px; color:" + (o.done ? "#44ff44" : "#ccc") + "\">" + (o.done ? "?" : "?") + " " + o.text + " " + o.progress + "</div>"; });
+                    html += "</div>";
+                });
+            }
+            ql.innerHTML = html;
+        }
+
+        function draw() {
+            cameraX = player.x - SCREEN_W / 2 + 16;
+            cameraY = player.y - SCREEN_H / 2 + 16;
+            cameraX = Math.max(0, Math.min(cameraX, MAP_W - SCREEN_W));
+            cameraY = Math.max(0, Math.min(cameraY, MAP_H - SCREEN_H));
+
+            ctx.fillStyle = "#111"; ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+            ctx.save();
+            ctx.translate(-cameraX, -cameraY);
+
+            ctx.fillStyle = "#8f9779"; ctx.fillRect(0, 0, 1600, 1600);
+            ctx.fillStyle = "#2d5a27"; ctx.fillRect(1600, 0, 1600, 1600);
+            ctx.fillStyle = "#e0f7fa"; ctx.fillRect(0, 1600, 1600, 1600);
+            ctx.fillStyle = "#5d4037"; ctx.fillRect(1600, 1600, 1600, 1600);
+            ctx.fillStyle = "rgba(0, 255, 100, 0.2)"; ctx.fillRect(0, 0, 640, 640);
+
+            ctx.strokeStyle = "rgba(0,0,0,0.1)";
+            for (let x = 0; x <= MAP_W; x += 32) {
+                if (x >= cameraX && x <= cameraX + SCREEN_W) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_H); ctx.stroke(); }
+            }
+            for (let y = 0; y <= MAP_H; y += 32) {
+                if (y >= cameraY && y <= cameraY + SCREEN_H) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_W, y); ctx.stroke(); }
+            }
+
+            obstacles.forEach(obs => {
+                if (obs.x < cameraX - 32 || obs.x > cameraX + SCREEN_W || obs.y < cameraY - 32 || obs.y > cameraY + SCREEN_H) return;
+                if (obs.type === "tree") { ctx.fillStyle = "#1b3e15"; ctx.fillRect(obs.x, obs.y, 32, 32); } 
+                else if (obs.type === "rock") { ctx.fillStyle = "#757575"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 16, 14, 0, Math.PI*2); ctx.fill(); } 
+                else if (obs.type === "wall") { ctx.fillStyle = "#2a2a2a"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+            });
+
+            for (let id in gatherNodes) {
+                let n = gatherNodes[id];
+                ctx.fillStyle = n.color; ctx.beginPath(); ctx.arc(n.x + 16, n.y + 16, 10, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = "#000"; ctx.font = "10px Arial"; ctx.fillText(n.symbol, n.x + 12, n.y + 20);
+            }
+            for (let id in chests) {
+                let c = chests[id];
+                ctx.fillStyle = "#8b4513"; ctx.fillRect(c.x + 4, c.y + 8, 24, 16);
+                ctx.fillStyle = "#ffd700"; ctx.fillRect(c.x + 14, c.y + 12, 4, 4);
+            }
+            for (let id in npcsLocal) {
+                let npc = npcsLocal[id];
+                ctx.fillStyle = "#ffccaa"; ctx.fillRect(npc.x + 4, npc.y + 4, 24, 24);
+                ctx.fillStyle = "#fff"; ctx.font = "12px Arial"; ctx.fillText(npc.name, npc.x, npc.y - 5);
+                ctx.fillStyle = "#ffcc44"; ctx.fillText("!", npc.x + 12, npc.y - 18);
+            }
+
+            for (let id in mobs) {
+                let m = mobs[id];
+                let isBoss = m.isBoss;
+                let size = isBoss ? 48 : 32;
+                let drawX = m.x - (size - 32)/2;
+                let drawY = m.y - (size - 32)/2;
+
+                if (m.isElite) { ctx.fillStyle = "rgba(255,0,0,0.3)"; ctx.beginPath(); ctx.arc(m.x + 16, m.y + 16, 20, 0, Math.PI*2); ctx.fill(); }
+                if (isBoss) { 
+                    ctx.fillStyle = "rgba(128,0,128,0.4)"; 
+                    ctx.beginPath(); ctx.arc(m.x + 16, m.y + 16, 32, 0, Math.PI*2); ctx.fill(); 
+                }
+
+                ctx.fillStyle = m.type === "spider" ? "#cc2222" : m.type === "skeleton" ? "#e0e0e0" : m.type === "minotaur" ? "#884422" : m.type === "bear" ? "#5c4033" : m.type === "yeti" ? "#ffffff" : "#555555";
+                ctx.fillRect(drawX, drawY, size, size);
+                ctx.fillStyle = "red"; ctx.fillRect(drawX, drawY - 8, size, 4);
+                ctx.fillStyle = "#00ff00"; ctx.fillRect(drawX, drawY - 8, size * (m.hp / m.maxHp), 4);
+                
+                // Draw Mob Name
+                ctx.fillStyle = isBoss ? '#ff00ff' : (m.isElite ? '#ffff00' : '#ffaa88'); 
+                ctx.font = isBoss ? 'bold 12px Arial' : (m.isElite ? 'bold 10px Arial' : '10px Arial');
+                ctx.fillText(m.name, drawX, drawY - 12);
+                
+                if (currentTargetId === m.id) { ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.strokeRect(drawX, drawY, size, size); ctx.lineWidth = 1; }
+            }
+
+            bossAoeEffects.forEach(aoe => {
+                let color = "rgba(255,0,0,0.5)";
+                if (aoe.type === "poison") color = aoe.state === "detonate" ? "rgba(0,255,0,0.8)" : "rgba(0,255,0,0.4)";
+                else if (aoe.type === "ice_breath" || aoe.type === "ice_crash") color = aoe.state === "detonate" ? "rgba(0,0,255,0.8)" : "rgba(0,0,255,0.4)";
+                else if (aoe.type === "death_wave") color = aoe.state === "detonate" ? "rgba(128,0,128,0.8)" : "rgba(128,0,128,0.4)";
+                // Set the style before arc() so render spies can identify the
+                // telegraph draw call as well as the resulting pixels.
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(aoe.x, aoe.y, aoe.radius || 50, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            for (let id in otherPlayers) {
+                let op = otherPlayers[id];
+                ctx.fillStyle = op.warmode ? "#ff8888" : "#8888ff"; ctx.beginPath(); ctx.arc(op.x + 16, op.y + 16, 14, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = "white"; ctx.font = "12px Arial"; ctx.fillText(op.name, op.x - 5, op.y - 5);
+                if (currentTargetId === id) { ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.strokeRect(op.x, op.y, 32, 32); ctx.lineWidth = 1; }
+            }
+
+            ctx.fillStyle = player.classType === "warrior" ? "#ffaa00" : player.classType === "mage" ? "#00aaff" : "#55ff55";
+            ctx.beginPath(); ctx.arc(player.x + 16, player.y + 16, 14, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = "white"; ctx.font = "bold 12px Arial"; ctx.fillText(myName, player.x - 5, player.y - 5);
+            if (currentTargetId === myId) { ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.strokeRect(player.x, player.y, 32, 32); ctx.lineWidth = 1; }
+
+            ctx.restore();
+
+            if (!isDay) {
+                const gradient = ctx.createRadialGradient(SCREEN_W/2, SCREEN_H/2, 50, SCREEN_W/2, SCREEN_H/2, 300);
+                gradient.addColorStop(0, "rgba(0,0,0,0)");
+                gradient.addColorStop(1, "rgba(0,0,20,0.85)");
+                ctx.fillStyle = gradient; ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+            }
+
+            for (let i = fcts.length - 1; i >= 0; i--) {
+                let f = fcts[i];
+                ctx.fillStyle = f.color; ctx.font = "bold 14px Arial";
+                ctx.fillText(f.text, f.x - cameraX, f.y - cameraY - (1 - f.life) * 30);
+                f.life -= 0.02; if (f.life <= 0) fcts.splice(i, 1);
+            }
+
+            const MM_W = 100, MM_H = 100, MM_X = SCREEN_W - MM_W - 10, MM_Y = SCREEN_H - MM_H - 10;
+            ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(MM_X, MM_Y, MM_W, MM_H);
+            ctx.strokeStyle = "#444"; ctx.strokeRect(MM_X, MM_Y, MM_W, MM_H);
+            ctx.fillStyle = "rgba(0,255,100,0.5)"; ctx.fillRect(MM_X, MM_Y, (640/MAP_W)*MM_W, (640/MAP_H)*MM_H);
+            ctx.fillStyle = "#ffaa00"; ctx.fillRect(MM_X + (player.x/MAP_W)*MM_W, MM_Y + (player.y/MAP_H)*MM_H, 3, 3);
+            
+            requestAnimationFrame(draw);
+        }
+        draw();
+    </script>
+</body>
+</html>
