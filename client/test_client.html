@@ -4,42 +4,399 @@
     <meta charset="UTF-8">
     <title>Tibia MMO - V2</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@700&display=swap');
+
         * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; margin: 0; padding: 8px; overflow: hidden; }
-        canvas { border: 2px solid #555; background: #2a2a3e; cursor: crosshair; }
-        #game-wrapper { display: flex; justify-content: center; align-items: flex-start; gap: 12px; margin-top: 8px; }
         
-        #left-panel, #right-panel { width: 280px; background: #16213e; padding: 12px; border: 1px solid #444; border-radius: 5px; text-align: left; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background: radial-gradient(circle at 50% 0%, #2e285a 0%, #0f172a 100%); 
+            color: #e2e8f0; 
+            text-align: center; 
+            margin: 0; 
+            padding: 12px; 
+            height: 100vh;
+            overflow: hidden; 
+            display: flex;
+            flex-direction: column;
+        }
+
+        h2 { font-family: 'Outfit', sans-serif; font-size: 28px; margin: 4px 0 16px; color: #fff; text-shadow: 0 0 15px rgba(129, 140, 248, 0.8); text-transform: uppercase; letter-spacing: 2px; }
+        h3 { font-family: 'Outfit', sans-serif; letter-spacing: 0.5px; }
+        h4 { font-family: 'Outfit', sans-serif; margin: 0 0 10px 0; font-size: 14px; color: #fbbf24; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; text-transform: uppercase; letter-spacing: 1px;}
         
-        .bar-container { background: #444; width: 100%; height: 20px; border-radius: 3px; margin-bottom: 6px; position: relative; }
-        .bar-fill { height: 100%; border-radius: 3px; transition: width 0.2s; }
-        .hp-fill { background: #e53935; }
-        .mana-fill { background: #1e88e5; }
-        .xp-fill { background: #fdd835; }
-        .bar-text { position: absolute; width: 100%; text-align: center; top: 2px; font-size: 12px; font-weight: bold; text-shadow: 1px 1px 0 #000; }
+        #game-wrapper { 
+            display: flex; 
+            justify-content: center; 
+            align-items: stretch; 
+            gap: 16px; 
+            margin-top: 8px; 
+            flex-grow: 1;
+        }
         
-        .btn-spell { background: #2a2a3e; color: #fff; border: 1px solid #555; width: 100%; padding: 8px; margin-bottom: 6px; cursor: pointer; border-radius: 3px; font-weight: bold; }
-        .btn-spell:hover { background: #3f3f5a; }
-        .btn-skill { background: linear-gradient(to bottom, #d84315, #bf360c); }
-        .btn-item { font-size: 11px; padding: 6px; }
+        /* Glassmorphism Panels */
+        #left-panel, #right-panel { 
+            width: 300px; 
+            background: rgba(30, 41, 59, 0.7); 
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 16px; 
+            border: 1px solid rgba(255, 255, 255, 0.1); 
+            border-radius: 12px; 
+            text-align: left; 
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+        }
         
-        .panel-box { background: #111a2e; padding: 8px; border-radius: 4px; margin-top: 10px; border: 1px solid #334; }
-        .panel-box h4 { margin: 0 0 6px 0; font-size: 13px; color: #ffcc44; border-bottom: 1px solid #334; padding-bottom: 4px; }
+        canvas { 
+            border: 2px solid rgba(129, 140, 248, 0.15); 
+            background: #1e1e2f; 
+            border-radius: 12px;
+            cursor: crosshair; 
+            box-shadow: 0 0 40px rgba(129, 140, 248, 0.3), 0 12px 40px rgba(0, 0, 0, 0.4);
+            transition: transform 0.2s ease;
+        }
+
+        /* Modern Bars */
+        .bar-container { 
+            background: rgba(0, 0, 0, 0.4); 
+            width: 100%; 
+            height: 22px; 
+            border-radius: 11px; 
+            margin-bottom: 10px; 
+            position: relative; 
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .bar-fill { height: 100%; border-radius: 11px; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .hp-fill { background: linear-gradient(90deg, #b91c1c, #ef4444); box-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
+        .mana-fill { background: linear-gradient(90deg, #1d4ed8, #3b82f6); box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+        .xp-fill { background: linear-gradient(90deg, #b45309, #f59e0b); box-shadow: 0 0 10px rgba(245, 158, 11, 0.5); }
+        .bar-text { position: absolute; width: 100%; text-align: center; top: 3px; font-size: 12px; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
         
-        .inv-item { font-size: 11px; padding: 4px; background: #223; margin-bottom: 2px; border-radius: 2px; border: 1px solid #445; }
+        /* Modern Buttons */
+        .btn-spell { 
+            background: rgba(51, 65, 85, 0.6); 
+            color: #fff; 
+            border: 1px solid rgba(255,255,255,0.1); 
+            width: 100%; 
+            padding: 10px; 
+            margin-bottom: 8px; 
+            cursor: pointer; 
+            border-radius: 8px; 
+            font-weight: 600; 
+            font-size: 13px;
+            transition: all 0.2s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-spell:hover:not([disabled]) { 
+            background: rgba(71, 85, 105, 0.8); 
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .btn-spell:active:not([disabled]) { transform: translateY(1px); }
+        .btn-spell[disabled] { opacity: 0.5; cursor: not-allowed; }
         
-        #log-container { background: #0a0f1a; border: 1px solid #334; height: 120px; padding: 6px; font-size: 11px; overflow-y: auto; text-align: left; margin-bottom: 6px; border-radius: 4px; display: flex; flex-direction: column; }
-        #chat-input { width: 100%; background: #111; color: #fff; border: 1px solid #444; padding: 6px; border-radius: 4px; outline: none; }
-        #chat-input:focus { border-color: #ffaa00; }
+        .btn-skill { background: linear-gradient(135deg, #c2410c, #ea580c); border: none;}
+        .btn-skill:hover:not([disabled]) { background: linear-gradient(135deg, #ea580c, #f97316); box-shadow: 0 4px 15px rgba(234, 88, 12, 0.4); }
         
-        .modal { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #1e1e1e; padding: 20px; border: 2px solid #ffcc44; border-radius: 8px; z-index: 10; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.8); }
-        .class-card { display: inline-block; width: 120px; padding: 15px; margin: 10px; background: #333; cursor: pointer; border: 2px solid #555; border-radius: 5px; transition: transform 0.2s, border-color 0.2s; }
-        .class-card:hover { transform: translateY(-5px); border-color: #ffcc44; }
-        #overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 5; }
+        .btn-item { font-size: 12px; padding: 8px; flex: 1;}
+        
+        /* Inner Panels */
+        .panel-box { 
+            background: rgba(15, 23, 42, 0.5); 
+            padding: 12px; 
+            border-radius: 8px; 
+            margin-top: 12px; 
+            border: 1px solid rgba(255,255,255,0.05); 
+        }
+        
+        /* Equipment Grid */
+        .inv-item { 
+            font-size: 12px; 
+            padding: 6px 8px; 
+            background: rgba(30, 41, 59, 0.8); 
+            margin-bottom: 4px; 
+            border-radius: 6px; 
+            border: 1px solid rgba(255,255,255,0.1); 
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .inv-item:hover { background: rgba(51, 65, 85, 1); border-color: rgba(255,255,255,0.3); transform: scale(1.02); }
+        
+        /* Chat Log */
+        #log-container { 
+            background: rgba(0, 0, 0, 0.3); 
+            border: 1px solid rgba(255,255,255,0.1); 
+            height: 160px; 
+            padding: 10px; 
+            font-size: 12px; 
+            overflow-y: auto; 
+            text-align: left; 
+            margin-bottom: 10px; 
+            border-radius: 8px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 4px;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+        }
+        #chat-input { 
+            width: 100%; 
+            background: rgba(15, 23, 42, 0.8); 
+            color: #fff; 
+            border: 1px solid rgba(255,255,255,0.2); 
+            padding: 10px 12px; 
+            border-radius: 8px; 
+            outline: none; 
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s;
+        }
+        #chat-input:focus { border-color: #818cf8; box-shadow: 0 0 15px rgba(129, 140, 248, 0.4); background: rgba(30, 41, 59, 0.9);}
+        
+        /* Modals */
+        .modal { 
+            display: none; 
+            position: absolute; 
+            top: 50%; left: 50%; 
+            transform: translate(-50%, -50%); 
+            background: rgba(15, 23, 42, 0.95); 
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 30px; 
+            border: 1px solid rgba(255, 255, 255, 0.1); 
+            border-radius: 16px; 
+            z-index: 10; 
+            text-align: center; 
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 30px rgba(129,140,248,0.3); 
+        }
+        .modal.active { display: block; animation: modalPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes modalPop { 0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+        
+        .btn-dialogue {
+            background: rgba(51, 65, 85, 0.6);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.12);
+            padding: 10px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: left;
+            transition: all 0.15s ease;
+            font-family: 'Inter', sans-serif;
+        }
+        .btn-dialogue:hover { background: rgba(71, 85, 105, 0.9); border-color: #fbbf24; transform: translateY(-1px); }
+        .btn-dialogue:active { transform: translateY(1px); }
+
+        .btn-dialogue {
+            background: rgba(51, 65, 85, 0.6);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.12);
+            padding: 10px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: left;
+            transition: all 0.15s ease;
+            font-family: 'Inter', sans-serif;
+        }
+        .btn-dialogue:hover { background: rgba(71, 85, 105, 0.9); border-color: #fbbf24; transform: translateY(-1px); }
+        .btn-dialogue:active { transform: translateY(1px); }
+
+        .class-card {
+            display: inline-flex; 
+            flex-direction: column;
+            justify-content: center;
+            width: 140px; 
+            padding: 20px 15px; 
+            margin: 10px; 
+            background: rgba(30, 41, 59, 0.6); 
+            cursor: pointer; 
+            border: 1px solid rgba(255,255,255,0.1); 
+            border-radius: 12px; 
+            transition: all 0.2s ease; 
+        }
+        .class-card:hover { transform: translateY(-5px) scale(1.02); background: rgba(51, 65, 85, 0.8); border-color: #fbbf24; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+        
+        #overlay { 
+            display: none; 
+            position: fixed; 
+            top: 0; left: 0; 
+            width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.6); 
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            z-index: 5; 
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+    
+        /* Pristine Equipment Paperdoll */
+        .paperdoll {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr 1fr 1fr;
+            gap: 6px;
+            margin-bottom: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .eq-slot {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(129, 140, 248, 0.3);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 45px;
+            font-size: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+            color: #94a3b8;
+        }
+        .eq-slot:hover {
+            border-color: #818cf8;
+            background: rgba(51, 65, 85, 1);
+            transform: scale(1.05);
+        }
+        .eq-slot.filled {
+            color: #fbbf24;
+            font-weight: bold;
+            border-color: #fbbf24;
+            text-shadow: 0 0 5px rgba(251, 191, 36, 0.3);
+        }
+        .eq-amulet { grid-column: 1; grid-row: 1; }
+        .eq-helmet { grid-column: 2; grid-row: 1; }
+        .eq-empty { grid-column: 3; grid-row: 1; opacity:0; pointer-events:none; }
+        
+        .eq-weapon { grid-column: 1; grid-row: 2; }
+        .eq-armor { grid-column: 2; grid-row: 2; }
+        .eq-shield { grid-column: 3; grid-row: 2; }
+        
+        .eq-ring1 { grid-column: 1; grid-row: 3; opacity:0; pointer-events:none; }
+        .eq-legs { grid-column: 2; grid-row: 3; }
+        .eq-ring2 { grid-column: 3; grid-row: 3; opacity:0; pointer-events:none; }
+        
+        .eq-boots { grid-column: 2; grid-row: 4; }
+
+        /* Grid Inventory */
+        .inv-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            max-height: 160px;
+            overflow-y: auto;
+            padding: 5px;
+        }
+        .inv-cell {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            height: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 9px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+            text-align: center;
+            color: #e2e8f0;
+            overflow: hidden;
+        }
+        .inv-cell:hover {
+            background: rgba(51, 65, 85, 1);
+            border-color: rgba(255, 255, 255, 0.3);
+            transform: scale(1.05);
+        }
+        .inv-count {
+            position: absolute;
+            bottom: 2px; right: 4px;
+            font-size: 8px;
+            color: #fbbf24;
+            font-weight: bold;
+        }
+
+    
+        #minimap-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 2px solid rgba(255,255,255,0.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            overflow: hidden;
+            z-index: 2;
+        }
+        #minimap-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* === Audio toggle === */
+        #audio-toggle {
+            position: absolute;
+            top: 20px;
+            right: 184px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 2px solid rgba(255,255,255,0.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            z-index: 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            user-select: none;
+        }
+        #audio-toggle:hover { border-color: #fbbf24; transform: scale(1.05); }
+        #audio-toggle.muted { color: #64748b; }
+
     </style>
 </head>
 <body>
     <div id="overlay"></div>
+    
+    <div id="auth-modal" class="modal" style="width: 350px;">
+        <h2 style="color: #fbbf24; margin-top: 0;">Login to Tibia</h2>
+        <input type="text" id="auth-username" placeholder="Username" style="width: 100%; padding: 10px; margin-bottom: 10px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; text-align: center; font-size: 16px;">
+        <input type="password" id="auth-password" placeholder="Password" style="width: 100%; padding: 10px; margin-bottom: 15px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; text-align: center; font-size: 16px;">
+        <div style="display:flex; gap:10px;">
+            <button onclick="submitAuth('login')" style="flex:1; background: #3b82f6; color:white; border:none; padding:10px; cursor:pointer; border-radius:6px; font-weight:bold;">Login</button>
+            <button onclick="submitAuth('register')" style="flex:1; background: #10b981; color:white; border:none; padding:10px; cursor:pointer; border-radius:6px; font-weight:bold;">Register</button>
+        </div>
+        <div id="auth-error" style="color: #ef4444; margin-top: 10px; font-size: 13px; min-height: 18px;"></div>
+    </div>
     
     <div id="class-modal" class="modal">
         <h2 style="color: #ffcc44; margin-top: 0;">Choose Your Path</h2>
@@ -110,9 +467,26 @@
         <button onclick="closeShop()" style="margin-top:15px; background:#884444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%;">Leave Shop</button>
     </div>
 
+    <div id="craft-modal" class="modal" style="width: 520px; max-width: 92vw; max-height: 82vh; overflow-y: auto;">
+        <h3 style="margin-top:0; color:#fbbf24;">⚒️ Workbench</h3>
+        <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">
+            Level <span id="craft-level">1</span> &middot;
+            <span id="craft-material-count">0</span> materials
+        </div>
+        <div id="craft-list"></div>
+        <button onclick="closeCrafting()" style="margin-top:15px; background:#884444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%;">Leave Workbench</button>
+    </div>
+
     <h2>⚔️ Tibia MMO - V2</h2>
     <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">Move: WASD | Attack: Click | Talk/Shop: 'E' or Click | Spells: '1','2' | Potions: '3','4'</div>
     
+    
+    <div id="minimap-container">
+        <canvas id="minimap-canvas" width="150" height="150"></canvas>
+    </div>
+
+    <button id="audio-toggle" onclick="toggleAudio()" title="Toggle sound (M)" aria-label="Toggle sound">&#128266;</button>
+
     <div id="game-wrapper">
         <div id="left-panel">
             <h3 id="player-level-title" style="margin-top:0">⚔️ Level 1 Player</h3>
@@ -163,7 +537,19 @@
                 <h4>🎉 Party</h4>
                 <div id="party-list"><em style="color:#666">No Party</em></div>
             </div>
-            <div style="margin-top:10px">
+            <div class="panel-box">
+                <h4>🛡️ Guild</h4>
+                <div id="guild-list"><em style="color:#666">No Guild</em></div>
+            </div>
+            <div style="margin-top:10px; display:flex; flex-direction:column; height: 100%;">
+                <div id="chat-tabs" style="display:flex; font-size:11px; font-weight:bold; cursor:pointer; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-bottom:none; border-radius:4px 4px 0 0;">
+                    <div onclick="setChatTab('all')" id="tab-all" style="flex:1; text-align:center; padding:4px; color:#fff; border-bottom:2px solid #3b82f6;">All</div>
+                    <div onclick="setChatTab('global')" id="tab-global" style="flex:1; text-align:center; padding:4px; color:#aaa;">Global</div>
+                    <div onclick="setChatTab('zone')" id="tab-zone" style="flex:1; text-align:center; padding:4px; color:#aaa;">Zone</div>
+                    <div onclick="setChatTab('guild')" id="tab-guild" style="flex:1; text-align:center; padding:4px; color:#aaa;">Guild</div>
+                    <div onclick="setChatTab('party')" id="tab-party" style="flex:1; text-align:center; padding:4px; color:#aaa;">Party</div>
+                    <div onclick="setChatTab('system')" id="tab-system" style="flex:1; text-align:center; padding:4px; color:#aaa;">System</div>
+                </div>
                 <div id="log-container"></div>
                 <input type="text" id="chat-input" placeholder="Press Enter to chat..." />
             </div>
@@ -177,33 +563,274 @@
         const socketProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const socket = new WebSocket(socketProtocol + "//" + window.location.host);
 
-        const MAP_W = 3200, MAP_H = 3200;
+        let MAP_W = 3200, MAP_H = 3200;
+        let SAFE_ZONE = {w: 800, h: 800};
         const SCREEN_W = 640, SCREEN_H = 480;
 
         let myId = null, myName = "Player";
         let player = { x: 320, y: 320, classType: "warrior", warmode: false };
         let myLevel = 1, speedBonus = 0;
+        // Previous status values, used to detect level-ups and taking damage.
+        let lastKnownLevel = 0, lastKnownHp = 0;
         
         let otherPlayers = {};
         let mobs = {};
         let chests = {};
+        let clientCorpses = {};
         let gatherNodes = {};
         let npcsLocal = {};
         
         let obstacles = [];
+        let obstacleSet = new Set();
         let fcts = [];
         let currentTargetId = null;
         let cameraX = 0, cameraY = 0;
         let isDay = true;
         
+        let authToken = null;
         let myGold = 0;
         let myInventoryData = [];
         let bossAoeEffects = [];
+
+        // Sprite loading is best-effort. A sprite only becomes drawable once
+        // the image has actually decoded, so a missing or unreadable asset
+        // falls back to the emoji renderer instead of throwing inside draw().
+        const SPRITE_BASE = "/assets/";
+        const SPRITE_FILES = {
+            warrior: "warrior.jpg",
+            mage: "mage.jpg",
+            ranger: "ranger.jpg",
+            healer: "healer.jpg"
+        };
+        const loadedSprites = {};
+        Object.keys(SPRITE_FILES).forEach(key => {
+            const img = new Image();
+            const entry = { image: img, ready: false };
+            loadedSprites[key] = entry;
+            img.onload = () => { entry.ready = true; };
+            img.onerror = () => { entry.ready = false; };
+            img.src = SPRITE_BASE + SPRITE_FILES[key];
+        });
+        function getSprite(key) {
+            const entry = loadedSprites[key];
+            return entry && entry.ready ? entry.image : null;
+        }
+
+        // === AudioManager ===
+        // Everything is synthesized with the Web Audio API, so there are no
+        // asset files to ship. The context stays suspended until the first
+        // real user gesture, which is what browsers require before audio.
+        class AudioManager {
+            constructor() {
+                this.ctx = null;
+                this.master = null;
+                this.musicGain = null;
+                this.sfxGain = null;
+                this.muted = false;
+                this.musicNodes = null;
+                this.musicTimer = null;
+                this.started = false;
+                this.step = 0;
+                this.lastPlay = {};
+            }
+
+            // Must be called from a user gesture handler the first time.
+            init() {
+                if (this.started) return true;
+                const Ctor = window.AudioContext || window.webkitAudioContext;
+                if (!Ctor) return false;
+                try {
+                    this.ctx = new Ctor();
+                } catch (e) {
+                    return false;
+                }
+                this.master = this.ctx.createGain();
+                this.master.gain.value = this.muted ? 0 : 0.5;
+                this.master.connect(this.ctx.destination);
+
+                this.musicGain = this.ctx.createGain();
+                this.musicGain.gain.value = 0.16;
+                this.musicGain.connect(this.master);
+
+                this.sfxGain = this.ctx.createGain();
+                this.sfxGain.gain.value = 0.5;
+                this.sfxGain.connect(this.master);
+
+                this.started = true;
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+                return true;
+            }
+
+            resume() {
+                if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+            }
+
+            setMuted(muted) {
+                this.muted = !!muted;
+                if (this.master) {
+                    const now = this.ctx.currentTime;
+                    this.master.gain.cancelScheduledValues(now);
+                    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.5, now, 0.02);
+                }
+                const btn = document.getElementById('audio-toggle');
+                if (btn) {
+                    btn.innerHTML = this.muted ? '&#128263;' : '&#128266;';
+                    btn.classList.toggle('muted', this.muted);
+                    btn.title = this.muted ? 'Sound off (M)' : 'Sound on (M)';
+                }
+            }
+
+            toggleMute() {
+                this.init();
+                this.setMuted(!this.muted);
+                return this.muted;
+            }
+
+            // Rate limit so a burst of events cannot stack into a click storm.
+            throttled(key, ms) {
+                const now = Date.now();
+                if (this.lastPlay[key] && now - this.lastPlay[key] < ms) return false;
+                this.lastPlay[key] = now;
+                return true;
+            }
+
+            // One oscillator note with an ADSR-ish envelope.
+            tone(opts) {
+                if (!this.started || this.muted) return;
+                const o = {
+                    freq: 440, type: 'sine', duration: 0.2, gain: 0.3,
+                    dest: this.sfxGain, slideTo: null, delay: 0, attack: 0.01, ...opts
+                };
+                if (!o.dest) return;
+                const t0 = this.ctx.currentTime + o.delay;
+                const osc = this.ctx.createOscillator();
+                const g = this.ctx.createGain();
+                osc.type = o.type;
+                osc.frequency.setValueAtTime(o.freq, t0);
+                if (o.slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.slideTo), t0 + o.duration);
+                g.gain.setValueAtTime(0.0001, t0);
+                g.gain.exponentialRampToValueAtTime(o.gain, t0 + o.attack);
+                g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.duration);
+                osc.connect(g);
+                g.connect(o.dest);
+                osc.start(t0);
+                osc.stop(t0 + o.duration + 0.02);
+            }
+
+            // Filtered white noise for percussive/impact sounds.
+            noise(opts) {
+                if (!this.started || this.muted) return;
+                const o = { duration: 0.2, gain: 0.2, dest: this.sfxGain, filter: 1200, type: 'lowpass', delay: 0 };
+                Object.assign(o, opts);
+                if (!o.dest) return;
+                const t0 = this.ctx.currentTime + o.delay;
+                const frames = Math.max(1, Math.floor(this.ctx.sampleRate * o.duration));
+                const buffer = this.ctx.createBuffer(1, frames, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < frames; i++) {
+                    data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+                }
+                const src = this.ctx.createBufferSource();
+                src.buffer = buffer;
+                const biquad = this.ctx.createBiquadFilter();
+                biquad.type = o.type;
+                biquad.frequency.value = o.filter;
+                const g = this.ctx.createGain();
+                g.gain.value = o.gain;
+                src.connect(biquad);
+                biquad.connect(g);
+                g.connect(o.dest);
+                src.start(t0);
+            }
+
+            // --- Sound effects ---
+
+            swordSwoosh() {
+                if (!this.throttled('swoosh', 90)) return;
+                this.noise({ duration: 0.22, gain: 0.22, filter: 2600, type: 'bandpass' });
+                this.tone({ freq: 900, slideTo: 260, type: 'triangle', duration: 0.18, gain: 0.1 });
+            }
+
+            spellBlast() {
+                if (!this.throttled('blast', 90)) return;
+                this.tone({ freq: 180, slideTo: 60, type: 'sawtooth', duration: 0.34, gain: 0.24 });
+                this.noise({ duration: 0.3, gain: 0.18, filter: 900 });
+            }
+
+            coin() {
+                // Two quick high notes read as a "cha-ching".
+                this.tone({ freq: 1180, type: 'triangle', duration: 0.09, gain: 0.16 });
+                this.tone({ freq: 1760, type: 'triangle', duration: 0.16, gain: 0.14, delay: 0.07 });
+            }
+
+            levelUp() {
+                if (!this.throttled('levelup', 400)) return;
+                [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+                    this.tone({ freq: f, type: 'triangle', duration: 0.34, gain: 0.2, delay: i * 0.11 });
+                });
+            }
+
+            hit() {
+                if (!this.throttled('hit', 70)) return;
+                this.noise({ duration: 0.1, gain: 0.2, filter: 700 });
+            }
+
+            hurt() {
+                if (!this.throttled('hurt', 260)) return;
+                this.tone({ freq: 220, slideTo: 90, type: 'square', duration: 0.24, gain: 0.16 });
+            }
+
+            questUpdate() {
+                if (!this.throttled('quest', 300)) return;
+                this.tone({ freq: 660, type: 'sine', duration: 0.16, gain: 0.12 });
+                this.tone({ freq: 880, type: 'sine', duration: 0.22, gain: 0.12, delay: 0.12 });
+            }
+
+            loot() {
+                this.coin();
+            }
+
+            error() {
+                if (!this.throttled('error', 400)) return;
+                this.tone({ freq: 200, type: 'square', duration: 0.14, gain: 0.1 });
+            }
+
+            // --- Background music ---
+            // A slow drifting arpeggio over a soft drone. Scheduled with
+            // setInterval so it keeps time regardless of render frames.
+            startMusic() {
+                if (!this.started || this.musicTimer) return;
+                const bass = [110, 130.81, 98, 146.83];
+                const arp = [440, 523.25, 659.25, 523.25, 587.33, 440, 659.25, 523.25];
+                this.musicTimer = setInterval(() => {
+                    if (!this.started || this.muted || !this.ctx || this.ctx.state !== 'running') return;
+                    const bar = Math.floor(this.step / 8) % bass.length;
+                    this.tone({ freq: bass[bar], type: 'sine', duration: 1.6, gain: 0.22, dest: this.musicGain, attack: 0.35 });
+                    const note = arp[this.step % arp.length];
+                    this.tone({ freq: note, type: 'triangle', duration: 0.5, gain: 0.08, dest: this.musicGain, delay: 0.02 });
+                    this.step++;
+                }, 420);
+            }
+
+            stopMusic() {
+                if (this.musicTimer) { clearInterval(this.musicTimer); this.musicTimer = null; }
+            }
+        }
+
+        const audio = new AudioManager();
+
+        function toggleAudio() {
+            const muted = audio.toggleMute();
+            if (!muted) audio.startMusic();
+            addLog(muted ? '🔇 Sound muted' : '🔊 Sound enabled');
+        }
         let activeNpcId = null;
+        let activeDialogueNode = null;
         let activeTradeId = null;
         let tradeLocked = false;
         let pendingTradeRequest = null;
         let pendingPartyInvite = null;
+        let myGuild = null;
 
         function escapeHtml(value) {
             return String(value ?? "").replace(/[&<>'"]/g, character => ({
@@ -211,27 +838,74 @@
             }[character]));
         }
 
-        function addLog(msg) {
+        let chatMessages = [];
+        let activeChatTab = "all";
+
+        function setChatTab(tab) {
+            activeChatTab = tab;
+            ["all", "global", "zone", "party", "guild", "system"].forEach(t => {
+                document.getElementById("tab-" + t).style.color = (t === tab) ? "#fff" : "#aaa";
+                document.getElementById("tab-" + t).style.borderBottom = (t === tab) ? "2px solid #3b82f6" : "none";
+            });
+            renderChat();
+        }
+
+        function renderChat() {
             const c = document.getElementById("log-container");
-            const d = document.createElement("div");
-            d.innerText = msg;
-            if(msg.includes("DIED") || msg.includes("slain")) d.style.color = "#ff4444";
-            else if(msg.includes("Gold") || msg.includes("XP")) d.style.color = "#ffd700";
-            else if(msg.includes("QUEST")) d.style.color = "#ffcc44";
-            else if(msg.includes("Equipped")) d.style.color = "#aaffaa";
-            else if(msg.startsWith("[Party]")) d.style.color = "#00ff00";
-            else if(msg.startsWith("[Zone]")) d.style.color = "#00ffff";
-            c.appendChild(d);
+            c.innerHTML = "";
+            chatMessages.forEach(msg => {
+                if (activeChatTab === "all" || msg.channel === activeChatTab || (activeChatTab==="system" && msg.channel==="system")) {
+                    const d = document.createElement("div");
+                    d.innerText = msg.text;
+                    d.style.color = msg.color;
+                    c.appendChild(d);
+                }
+            });
             c.scrollTop = c.scrollHeight;
+        }
+
+        function addLog(msg, channel="system") {
+            let color = "#fff";
+            if(msg.includes("DIED") || msg.includes("slain")) color = "#ff4444";
+            else if(msg.includes("Gold") || msg.includes("XP")) color = "#ffd700";
+            else if(msg.includes("QUEST")) color = "#ffcc44";
+            else if(msg.includes("Equipped")) color = "#aaffaa";
+            else if(channel === "guild" || msg.startsWith("[Guild]")) { color = "#ff8800"; channel = "guild"; }
+            else if(channel === "party" || msg.startsWith("[Party]")) { color = "#00ff00"; channel = "party"; }
+            else if(channel === "zone" || msg.startsWith("[Zone]")) { color = "#00ffff"; channel = "zone"; }
+            else if(channel === "global") { color = "#ffffff"; }
+            
+            chatMessages.push({ text: msg, channel: channel, color: color });
+            if (chatMessages.length > 100) chatMessages.shift();
+            renderChat();
         }
 
         socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
             
-            if (data.action === "login_error") {
+            if (data.action === "login_error" || data.action === "auth_error") {
+                if (data.action === "auth_error") {
+                    document.getElementById("overlay").style.display = "block";
+                    document.getElementById("auth-error").innerText = data.message || "Authentication failed.";
+                    let a = document.getElementById("auth-modal"); a.style.display = "block"; a.classList.add("active");
+                    return;
+                }
                 document.getElementById("overlay").style.display = "block";
-                document.getElementById("class-modal").style.display = "block";
+                let b = document.getElementById("class-modal"); b.style.display = "block"; b.classList.add("active");
                 addLog("❌ " + (data.message || "Unable to log in."));
+            }
+            else if (data.action === "auth_required") {
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("auth-modal").style.display = "block";
+            }
+            else if (data.action === "auth_success") {
+                authToken = data.token;
+                document.getElementById("auth-modal").style.display = "none";
+                document.getElementById("class-modal").style.display = "block";
+                if (data.account && data.account.username) {
+                    document.getElementById("char-name").value = data.account.username;
+                    document.getElementById("char-name").readOnly = true;
+                }
             }
             else if (data.action === "show_class_select") {
                 document.getElementById("overlay").style.display = "block";
@@ -239,14 +913,14 @@
             }
             else if (data.action === "show_subclass_select") {
                 document.getElementById("overlay").style.display = "block";
-                document.getElementById("subclass-modal").style.display = "block";
+                let sub = document.getElementById("subclass-modal"); sub.style.display = "block"; sub.classList.add("active");
                 const options = data.subclasses || data.options || [];
                 let html = "";
                 options.forEach(opt => {
                     const id = typeof opt === "string" ? opt : opt.id;
                     const name = typeof opt === "string" ? opt : opt.name;
                     const description = typeof opt === "string" ? "" : (opt.description || "");
-                    html += "<div id='subclass-card-" + id + "' class='class-card subclass-card' onclick='selectSubclass(\"" + id + "\")'><h3 style='color:#00aaff; margin:0'>" + name + "</h3><p style='font-size:10px;color:#aaa'>" + description + "</p></div>";
+                    html += "<div id='subclass-card-" + escapeHtml(id) + "' class='class-card subclass-card' onclick='selectSubclass(\"" + escapeHtml(id) + "\")'><h3 style='color:#00aaff; margin:0'>" + escapeHtml(name) + "</h3><p style='font-size:10px;color:#aaa'>" + escapeHtml(description) + "</p></div>";
                 });
                 document.getElementById("subclass-options").innerHTML = html;
             }
@@ -304,6 +978,16 @@
                 document.getElementById("overlay").style.display = "none";
                 document.getElementById("trade-modal").style.display = "none";
             }
+            else if (data.action === "guild_sync") {
+                myGuild = data.guild;
+                const gList = document.getElementById("guild-list");
+                if (!myGuild) { gList.innerHTML = "<em style='color:#666'>No Guild</em>"; }
+                else {
+                    let h = "<b>" + escapeHtml(myGuild.name) + "</b><br/>Leader: " + escapeHtml(myGuild.leader) + "<br/>Members:<br/>";
+                    myGuild.members.forEach(m => h += "- " + escapeHtml(m) + "<br/>");
+                    gList.innerHTML = h;
+                }
+            }
             else if (data.action === "party_update" || data.action === "party_sync") {
                 if (data.party !== null && data.members && data.members.length > 0) pendingPartyInvite = null;
                 renderParty(data.party || data);
@@ -313,32 +997,75 @@
                 addLog("📨 " + pendingPartyInvite.inviter + " invited you to a party.");
                 renderParty({ members: [] });
             }
-            else if (data.action === "map_data") { obstacles = data.obstacles; }
+            else if (data.action === "map_data") { 
+                obstacles = data.obstacles; 
+                if (data.width) MAP_W = data.width;
+                if (data.height) MAP_H = data.height;
+                if (data.safeZone) SAFE_ZONE = data.safeZone;
+                obstacleSet.clear();
+                obstacles.forEach(o => obstacleSet.add(o.x + "," + o.y));
+            }
             else if (data.action === "time_sync") { isDay = data.isDay; }
-            else if (data.action === "fct") { fcts.push({ text: data.text, x: data.x, y: data.y, color: data.color, life: 1.0 }); }
+            else if (data.action === "fct") {
+                fcts.push({ text: data.text, x: data.x, y: data.y, color: data.color, life: 1.0, driftX: (Math.random() - 0.5) * 40 });
+                // Floating combat text is how the server reports loot and XP.
+                if (/^\+.*Gold$|^\+\d+G$/.test(data.text || "")) audio.loot();
+            }
+else if (data.action === "spell_anim") {
+                let color = "rgba(255, 255, 255, 0.5)";
+                let radius = 30;
+                if (data.type === 'cleave') { color = "rgba(255, 50, 50, 0.6)"; radius = 60; }
+                else if (data.type === 'charge') { color = "rgba(200, 200, 200, 0.8)"; radius = 40; }
+                else if (data.type === 'fireball') { color = "rgba(255, 100, 0, 0.7)"; radius = 80; }
+                else if (data.type === 'frostnova') { color = "rgba(100, 200, 255, 0.6)"; radius = 100; }
+                else if (data.type === 'multishot') { color = "rgba(150, 255, 150, 0.6)"; radius = 50; }
+                else if (data.type === 'trap') { color = "rgba(100, 100, 100, 0.8)"; radius = 40; }
+                else if (data.type === 'heal') { color = "rgba(50, 255, 50, 0.6)"; radius = 40; }
+                else if (data.type === 'smite') { color = "rgba(255, 255, 100, 0.8)"; radius = 40; }
+                
+                bossAoeEffects.push({ x: data.x, y: data.y, radius: radius, state: "detonate", type: data.type });
+                setTimeout(() => { bossAoeEffects.pop(); }, 300);
+                audio.spellBlast();
+            }
             else if (data.action === "your_id") { myId = data.id; myName = data.name; }
             else if (data.action === "force_position") { player.x = data.x; player.y = data.y; }
             else if (data.action === "mob_update") {
-                if (data.alive) mobs[data.id] = { x: data.x, y: data.y, id: data.id, hp: data.hp, maxHp: data.maxHp, isElite: data.isElite, isBoss: data.isBoss, name: data.name, type: data.type };
+                if (data.alive) { 
+                    if(!mobs[data.id]) mobs[data.id] = { x: data.x, y: data.y, id: data.id, hp: data.hp, maxHp: data.maxHp, isElite: data.isElite, isBoss: data.isBoss, name: data.name, type: data.type, phase: data.phase || 1, renderX: data.x, renderY: data.y }; 
+                    else { mobs[data.id].hp = data.hp; mobs[data.id].maxHp = data.maxHp; mobs[data.id].x = data.x; mobs[data.id].y = data.y; } 
+                }
                 else { delete mobs[data.id]; if (currentTargetId === data.id) currentTargetId = null; }
+            }
+            else if (data.action === "phase_change") {
+                if (mobs[data.id]) mobs[data.id].phase = data.phase;
             }
             else if (data.action === "mob_move") {
                 if (mobs[data.id]) { mobs[data.id].x = data.x; mobs[data.id].y = data.y; }
             }
+            else if (data.action === "corpse_spawn") { clientCorpses[data.corpse.id] = data.corpse; }
+            else if (data.action === "corpse_remove") { delete clientCorpses[data.id]; }
             else if (data.action === "chest_update") { if (data.active) chests[data.id] = { x: data.x, y: data.y }; else delete chests[data.id]; }
             else if (data.action === "npc_sync") { npcsLocal[data.id] = { x: data.x, y: data.y, name: data.name, id: data.id }; }
             else if (data.action === "node_sync") { gatherNodes[data.id] = { x: data.x, y: data.y, name: data.name, color: data.color, symbol: data.symbol }; }
             else if (data.action === "node_remove") { delete gatherNodes[data.id]; }
             else if (data.action === "players_sync") {
-                otherPlayers = {}; 
+                let newIds = data.players.map(p => p.id);
                 data.players.forEach(p => { 
-                    if (p.id !== myId) otherPlayers[p.id] = { x: p.x, y: p.y, classType: p.classType, name: p.name, warmode: p.warmode }; 
-                    else { player.x = p.x; player.y = p.y; player.classType = p.classType; player.warmode = p.warmode; }
+                    if (p.id !== myId) {
+                        if (!otherPlayers[p.id]) otherPlayers[p.id] = { x: p.x, y: p.y, renderX: p.x, renderY: p.y, classType: p.classType, name: p.name, warmode: p.warmode };
+                        else { otherPlayers[p.id].x = p.x; otherPlayers[p.id].y = p.y; otherPlayers[p.id].classType = p.classType; otherPlayers[p.id].warmode = p.warmode; }
+                    } else { player.x = p.x; player.y = p.y; player.classType = p.classType; player.warmode = p.warmode; }
                 });
+                for (let id in otherPlayers) { if (!newIds.includes(id)) delete otherPlayers[id]; }
             }
             else if (data.action === "player_left") { delete otherPlayers[data.id]; }
             else if (data.action === "status") {
                 player.classType = data.classType;
+                // Level-up fanfare fires on the transition, not every tick.
+                if (lastKnownLevel && data.level > lastKnownLevel) audio.levelUp();
+                if (lastKnownHp && data.hp < lastKnownHp) audio.hurt();
+                lastKnownLevel = data.level;
+                lastKnownHp = data.hp;
                 myLevel = data.level;
                 const evolveButton = document.getElementById("btn-evolve");
                 if (evolveButton) evolveButton.disabled = Boolean(data.subclass) || data.level < 10;
@@ -358,13 +1085,19 @@
                 else if(data.classType==="healer") btnSkill.innerText = "💚 Heal (Press 2)";
                 
                 if (data.equipment) {
-                    document.getElementById("equip-helmet").innerText = "Helmet: " + (data.equipment.helmet || "None");
-                    document.getElementById("equip-amulet").innerText = "Amulet: " + (data.equipment.amulet || "None");
-                    document.getElementById("equip-weapon").innerText = "Weapon: " + (data.equipment.weapon || "None");
-                    document.getElementById("equip-shield").innerText = "Shield: " + (data.equipment.shield || "None");
-                    document.getElementById("equip-armor").innerText = "Armor: " + (data.equipment.armor || "None");
-                    document.getElementById("equip-legs").innerText = "Legs: " + (data.equipment.legs || "None");
-                    document.getElementById("equip-boots").innerText = "Boots: " + (data.equipment.boots || "None");
+                    const slots = ['helmet', 'amulet', 'weapon', 'shield', 'armor', 'legs', 'boots'];
+                    slots.forEach(slot => {
+                        const el = document.getElementById("eq-" + slot);
+                        if (el) {
+                            if (data.equipment[slot]) {
+                                el.innerText = data.equipment[slot];
+                                el.classList.add("filled");
+                            } else {
+                                el.innerText = slot.charAt(0).toUpperCase() + slot.slice(1);
+                                el.classList.remove("filled");
+                            }
+                        }
+                    });
                 }
                 
                 speedBonus = data.speedBonus || 0;
@@ -380,15 +1113,28 @@
             }
             else if (data.action === "chat") {
                 const channelLabel = data.channel === "party" ? "[Party]" : data.channel === "zone" ? "[Zone]" : "[Global]";
-                addLog(channelLabel + " " + (data.sender || data.name || "Player") + ": " + (data.text || ""));
+                addLog(channelLabel + " " + (data.sender || data.name || "Player") + ": " + (data.text || ""), data.channel || "global");
             }
             else if (data.action === "quest_journal") { renderQuestJournal(data); }
             else if (data.action === "npc_dialogue") { showNPCDialog(data); }
-            else if (data.action === "log") { addLog(data.message); }
+            else if (data.action === "npc_dialogue_close") {
+                activeNpcId = null;
+                activeDialogueNode = null;
+                document.getElementById("npc-dialog").style.display = "none";
+                document.getElementById("overlay").style.display = "none";
+            }
+            else if (data.action === "log") {
+                addLog(data.message);
+                const msg = data.message || "";
+                if (msg.includes("[QUEST]")) audio.questUpdate();
+                else if (msg.includes("cannot") || msg.includes("Cannot") || msg.includes("must be near")) audio.error();
+                else if (msg.includes("Received:")) audio.loot();
+            }
             else if (data.action === "open_shop") {
                 document.getElementById("overlay").style.display = "block";
                 document.getElementById("shop-modal").style.display = "block";
                 document.getElementById("shop-player-gold").innerText = data.gold;
+                audio.coin();
                 
                 let buyHtml = "";
                 for (let item in data.inventory) {
@@ -397,6 +1143,24 @@
                 }
                 document.getElementById("shop-buy-list").innerHTML = buyHtml;
                 renderShopSellList();
+            }
+            else if (data.action === "crafting_open") { openCrafting(data); }
+            else if (data.action === "crafting_sync") {
+                renderCraftingList(data.recipes);
+                if (Array.isArray(data.inventory)) {
+                    myInventoryData = data.inventory;
+                    const invEl = document.getElementById("inventory-list");
+                    if (myInventoryData.length > 0) {
+                        const counts = {};
+                        myInventoryData.forEach(i => counts[i] = (counts[i] || 0) + 1);
+                        invEl.innerHTML = Object.keys(counts).map(k =>
+                            "<div class='inv-item' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='Click to equip/use'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
+                        ).join("");
+                    } else {
+                        invEl.innerHTML = "<em style=\"color:#666\">Empty</em>";
+                    }
+                }
+                audio.questUpdate();
             }
             else if (data.action === "shop_sync") {
                 myGold = data.gold;
@@ -467,16 +1231,79 @@
             let sellHtml = "";
             let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
             for (let item in counts) {
-                sellHtml += "<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span>" + item + " x" + counts[item] + "</span><button onclick='shopSell(\"" + item + "\")' style='background:#aa4444; border:none; color:white; padding:2px 5px; cursor:pointer'>Sell</button></div>";
+                sellHtml += "<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span>" + escapeHtml(item) + " x" + counts[item] + "</span><button onclick='shopSell(\"" + escapeHtml(item) + "\")' style='background:#aa4444; border:none; color:white; padding:2px 5px; cursor:pointer'>Sell</button></div>";
             }
             if (myInventoryData.length === 0) sellHtml = "<em>Empty</em>";
             document.getElementById("shop-sell-list").innerHTML = sellHtml;
         }
-        function shopBuy(itemName) { socket.send(JSON.stringify({ action: "buy_item", item: itemName })); }
-        function shopSell(itemName) { socket.send(JSON.stringify({ action: "sell_item", item: itemName })); }
+        function shopBuy(itemName) {
+            audio.coin();
+            socket.send(JSON.stringify({ action: "buy_item", item: itemName }));
+        }
+        function shopSell(itemName) {
+            audio.coin();
+            socket.send(JSON.stringify({ action: "sell_item", item: itemName }));
+        }
         function closeShop() {
             document.getElementById("overlay").style.display = "none";
             document.getElementById("shop-modal").style.display = "none";
+        }
+
+        // === Crafting UI ===
+        let craftRecipes = [];
+
+        function renderCraftingList(recipes) {
+            craftRecipes = Array.isArray(recipes) ? recipes : [];
+            const list = document.getElementById("craft-list");
+            if (craftRecipes.length === 0) {
+                list.innerHTML = "<em style='color:#666'>No recipes known.</em>";
+                return;
+            }
+            const html = craftRecipes.map(r => {
+                const inputs = Object.entries(r.inputs || {}).map(([item, qty]) => {
+                    const miss = (r.missing || []).find(m => m.item === item);
+                    const color = miss ? '#f87171' : '#4ade80';
+                    const detail = miss ? ` <span style="color:#64748b">(${miss.have}/${miss.required})</span>` : '';
+                    return `<span style="color:${color}">${escapeHtml(item)} x${qty}${detail}</span>`;
+                }).join(' <span style="color:#64748b">+</span> ');
+
+                const disabled = r.canCraft ? '' : 'disabled';
+                const opacity = r.canCraft ? '1' : '0.45';
+                const status = r.canCraft
+                    ? ''
+                    : (r.locked ? `<div style="font-size:10px; color:#fbbf24; margin-top:2px;">Requires level ${escapeHtml(String(r.level))}</div>`
+                                : `<div style="font-size:10px; color:#94a3b8; margin-top:2px;">Missing materials</div>`);
+
+                return `<div style="background:rgba(15,23,42,0.5); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:10px; margin-bottom:8px; opacity:${opacity}">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                        <div style="flex:1;">
+                            <strong style="color:#e2e8f0; font-size:13px;">${escapeHtml(r.name)}${r.count > 1 ? ` <span style="color:#94a3b8;font-weight:400;">x${escapeHtml(String(r.count))}</span>` : ''}</strong>
+                            <div style="font-size:11px; color:#94a3b8; margin-top:3px;">${inputs}</div>
+                            <div style="font-size:11px; color:#64748b; margin-top:2px;">${escapeHtml(r.description || '')}</div>
+                            ${status}
+                        </div>
+                        <button class="btn-spell" style="width:auto; margin:0; padding:8px 14px;" onclick="craftItem('${escapeHtml(r.id)}')" ${disabled}>Craft</button>
+                    </div>
+                </div>`;
+            }).join('');
+            list.innerHTML = html;
+        }
+
+        function openCrafting(data) {
+            document.getElementById("overlay").style.display = "block";
+            document.getElementById("craft-modal").style.display = "block";
+            document.getElementById("craft-level").innerText = Number(data.level) || 1;
+            renderCraftingList(data.recipes);
+        }
+
+        function closeCrafting() {
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("craft-modal").style.display = "none";
+        }
+
+        function craftItem(recipeId) {
+            audio.coin();
+            socket.send(JSON.stringify({ action: "craft_item", recipe_id: recipeId }));
         }
 
         function clickItem(name) {
@@ -493,10 +1320,14 @@
         }
         function unequip(slot) { socket.send(JSON.stringify({ action: "unequip_item", slot: slot })); }
         function useItem(itemName) { socket.send(JSON.stringify({ action: "use_item", item: itemName })); }
-        function castPurify() { socket.send(JSON.stringify({ action: "cast_purify" })); }
-        function castSkill() { 
+        function castPurify() {
+            audio.spellBlast();
+            socket.send(JSON.stringify({ action: "cast_purify" }));
+        }
+        function castSkill() {
+            audio.spellBlast();
             if (player.classType === "healer") socket.send(JSON.stringify({ action: "cast_heal" }));
-            else socket.send(JSON.stringify({ action: "cast_skill" }));
+            else socket.send(JSON.stringify({ action: "cast_spell" }));
         }
         function requestEvolve() {
             socket.send(JSON.stringify({ action: "evolve" }));
@@ -555,22 +1386,46 @@
         }
         function selectSubclass(sc) { socket.send(JSON.stringify({ action: "select_subclass", subclassId: sc })); }
 
+        function submitAuth(type) {
+            const user = document.getElementById("auth-username").value;
+            const pass = document.getElementById("auth-password").value;
+            if (!user || !pass) {
+                document.getElementById("auth-error").innerText = "Please enter username and password.";
+                return;
+            }
+            document.getElementById("auth-error").innerText = "Loading...";
+            socket.send(JSON.stringify({ action: "auth_" + type, username: user, password: pass }));
+        }
+
         function login(cls) {
             const name = document.getElementById("char-name").value;
             const warmode = document.getElementById("warmode").checked;
             document.getElementById("overlay").style.display = "none";
             document.getElementById("class-modal").style.display = "none";
-            socket.send(JSON.stringify({ action: "login", class: cls, name: name, warmode: warmode }));
+            socket.send(JSON.stringify({ action: "login", class: cls, name: name, warmode: warmode, authToken: authToken }));
         }
 
         let lastMoveTime = 0;
         function isWalkable(nx, ny) {
             if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) return false;
-            for(let i=0; i<obstacles.length; i++) {
-                if(obstacles[i].x === nx && obstacles[i].y === ny) return false;
-            }
-            return true;
+            return !obstacleSet.has(nx + "," + ny);
         }
+
+        // Browsers only allow audio to start from a user gesture, so the
+        // context is created on the first interaction and the music begins
+        // as soon as it is running.
+        ["pointerdown", "keydown", "touchstart"].forEach(evt => {
+            window.addEventListener(evt, () => {
+                if (!audio.started) {
+                    if (audio.init()) {
+                        audio.startMusic();
+                        addLog('🔊 Sound enabled');
+                    }
+                } else {
+                    audio.resume();
+                }
+            }, { once: false });
+        });
 
         document.addEventListener("keydown", (e) => {
             if (document.getElementById("overlay").style.display === "block") return;
@@ -595,6 +1450,8 @@
             else if (e.key === "ArrowLeft" || e.key === "a") dx = -32;
             else if (e.key === "ArrowRight" || e.key === "d") dx = 32;
             else if (e.key === "Enter") chatInput.focus();
+if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 1 })); return; }
+            if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); return; }
             
             if (dx||dy) {
                 const clientMoveSpeed = Math.max(80, 300 - (myLevel * 3) - speedBonus) + 10;
@@ -610,10 +1467,17 @@
 
             if (e.key === "1") castPurify();
             if (e.key === "2") castSkill();
+            if (e.key === "m" || e.key === "M") toggleAudio();
             if (e.key === "3") useItem("Health Potion");
             if (e.key === "4") useItem("Mana Potion");
             if (e.key === "Escape") currentTargetId = null;
             if (e.key === "e" || e.key === "E") {
+                for(let id in clientCorpses) {
+                    if(Math.abs(player.x - clientCorpses[id].x) + Math.abs(player.y - clientCorpses[id].y) <= 64) {
+                        socket.send(JSON.stringify({ action: "interact_corpse", id: id }));
+                        return;
+                    }
+                }
                 for(let id in npcsLocal) {
                     const npc = npcsLocal[id];
                     if(Math.abs(player.x - npc.x) + Math.abs(player.y - npc.y) <= 96) {
@@ -670,15 +1534,47 @@
 
         function showNPCDialog(data) {
             activeNpcId = data.npc_id || null;
+            activeDialogueNode = data.node_id || null;
             document.getElementById("overlay").style.display = "block";
             document.getElementById("npc-dialog").style.display = "block";
             document.getElementById("dialog-npc-name").innerText = data.npc_name;
             const content = document.getElementById("dialog-content");
-            let html = "<p>I have some tasks for you:</p>";
-            data.quests.forEach(q => {
-                html += "<div style='background:#2a2a2a; padding:10px; margin-bottom:5px; border-radius:5px;'><strong style='color:#ffcc44'>" + escapeHtml(q.name) + "</strong><br><span style='font-size:12px'>" + escapeHtml(q.description || q.desc || '') + "</span><br><button onclick='acceptQuest(\"" + escapeHtml(q.id) + "\")' style='margin-top:5px; background:#44aa44; color:white; border:none; padding:5px 10px; cursor:pointer'>Accept Quest</button></div>";
+
+            // Dialogue-tree shape: server-sent prose plus a list of choices.
+            if (Array.isArray(data.choices)) {
+                let html = "<p style='font-size:13px; line-height:1.5; margin-bottom:12px;'>" + escapeHtml(data.text || '') + "</p>";
+                if (data.choices.length > 0) {
+                    html += "<div style='display:flex; flex-direction:column; gap:6px;'>";
+                    data.choices.forEach(choice => {
+                        const next = choice.next ? escapeHtml(choice.next) : "";
+                        const label = escapeHtml(choice.text || "");
+                        html += "<button class='btn-dialogue' onclick='chooseDialogue(\"" + escapeHtml(data.node_id || "") + "\", \"" + escapeHtml(choice.id) + "\")'>" + label + "</button>";
+                    });
+                    html += "</div>";
+                } else {
+                    html += "<button class='btn-dialogue' onclick='closeNpcDialog()' style='background:#334155;'>End conversation</button>";
+                }
+                content.innerHTML = html;
+                return;
+            }
+
+            // Legacy shape: a flat list of quests to accept.
+            const quests = Array.isArray(data.quests) ? data.quests : [];
+            let legacy = "<p>I have some tasks for you:</p>";
+            quests.forEach(q => {
+                legacy += "<div style='background:#2a2a2a; padding:10px; margin-bottom:5px; border-radius:5px;'><strong style='color:#ffcc44'>" + escapeHtml(q.name) + "</strong><br><span style='font-size:12px'>" + escapeHtml(q.description || q.desc || '') + "</span><br><button onclick='acceptQuest(\"" + escapeHtml(q.id) + "\")' style='margin-top:5px; background:#44aa44; color:white; border:none; padding:5px 10px; cursor:pointer'>Accept Quest</button></div>";
             });
-            content.innerHTML = html;
+            content.innerHTML = legacy;
+        }
+
+        function chooseDialogue(nodeId, choiceId) {
+            if (!activeNpcId || !socket || socket.readyState !== 1) return;
+            socket.send(JSON.stringify({
+                action: "dialogue_choice",
+                npc_id: activeNpcId,
+                node_id: nodeId,
+                choice_id: choiceId
+            }));
         }
 
         function acceptQuest(qid) {
@@ -693,11 +1589,20 @@
         function renderQuestJournal(data) {
             const ql = document.getElementById("quest-list");
             let html = "<div style=\"font-size:12px; margin-bottom:8px; color:#aaa\">Completed: " + data.completed_count + "</div>";
-            if (data.quests.length === 0) { html += "<em style=\"color:#666;font-size:11px\">No active quests.</em>"; }
+            if (!Array.isArray(data.quests) || data.quests.length === 0) { html += "<em style=\"color:#666;font-size:11px\">No active quests.</em>"; }
             else {
                 data.quests.forEach(q => {
-                    html += "<div style=\"background:#222; padding:5px; margin-bottom:5px; border-left:3px solid #ffcc44\"><strong style=\"font-size:13px\">" + escapeHtml(q.name) + "</strong><br>";
-                    q.objectives.forEach(o => { html += "<div style=\"font-size:11px; color:" + (o.done ? "#44ff44" : "#ccc") + "\">" + (o.done ? "?" : "?") + " " + o.text + " " + o.progress + "</div>"; });
+                    html += "<div style=\"background:#222; padding:5px; margin-bottom:5px; border-left:3px solid #ffcc44\"><strong style=\"font-size:13px\">" + escapeHtml(q.name) + "</strong>";
+                    if (q.step) {
+                        html += "<div style=\"font-size:10px; color:#fbbf24; margin-top:2px;\">Step " + (Number(q.step.index) + 1) + " of " + Number(q.step.count) + (q.step.awaiting_turn_in ? " &middot; return to the giver" : "") + "</div>";
+                        if (q.step.text) html += "<div style=\"font-size:11px; color:#e2e8f0; font-style:italic; margin-top:2px;\">" + escapeHtml(q.step.text) + "</div>";
+                    }
+                    html += "<br>";
+                    (Array.isArray(q.objectives) ? q.objectives : []).forEach(o => {
+                        const done = o.done === true;
+                        const tick = done ? "&#10003;" : "&#9675;";
+                        html += "<div style=\"font-size:11px; color:" + (done ? "#44ff44" : "#ccc") + "\">" + tick + " " + escapeHtml(o.text || "") + " " + escapeHtml(String(o.progress || "")) + "</div>";
+                    });
                     html += "</div>";
                 });
             }
@@ -714,11 +1619,20 @@
             ctx.save();
             ctx.translate(-cameraX, -cameraY);
 
-            ctx.fillStyle = "#8f9779"; ctx.fillRect(0, 0, 1600, 1600);
-            ctx.fillStyle = "#2d5a27"; ctx.fillRect(1600, 0, 1600, 1600);
-            ctx.fillStyle = "#e0f7fa"; ctx.fillRect(0, 1600, 1600, 1600);
-            ctx.fillStyle = "#5d4037"; ctx.fillRect(1600, 1600, 1600, 1600);
-            ctx.fillStyle = "rgba(0, 255, 100, 0.2)"; ctx.fillRect(0, 0, 640, 640);
+            // Background color base
+            ctx.fillStyle = "#1e1e2f"; ctx.fillRect(0, 0, MAP_W, MAP_H);
+            
+            // Draw regions
+            ctx.fillStyle = "#2c4021"; ctx.fillRect(800, 0, 1200, 1200); // Forest
+            ctx.fillStyle = "#6b5b40"; ctx.fillRect(2000, 0, 1200, 1600); // Eastern Ruins
+            ctx.fillStyle = "#2a3b32"; ctx.fillRect(0, 800, 1600, 1000); // Swamp
+            ctx.fillStyle = "#e0f7fa"; ctx.fillRect(1600, 1600, 1600, 1000); // Snow Mountain
+            ctx.fillStyle = "#d4b872"; ctx.fillRect(0, 1800, 1600, 1400); // Desert
+            ctx.fillStyle = "#111118"; ctx.fillRect(1600, 2600, 1600, 600); // Crypt
+            
+            // City safe zone
+            ctx.fillStyle = "#4a5d4e"; ctx.fillRect(0, 0, 800, 800); // City base
+            ctx.fillStyle = "rgba(0, 255, 100, 0.15)"; ctx.fillRect(0, 0, 640, 640); // Safe zone aura
 
             ctx.strokeStyle = "rgba(0,0,0,0.1)";
             for (let x = 0; x <= MAP_W; x += 32) {
@@ -732,7 +1646,11 @@
                 if (obs.x < cameraX - 32 || obs.x > cameraX + SCREEN_W || obs.y < cameraY - 32 || obs.y > cameraY + SCREEN_H) return;
                 if (obs.type === "tree") { ctx.fillStyle = "#1b3e15"; ctx.fillRect(obs.x, obs.y, 32, 32); } 
                 else if (obs.type === "rock") { ctx.fillStyle = "#757575"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 16, 14, 0, Math.PI*2); ctx.fill(); } 
-                else if (obs.type === "wall") { ctx.fillStyle = "#2a2a2a"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                else if (obs.type === "wall") { ctx.fillStyle = "#222"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                else if (obs.type === "ruin_wall") { ctx.fillStyle = "#4a4a40"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                else if (obs.type === "water") { ctx.fillStyle = "rgba(40, 150, 120, 0.7)"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                else if (obs.type === "cactus") { ctx.fillStyle = "#2b6b25"; ctx.fillRect(obs.x + 8, obs.y + 4, 16, 24); }
+                else if (obs.type === "gravestone") { ctx.fillStyle = "#555"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 12, 10, 0, Math.PI, true); ctx.fillRect(obs.x + 6, obs.y + 12, 20, 16); ctx.fill(); }
             });
 
             for (let id in gatherNodes) {
@@ -740,33 +1658,64 @@
                 ctx.fillStyle = n.color; ctx.beginPath(); ctx.arc(n.x + 16, n.y + 16, 10, 0, Math.PI * 2); ctx.fill();
                 ctx.fillStyle = "#000"; ctx.font = "10px Arial"; ctx.fillText(n.symbol, n.x + 12, n.y + 20);
             }
+            for (let id in clientCorpses) {
+                let corpse = clientCorpses[id];
+                ctx.font = "24px Arial"; ctx.fillText("☠️", corpse.x + 4, corpse.y + 24);
+            }
             for (let id in chests) {
                 let c = chests[id];
-                ctx.fillStyle = "#8b4513"; ctx.fillRect(c.x + 4, c.y + 8, 24, 16);
-                ctx.fillStyle = "#ffd700"; ctx.fillRect(c.x + 14, c.y + 12, 4, 4);
+                ctx.font = "24px Arial"; ctx.fillText("🎁", c.x + 4, c.y + 24);
             }
             for (let id in npcsLocal) {
                 let npc = npcsLocal[id];
-                ctx.fillStyle = "#ffccaa"; ctx.fillRect(npc.x + 4, npc.y + 4, 24, 24);
-                ctx.fillStyle = "#fff"; ctx.font = "12px Arial"; ctx.fillText(npc.name, npc.x, npc.y - 5);
-                ctx.fillStyle = "#ffcc44"; ctx.fillText("!", npc.x + 12, npc.y - 18);
+                const isBench = npc.name === "Workbench";
+                if (isBench) {
+                    ctx.fillStyle = "#8a5a2b";
+                    ctx.fillRect(npc.x + 2, npc.y + 10, 28, 18);
+                    ctx.fillStyle = "#c98f4e";
+                    ctx.fillRect(npc.x + 2, npc.y + 10, 28, 4);
+                    ctx.fillStyle = "#fbbf24";
+                    ctx.fillRect(npc.x + 8, npc.y + 18, 4, 4);
+                    ctx.fillRect(npc.x + 20, npc.y + 18, 4, 4);
+                } else {
+                    ctx.font = "28px Arial"; ctx.fillText("🧙‍♂️", npc.x + 2, npc.y + 26);
+                }
+                ctx.fillStyle = "#fff"; ctx.font = "bold 12px 'Inter', sans-serif"; ctx.fillText(npc.name, npc.x - 4, npc.y - 8);
+                if (!isBench) { ctx.fillStyle = "#fbbf24"; ctx.fillText("!", npc.x + 12, npc.y - 22); }
             }
 
             for (let id in mobs) {
                 let m = mobs[id];
+                if (m.renderX === undefined) { m.renderX = m.x; m.renderY = m.y; }
+                m.renderX += (m.x - m.renderX) * 0.2;
+                m.renderY += (m.y - m.renderY) * 0.2;
                 let isBoss = m.isBoss;
                 let size = isBoss ? 48 : 32;
-                let drawX = m.x - (size - 32)/2;
-                let drawY = m.y - (size - 32)/2;
+                let drawX = m.renderX - (size - 32)/2;
+                let drawY = m.renderY - (size - 32)/2;
 
-                if (m.isElite) { ctx.fillStyle = "rgba(255,0,0,0.3)"; ctx.beginPath(); ctx.arc(m.x + 16, m.y + 16, 20, 0, Math.PI*2); ctx.fill(); }
+                if (m.isElite) { ctx.fillStyle = "rgba(255,0,0,0.2)"; ctx.beginPath(); ctx.arc(m.renderX + 16, m.renderY + 16, 20, 0, Math.PI*2); ctx.fill(); }
                 if (isBoss) { 
-                    ctx.fillStyle = "rgba(128,0,128,0.4)"; 
-                    ctx.beginPath(); ctx.arc(m.x + 16, m.y + 16, 32, 0, Math.PI*2); ctx.fill(); 
+                    const isEnraged = m.phase === 2;
+                    ctx.fillStyle = isEnraged ? "rgba(255,100,0,0.3)" : "rgba(128,0,128,0.2)"; 
+                    ctx.beginPath(); ctx.arc(m.renderX + 16, m.renderY + 16, 32, 0, Math.PI*2); ctx.fill(); 
+                    if (isEnraged) {
+                        ctx.fillStyle = "#ef4444";
+                        ctx.font = "bold 14px 'Inter'";
+                        ctx.fillText("ENRAGED", drawX - 10, drawY - 25);
+                    }
                 }
 
-                ctx.fillStyle = m.type === "spider" ? "#cc2222" : m.type === "skeleton" ? "#e0e0e0" : m.type === "minotaur" ? "#884422" : m.type === "bear" ? "#5c4033" : m.type === "yeti" ? "#ffffff" : "#555555";
-                ctx.fillRect(drawX, drawY, size, size);
+                let emoji = "👾";
+                if (m.type === "spider") emoji = isBoss ? "🕷️👑" : "🕷️";
+                else if (m.type === "skeleton") emoji = isBoss ? "💀👑" : "💀";
+                else if (m.type === "minotaur") emoji = "🐂";
+                else if (m.type === "bear") emoji = "🐻";
+                else if (m.type === "yeti") emoji = "⛄";
+                else if (m.type === "dragon") emoji = "🐉"; 
+                
+                ctx.font = isBoss ? "40px Arial" : "28px Arial";
+                ctx.fillText(emoji, drawX, drawY + size - 4);
                 ctx.fillStyle = "red"; ctx.fillRect(drawX, drawY - 8, size, 4);
                 ctx.fillStyle = "#00ff00"; ctx.fillRect(drawX, drawY - 8, size * (m.hp / m.maxHp), 4);
                 
@@ -793,15 +1742,34 @@
 
             for (let id in otherPlayers) {
                 let op = otherPlayers[id];
-                ctx.fillStyle = op.warmode ? "#ff8888" : "#8888ff"; ctx.beginPath(); ctx.arc(op.x + 16, op.y + 16, 14, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = "white"; ctx.font = "12px Arial"; ctx.fillText(op.name, op.x - 5, op.y - 5);
-                if (currentTargetId === id) { ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.strokeRect(op.x, op.y, 32, 32); ctx.lineWidth = 1; }
+                if (op.renderX === undefined) { op.renderX = op.x; op.renderY = op.y; }
+                op.renderX += (op.x - op.renderX) * 0.2;
+                op.renderY += (op.y - op.renderY) * 0.2;
+                if (op.warmode) { ctx.fillStyle = "rgba(239, 68, 68, 0.4)"; ctx.beginPath(); ctx.arc(op.renderX + 16, op.renderY + 16, 16, 0, Math.PI * 2); ctx.fill(); }
+                
+                const opSprite = getSprite(op.classType);
+                if (opSprite) {
+                    ctx.drawImage(opSprite, op.renderX, op.renderY, 32, 32);
+                } else {
+                    let emoji = op.classType === "warrior" ? "⚔️" : op.classType === "mage" ? "🧙" : op.classType === "ranger" ? "🏹" : "👼";
+                    ctx.font = "24px Arial"; ctx.fillText(emoji, op.renderX + 4, op.renderY + 24);
+                }
+                
+                ctx.fillStyle = "white"; ctx.font = "bold 11px 'Inter'"; ctx.fillText(op.name, op.renderX - 5, op.renderY - 8);
+                if (currentTargetId === id) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(op.renderX, op.renderY, 32, 32); ctx.lineWidth = 1; }
             }
 
-            ctx.fillStyle = player.classType === "warrior" ? "#ffaa00" : player.classType === "mage" ? "#00aaff" : "#55ff55";
-            ctx.beginPath(); ctx.arc(player.x + 16, player.y + 16, 14, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = "white"; ctx.font = "bold 12px Arial"; ctx.fillText(myName, player.x - 5, player.y - 5);
-            if (currentTargetId === myId) { ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.strokeRect(player.x, player.y, 32, 32); ctx.lineWidth = 1; }
+            if (player.warmode) { ctx.fillStyle = "rgba(239, 68, 68, 0.4)"; ctx.beginPath(); ctx.arc(player.x + 16, player.y + 16, 16, 0, Math.PI * 2); ctx.fill(); }
+            const mySprite = getSprite(player.classType);
+            if (mySprite) {
+                ctx.drawImage(mySprite, player.x, player.y, 32, 32);
+            } else {
+                let myEmoji = player.classType === "warrior" ? "⚔️" : player.classType === "mage" ? "🧙" : player.classType === "ranger" ? "🏹" : "👼";
+                ctx.font = "24px Arial"; ctx.fillText(myEmoji, player.x + 4, player.y + 24);
+            }
+            
+            ctx.fillStyle = "#fbbf24"; ctx.font = "bold 12px 'Inter'"; ctx.fillText(myName, player.x - 5, player.y - 8);
+            if (currentTargetId === myId) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(player.x, player.y, 32, 32); ctx.lineWidth = 1; }
 
             ctx.restore();
 
@@ -814,19 +1782,132 @@
 
             for (let i = fcts.length - 1; i >= 0; i--) {
                 let f = fcts[i];
-                ctx.fillStyle = f.color; ctx.font = "bold 14px Arial";
-                ctx.fillText(f.text, f.x - cameraX, f.y - cameraY - (1 - f.life) * 30);
-                f.life -= 0.02; if (f.life <= 0) fcts.splice(i, 1);
+                let alpha = f.life > 0.5 ? 1 : f.life * 2;
+                let offsetY = (1 - Math.pow(f.life, 3)) * 40;
+                let offsetX = f.driftX * (1 - f.life);
+                
+                ctx.globalAlpha = alpha;
+                ctx.font = "800 16px 'Inter', sans-serif";
+                
+                // Text shadow for pop
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.fillText(f.text, f.x - cameraX + offsetX + 1, f.y - cameraY - offsetY + 1);
+                ctx.fillText(f.text, f.x - cameraX + offsetX - 1, f.y - cameraY - offsetY - 1);
+                
+                ctx.fillStyle = f.color; 
+                ctx.fillText(f.text, f.x - cameraX + offsetX, f.y - cameraY - offsetY);
+                ctx.globalAlpha = 1.0;
+                
+                f.life -= 0.015; if (f.life <= 0) fcts.splice(i, 1);
             }
 
-            const MM_W = 100, MM_H = 100, MM_X = SCREEN_W - MM_W - 10, MM_Y = SCREEN_H - MM_H - 10;
-            ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(MM_X, MM_Y, MM_W, MM_H);
-            ctx.strokeStyle = "#444"; ctx.strokeRect(MM_X, MM_Y, MM_W, MM_H);
-            ctx.fillStyle = "rgba(0,255,100,0.5)"; ctx.fillRect(MM_X, MM_Y, (640/MAP_W)*MM_W, (640/MAP_H)*MM_H);
-            ctx.fillStyle = "#ffaa00"; ctx.fillRect(MM_X + (player.x/MAP_W)*MM_W, MM_Y + (player.y/MAP_H)*MM_H, 3, 3);
+            drawMinimap();
             
             requestAnimationFrame(draw);
         }
+
+        // Mini-map radar. Renders a zoomed-out view centred on the player,
+        // clipped to a circle. Anything outside the view radius is ignored so
+        // the marker count stays proportional to what is nearby.
+        const MINIMAP_SIZE = 150;
+        const MINIMAP_RADIUS = 1000;
+        const minimapCtx = document.getElementById("minimap-canvas").getContext("2d");
+        const ZONE_COLORS = {
+            City: "#3d5a45", Forest: "#2c4021", "Eastern Ruins": "#5b4c35",
+            Swamp: "#2a3b32", "Snow Mountain": "#cfe3e6", Desert: "#b09a5f",
+            Crypt: "#1a1a22", Wilderness: "#243026"
+        };
+
+        function worldToMini(wx, wy) {
+            return {
+                x: MINIMAP_SIZE / 2 + ((wx - player.x) / MINIMAP_RADIUS) * (MINIMAP_SIZE / 2),
+                y: MINIMAP_SIZE / 2 + ((wy - player.y) / MINIMAP_RADIUS) * (MINIMAP_SIZE / 2)
+            };
+        }
+
+        function drawMinimap() {
+            if (!minimapCtx) return;
+            const c = minimapCtx;
+            const R = MINIMAP_SIZE / 2;
+
+            c.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+            c.save();
+            c.beginPath();
+            c.arc(R, R, R, 0, Math.PI * 2);
+            c.clip();
+
+            // Terrain backdrop from the obstacle list, coloured per zone.
+            c.fillStyle = "#1b2a1f";
+            c.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+            c.fillStyle = "rgba(120, 200, 120, 0.16)";
+            for (let i = 0; i < obstacles.length; i++) {
+                const o = obstacles[i];
+                if (Math.abs(o.x - player.x) > MINIMAP_RADIUS || Math.abs(o.y - player.y) > MINIMAP_RADIUS) continue;
+                const p = worldToMini(o.x, o.y);
+                c.fillRect(p.x, p.y, 2, 2);
+            }
+
+            // Safe-zone ring so the city is always findable.
+            const safe = worldToMini(640, 640);
+            c.strokeStyle = "rgba(74, 222, 128, 0.55)";
+            c.lineWidth = 1;
+            c.strokeRect(
+                MINIMAP_SIZE / 2 + ((0 - player.x) / MINIMAP_RADIUS) * R,
+                MINIMAP_SIZE / 2 + ((0 - player.y) / MINIMAP_RADIUS) * R,
+                (640 / MINIMAP_RADIUS) * R,
+                (640 / MINIMAP_RADIUS) * R
+            );
+
+            // Mobs and bosses.
+            for (let id in mobs) {
+                const m = mobs[id];
+                if (Math.abs(m.x - player.x) > MINIMAP_RADIUS || Math.abs(m.y - player.y) > MINIMAP_RADIUS) continue;
+                const p = worldToMini(m.x, m.y);
+                c.fillStyle = m.isBoss ? "#f87171" : (m.isElite ? "#fb923c" : "#ef4444");
+                c.beginPath();
+                c.arc(p.x, p.y, m.isBoss ? 4 : 2, 0, Math.PI * 2);
+                c.fill();
+            }
+
+            // NPCs.
+            for (let id in npcsLocal) {
+                const n = npcsLocal[id];
+                if (Math.abs(n.x - player.x) > MINIMAP_RADIUS || Math.abs(n.y - player.y) > MINIMAP_RADIUS) continue;
+                const p = worldToMini(n.x, n.y);
+                c.fillStyle = "#38bdf8";
+                c.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+            }
+
+            // Other players.
+            for (let id in otherPlayers) {
+                const op = otherPlayers[id];
+                if (Math.abs(op.x - player.x) > MINIMAP_RADIUS || Math.abs(op.y - player.y) > MINIMAP_RADIUS) continue;
+                const p = worldToMini(op.x, op.y);
+                c.fillStyle = op.warmode ? "#f87171" : "#4ade80";
+                c.beginPath();
+                c.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+                c.fill();
+            }
+
+            // The player, last so it draws on top.
+            c.fillStyle = "#facc15";
+            c.beginPath();
+            c.arc(R, R, 3.5, 0, Math.PI * 2);
+            c.fill();
+            c.strokeStyle = "rgba(0,0,0,0.6)";
+            c.lineWidth = 1;
+            c.stroke();
+
+            c.restore();
+
+            // North indicator.
+            c.fillStyle = "rgba(255,255,255,0.55)";
+            c.font = "bold 9px Inter, sans-serif";
+            c.textAlign = "center";
+            c.fillText("N", R, 11);
+            c.textAlign = "left";
+        }
+
         draw();
     </script>
 </body>

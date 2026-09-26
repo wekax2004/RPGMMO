@@ -94,6 +94,7 @@ function spawnBoss(type, broadcast) {
         damage: def.damage,
         xpReward: def.xp,
         isBoss: true,
+        phase: 1,
         lastAbilityTime: new Map(),
         lastMoveTime: 0,
         lastAttackTime: 0,
@@ -113,7 +114,8 @@ function spawnBoss(type, broadcast) {
             hp: boss.hp, 
             maxHp: boss.maxHp, 
             alive: true,
-            isBoss: true 
+            isBoss: true,
+            phase: boss.phase
         });
     }
     
@@ -229,19 +231,43 @@ function bossAI(boss, players, broadcast, mobs) {
     // tick, which applies equipment defense. Keeping one attack path avoids
     // double damage while bosses are in range.
 
-    // Abilities
+    // Phase transitions and Abilities
     if (boss.type === 'spider_queen') {
-        if (now - (boss.lastAbilityTime.get('poison_aoe') || 0) > 8000) {
+        if (boss.phase === 1 && boss.hp <= boss.maxHp * 0.5) {
+            boss.phase = 2;
+            broadcast({ action: 'phase_change', id: boss.id, phase: 2 });
+        }
+
+        const cdMulti = boss.phase === 2 ? 0.66 : 1.0;
+
+        if (now - (boss.lastAbilityTime.get('poison_aoe') || 0) > 8000 * cdMulti) {
             boss.lastAbilityTime.set('poison_aoe', now);
             castSpiderPoisonAoe(boss, players, broadcast);
         }
 
-        if (now - (boss.lastAbilityTime.get('spawn_adds') || 0) > 15000) {
+        if (now - (boss.lastAbilityTime.get('spawn_adds') || 0) > 15000 * cdMulti) {
             boss.lastAbilityTime.set('spawn_adds', now);
-            for (let i = 0; i < 2; i++) spawnAdd(boss, 'spider', mobs, broadcast);
+            const addsCount = boss.phase === 2 ? 4 : 2;
+            for (let i = 0; i < addsCount; i++) spawnAdd(boss, 'spider', mobs, broadcast);
+        }
+        
+        if (boss.phase === 2 && now - (boss.lastAbilityTime.get('web_trap') || 0) > 12000) {
+            boss.lastAbilityTime.set('web_trap', now);
+            const pList = Array.from(players.values()).filter(p => p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange);
+            if (pList.length > 0) {
+                const p = pList[Math.floor(Math.random() * pList.length)];
+                p.stunUntil = now + 3000;
+                broadcast({ action: 'log', message: `Spider Queen traps ${p.name} in a web!` });
+                broadcastAoe(broadcast, { bossId: boss.id, spellId: nextAoeId(boss.id, 'web_trap'), x: p.x, y: p.y, radius: 16, type: 'poison', phase: 'detonate', durationMs: 0 });
+            }
         }
         
     } else if (boss.type === 'ice_dragon') {
+        if (boss.phase === 1 && boss.hp <= boss.maxHp * 0.4) {
+            boss.phase = 2;
+            broadcast({ action: 'phase_change', id: boss.id, phase: 2 });
+        }
+
         if (now - (boss.lastAbilityTime.get('ice_breath') || 0) > 6000) {
             boss.lastAbilityTime.set('ice_breath', now);
             const targetX = nearest.x;
@@ -266,7 +292,8 @@ function bossAI(boss, players, broadcast, mobs) {
                         const lenP = distance || 1;
                         const dot = (dx * px + dy * py) / (lenD * lenP);
                         
-                        if (dot > 0.5) { // Roughly 60-degree cone
+                        const dotThreshold = boss.phase === 2 ? 0.2 : 0.5;
+                        if (dot > dotThreshold) { // Wider cone in phase 2
                             p.hp -= 60;
                             p.stunUntil = Date.now() + 1500;
                             broadcast({ action: 'damage', targetId: p.id, amount: 60 });
@@ -300,11 +327,34 @@ function bossAI(boss, players, broadcast, mobs) {
                 }
             }
         }
+
+        if (boss.phase === 2 && now - (boss.lastAbilityTime.get('blizzard') || 0) > 25000) {
+            boss.lastAbilityTime.set('blizzard', now);
+            const spellId = nextAoeId(boss.id, 'blizzard');
+            broadcastAoe(broadcast, { bossId: boss.id, spellId, x: boss.x, y: boss.y, radius: 200, type: 'ice_crash', phase: 'warning', durationMs: 2000 });
+            setTimeout(() => {
+                if (!bosses.has(boss.id)) return;
+                broadcastAoe(broadcast, { bossId: boss.id, spellId, x: boss.x, y: boss.y, radius: 200, type: 'ice_crash', phase: 'detonate', durationMs: 5000 });
+                // Simple implementation: instant large damage. Full DoT requires tracking in server tick.
+                for (const p of players.values()) {
+                    if (p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= 200) {
+                        p.hp -= 100;
+                        broadcast({ action: 'damage', targetId: p.id, amount: 100 });
+                    }
+                }
+            }, 2000);
+        }
         
     } else if (boss.type === 'skeleton_king') {
+        if (boss.phase === 1 && boss.hp <= boss.maxHp * 0.3) {
+            boss.phase = 2;
+            broadcast({ action: 'phase_change', id: boss.id, phase: 2 });
+        }
+
         if (now - (boss.lastAbilityTime.get('summon_skeletons') || 0) > 10000) {
             boss.lastAbilityTime.set('summon_skeletons', now);
-            for (let i = 0; i < 3; i++) spawnAdd(boss, 'skeleton', mobs, broadcast);
+            const addsCount = boss.phase === 2 ? 5 : 3;
+            for (let i = 0; i < addsCount; i++) spawnAdd(boss, 'skeleton', mobs, broadcast);
         }
         
         if (now - (boss.lastAbilityTime.get('death_wave') || 0) > 12000) {
@@ -312,18 +362,28 @@ function bossAI(boss, players, broadcast, mobs) {
             const spellId = nextAoeId(boss.id, 'death_wave');
             const originX = boss.x;
             const originY = boss.y;
-            broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius: 160, type: 'death_wave', phase: 'warning' });
+            const waveRadius = boss.phase === 2 ? 200 : 160;
+            broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius: waveRadius, type: 'death_wave', phase: 'warning' });
             
             setTimeout(() => {
                 if (!bosses.has(boss.id)) return;
-                broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius: 160, type: 'death_wave', phase: 'detonate' });
+                broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius: waveRadius, type: 'death_wave', phase: 'detonate' });
                 for (const p of players.values()) {
-                    if (p.hp > 0 && Math.hypot(p.x - originX, p.y - originY) <= 160) {
+                    if (p.hp > 0 && Math.hypot(p.x - originX, p.y - originY) <= waveRadius) {
                         p.hp -= 50;
                         broadcast({ action: 'damage', targetId: p.id, amount: 50 });
                     }
                 }
             }, 2000);
+        }
+
+        if (boss.phase === 2 && now - (boss.lastAbilityTime.get('bone_prison') || 0) > 15000) {
+            boss.lastAbilityTime.set('bone_prison', now);
+            if (nearest) {
+                nearest.stunUntil = now + 4000;
+                broadcast({ action: 'log', message: `Skeleton King traps ${nearest.name} in a Bone Prison!` });
+                broadcastAoe(broadcast, { bossId: boss.id, spellId: nextAoeId(boss.id, 'bone_prison'), x: nearest.x, y: nearest.y, radius: 24, type: 'death_wave', phase: 'detonate', durationMs: 0 });
+            }
         }
     }
 }

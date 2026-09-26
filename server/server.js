@@ -7,7 +7,10 @@ const { isWalkable, obstacleData } = require('./map');
 const { mobs, spawnMobPack, moveMobToward, mobAttack, inSafeZone } = require('./mobs');
 const { chests, spawnChest } = require('./chests');
 const { npcs } = require('./npcs');
+const corpses = new Map();
+let corpseIdCounter = 1;
 const Q = require('./quests');
+const CRAFTING = require('./crafting');
 const ITEMS = require('./items');
 const DB = require('./db_firebase');
 const AUTH = require('./auth');
@@ -40,7 +43,7 @@ const server = http.createServer((req, res) => {
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     };
     if (req.url === '/metrics') {
         const memory = process.memoryUsage();
@@ -65,6 +68,25 @@ const server = http.createServer((req, res) => {
         }
     } else if (req.url === '/favicon.ico') {
         res.writeHead(204, securityHeaders); res.end();
+    } else if (req.url.startsWith('/assets/')) {
+        // Serves client/assets only. The resolved path is confirmed to stay
+        // inside the assets root so a crafted ../ cannot escape it.
+        const assetsRoot = path.resolve(__dirname, '../client/assets');
+        const requested = path.resolve(assetsRoot, '.' + decodeURIComponent(req.url.slice('/assets'.length)));
+        const relative = path.relative(assetsRoot, requested);
+        const escapes = relative.startsWith('..') || path.isAbsolute(relative);
+        if (escapes || !fs.existsSync(requested) || !fs.statSync(requested).isFile()) {
+            res.writeHead(404, securityHeaders); res.end();
+            return;
+        }
+        const mimeTypes = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+            '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8'
+        };
+        const contentType = mimeTypes[path.extname(requested).toLowerCase()] || 'application/octet-stream';
+        res.writeHead(200, { ...securityHeaders, 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600' });
+        res.end(fs.readFileSync(requested));
     } else {
         res.writeHead(404, securityHeaders); res.end();
     }
@@ -163,7 +185,9 @@ function serializePlayer(p) {
         inventory: [...p.inventory],
         classType: p.classType,
         subclass: p.subclass,
+        guild: p.guild || null,
         quests: p.quests,
+        craftedRecipes: Array.isArray(p.craftedRecipes) ? [...p.craftedRecipes] : [],
         equipment: { ...p.equipment },
         maxHp: p.maxHp,
         maxMana: p.maxMana
@@ -211,15 +235,10 @@ function normalizePlayerData(raw) {
     const validClass = ['warrior', 'mage', 'ranger', 'healer'].includes(data.classType)
         ? data.classType
         : 'warrior';
-    const rawQuests = data.quests && typeof data.quests === 'object' ? data.quests : {};
-    const quests = {
-        active: rawQuests.active && typeof rawQuests.active === 'object' && !Array.isArray(rawQuests.active)
-            ? rawQuests.active
-            : {},
-        completed: Array.isArray(rawQuests.completed)
-            ? rawQuests.completed.filter(id => typeof id === 'string')
-            : []
-    };
+    // Quest state is rebuilt from the templates rather than trusted. A
+    // hand-edited or partially written save can no longer inject a
+    // malformed objective that would throw inside the game tick.
+    const quests = Q.sanitizePlayerQuests(data.quests);
     const equipment = {
         weapon: null, shield: null, helmet: null, armor: null,
         legs: null, boots: null, amulet: null,
@@ -235,6 +254,7 @@ function normalizePlayerData(raw) {
         subclass: typeof data.subclass === 'string' ? data.subclass : null,
         quests,
         equipment,
+        craftedRecipes: CRAFTING.sanitizeCraftedRecipes(data.craftedRecipes),
         maxHp: safeInteger(data.maxHp, 100, 1),
         maxMana: safeInteger(data.maxMana, 50, 1)
     };
@@ -383,16 +403,67 @@ function killMob(player, target) {
 function sendQuestJournal(player) {
     const data = { quests: [], completed_count: player.quests.completed.length };
     Object.values(player.quests.active).forEach(q => {
+        const questDef = Q.QUEST_DB[q.id];
+        const progress = questDef ? Q.describeProgress(questDef, q) : null;
+        const objectives = (Array.isArray(q.objectives) ? q.objectives : []).map(o => ({
+            text: o.type === 'reach_tile' ? o.label : (o.target || o.item),
+            progress: o.type === 'reach_tile' ? '' : `${o.current}/${o.required}`,
+            done: o.type === 'reach_tile' ? o.done === true : o.current >= o.required
+        }));
         data.quests.push({
             id: q.id, name: q.name,
-            objectives: q.objectives.map(o => ({
-                text: o.type === 'reach_tile' ? o.label : o.target || o.item,
-                progress: o.type === 'reach_tile' ? '' : `${o.current}/${o.required}`,
-                done: o.type === 'reach_tile' ? o.done : o.current >= o.required
-            }))
+            objectives,
+            // Steps are only present on multi-step quests; the client shows
+            // the step header when they are.
+            step: progress ? {
+                index: progress.stepIndex,
+                count: progress.stepCount,
+                text: progress.stepText,
+                awaiting_turn_in: progress.awaitingTurnIn
+            } : null
         });
     });
     sendTo(player, { action: 'quest_journal', ...data });
+}
+
+// Grants every finished quest whose giver is this NPC. Returns the results
+// so the caller can build a follow-up dialogue node.
+function grantQuestTurnIns(player, npcId) {
+    const results = [];
+    Object.keys(player.quests.active).forEach(questId => {
+        const questDef = Q.QUEST_DB[questId];
+        if (!questDef || questDef.giver !== npcId) return;
+        if (!Q.checkQuestComplete(player.quests, questId)) return;
+        const result = Q.completeQuest(player.quests, questId, player);
+        if (result) {
+            announceQuestCompletion(player, result);
+            results.push(result);
+        }
+    });
+    return results;
+}
+
+function announceQuestCompletion(player, result) {
+    const rewards = result.rewards || {};
+    sendTo(player, { action: 'log', message: `📜 [QUEST] Completed: ${result.name}` });
+    if (rewards.gold) {
+        broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${rewards.gold}G`, color: '#ffd700' });
+    }
+    if (rewards.xp) {
+        broadcast({ action: 'fct', x: player.x + 16, y: player.y - 20, text: `+${rewards.xp} XP`, color: '#ffcc00' });
+        addXp(player, rewards.xp);
+    }
+    (rewards.items || []).forEach(item => {
+        sendTo(player, { action: 'log', message: `🎁 Received: ${item}` });
+    });
+    if (result.completion_text) {
+        sendTo(player, { action: 'log', message: result.completion_text });
+    }
+    persistPlayer(player);
+}
+
+function closeNpcDialogue(player, npcId, npcName) {
+    sendTo(player, { action: 'npc_dialogue_close', npc_id: npcId, npc_name: npcName });
 }
 
 wss.on('connection', (ws) => {
@@ -552,6 +623,7 @@ wss.on('connection', (ws) => {
                     inventory: pData.inventory || [],
                     quests: pData.quests || Q.initPlayerQuests(),
                     equipment: pData.equipment || { weapon: null, shield: null, helmet: null, armor: null, legs: null, boots: null, amulet: null },
+                    craftedRecipes: pData.craftedRecipes || [],
                     warmode: data.warmode === true,
                     targetId: null, lastAttackTime: 0, lastMoveTime: 0,
                     poisonStacks: 0, lastPoisonTick: 0, bleedStacks: 0, lastBleedTick: 0, stunUntil: 0, persistenceDirty: false
@@ -570,11 +642,16 @@ wss.on('connection', (ws) => {
                 sendQuestJournal(player);
                 
                 mobs.forEach((mob, id) => sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite }));
-                bosses.forEach((boss, id) => sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true }));
+                bosses.forEach((boss, id) => sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true, phase: boss.phase }));
                 chests.forEach((c, id) => sendTo(player, { action: 'chest_update', id, x: c.x, y: c.y, active: true }));
+                corpses.forEach((c, id) => sendTo(player, { action: 'corpse_spawn', corpse: c }));
+                corpses.forEach((c, id) => sendTo(player, { action: 'corpse_spawn', corpse: c }));
                 npcs.forEach((npc, id) => sendTo(player, { action: 'npc_sync', id, name: npc.name, x: npc.x, y: npc.y }));
+                // The workbench is a static interactable, synced like an NPC
+                // so the client can draw and highlight it.
+                sendTo(player, { action: 'npc_sync', id: CRAFTING.WORKBENCH.id, name: CRAFTING.WORKBENCH.name, x: CRAFTING.WORKBENCH.x, y: CRAFTING.WORKBENCH.y });
                 Q.gatheringNodes.forEach((node, id) => { if (node.active) sendTo(player, { action: 'node_sync', id, name: node.name, x: node.x, y: node.y, color: node.color, symbol: node.symbol }); });
-                sendTo(player, { action: 'map_data', obstacles: obstacleData });
+                sendTo(player, { action: 'map_data', obstacles: obstacleData, width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE });
                 
                 broadcast({ action: 'player_update', id: playerId, name: charName, x: player.x, y: player.y, classType: player.classType, warmode: player.warmode });
                 return;
@@ -623,6 +700,17 @@ wss.on('connection', (ws) => {
             }
 
             if (data.action === 'chat') {
+                if (data.text.startsWith('/guild create ')) { GUILDS.createGuild(player, data.text.substring(14).trim()); return; }
+                if (data.text.startsWith('/guild invite ')) { GUILDS.inviteGuild(player, data.text.substring(14).trim()); return; }
+                if (data.text === '/guild accept') { GUILDS.acceptGuild(player); return; }
+                if (data.text.startsWith('/guild kick ')) { GUILDS.kickGuild(player, data.text.substring(12).trim()); return; }
+                if (data.text === '/guild leave') { GUILDS.leaveGuild(player); return; }
+                if (data.channel === 'guild' || data.text.startsWith('/g ')) { 
+                    if (!player.guild) return sendTo(player, { action: 'log', message: 'You are not in a guild.' });
+                    const txt = data.text.startsWith('/g ') ? data.text.substring(3) : data.text;
+                    GUILDS.broadcastGuild(GUILDS.guilds.get(player.guild), txt, player.charName); 
+                    return; 
+                }
                 const text = typeof data.text === 'string' ? data.text.trim().slice(0, 240) : '';
                 const requestedChannel = typeof data.channel === 'string' ? data.channel.toLowerCase() : 'global';
                 const channel = requestedChannel === 'world' ? 'global' : requestedChannel;
@@ -969,6 +1057,19 @@ wss.on('connection', (ws) => {
             }
             
             if (data.action === 'attack') { player.targetId = data.target_id; }
+            if (data.action === 'interact_corpse') {
+                const c = corpses.get(data.id);
+                if (c && dist(player.x, player.y, c.x, c.y) <= 64) {
+                    if (c.gold > 0) {
+                        player.gold += c.gold;
+                        sendTo(player, { action: 'log', message: `Looted ${c.gold} gold from ${c.ownerName}'s corpse!` });
+                        sendTo(player, { action: 'fct', x: player.x, y: player.y, text: `+${c.gold} Gold`, color: '#ffd700' });
+                        c.gold = 0;
+                        corpses.delete(data.id);
+                        broadcast({ action: 'corpse_remove', id: data.id });
+                    }
+                }
+            }
 
             if (data.action === 'use_item') {
                 const itemIndex = player.inventory.indexOf(data.item);
@@ -1022,6 +1123,39 @@ wss.on('connection', (ws) => {
             }
             
             // --- SHOP ACTIONS ---
+            if (data.action === 'open_crafting') {
+                if (dist(player.x, player.y, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y) > 96) {
+                    sendProtocolError(player, 'You must be near the workbench.');
+                    return;
+                }
+                sendTo(player, {
+                    action: 'crafting_open',
+                    recipes: CRAFTING.listRecipes(player),
+                    inventory: player.inventory,
+                    level: player.level
+                });
+            }
+
+            if (data.action === 'craft_item') {
+                if (typeof data.recipe_id !== 'string') {
+                    sendProtocolError(player, 'Invalid recipe request.');
+                    return;
+                }
+                if (dist(player.x, player.y, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y) > 96) {
+                    sendProtocolError(player, 'You must be near the workbench.');
+                    return;
+                }
+                const craftResult = CRAFTING.craftItem(player, data.recipe_id);
+                if (!craftResult.success) {
+                    sendTo(player, { action: 'log', message: '⚒️ ' + craftResult.message });
+                } else {
+                    sendTo(player, { action: 'log', message: '⚒️ ' + craftResult.message });
+                    broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${craftResult.result}`, color: '#fbbf24' });
+                    sendTo(player, { action: 'crafting_sync', recipes: CRAFTING.listRecipes(player), inventory: player.inventory });
+                    persistPlayer(player);
+                }
+            }
+
             if (data.action === 'buy_item') {
                 const itemInfo = SHOP_INVENTORY[data.item];
                 if (itemInfo && player.gold >= itemInfo.price) {
@@ -1053,34 +1187,96 @@ wss.on('connection', (ws) => {
                 }
             }
 
-            if (data.action === 'cast_skill') {
-                if (player.mana < CFG.SKILL_MANA_COST) return;
-                player.mana -= CFG.SKILL_MANA_COST;
-                if (player.classType === 'warrior') {
-                    let mobsToKill = [];
-                    mobs.forEach((mob, mid) => {
-                        if (dist(player.x, player.y, mob.x, mob.y) <= CFG.MELEE_RANGE) {
-                            const dmg = applyCombatModifiers(player, 25 + player.level * 3); mob.hp -= dmg; applyLifesteal(player, dmg);
-                            broadcast({ action: 'fct', x: mob.x+16, y: mob.y, text: `-${dmg}`, color: '#ff8866' });
-                            broadcast({ action: 'mob_update', id: mid, x: mob.x, y: mob.y, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type });
-                            if (mob.hp <= 0) mobsToKill.push(mob); 
+            if (data.action === 'cast_spell') {
+                const cost = 20;
+                if (player.mana < cost) return sendTo(player, { action: 'fct', x: player.x, y: player.y, text: 'OOM', color: '#888' });
+                player.mana -= cost;
+                
+                const spellId = data.spellIndex; // 1 or 2
+                const c = player.classType;
+                
+                // Helper to damage a mob
+                const hitMob = (m, dmg) => {
+                    m.hp -= dmg;
+                    broadcast({ action: 'fct', x: m.x+16, y: m.y, text: `-${dmg}`, color: '#ff8866' });
+                    broadcast({ action: 'mob_update', id: m.id, type: m.type, name: m.name, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp, alive: true, isElite: m.isElite });
+                    if (m.hp <= 0) killMob(player, m);
+                };
+
+                if (c === 'warrior') {
+                    if (spellId === 1) { // Cleave
+                        broadcast({ action: 'spell_anim', type: 'cleave', x: player.x, y: player.y });
+                        for (let [mid, m] of mobs) {
+                            if (dist(player.x, player.y, m.x, m.y) <= 60) hitMob(m, 50 + player.level * 2);
                         }
-                    });
-                    mobsToKill.forEach(m => killMob(player, m));
-                } else if (player.classType === 'mage' || player.classType === 'ranger') {
-                    if (player.targetId && mobs.has(player.targetId)) {
-                        const target = mobs.get(player.targetId);
-                        if (dist(player.x, player.y, target.x, target.y) <= CFG.RANGED_RANGE) {
-                            const dmg = applyCombatModifiers(player, 40 + player.level * 4, player.classType === 'mage' ? 'fire' : 'generic'); target.hp -= dmg; applyLifesteal(player, dmg);
-                            broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${dmg}`, color: '#ff8866' });
-                            broadcast({ action: 'mob_update', id: target.id, x: target.x, y: target.y, hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
-                            if (target.hp <= 0) killMob(player, target);
-                        } else player.mana += CFG.SKILL_MANA_COST;
-                    } else player.mana += CFG.SKILL_MANA_COST;
+                    } else { // Charge
+                        if (player.targetId && mobs.has(player.targetId)) {
+                            const t = mobs.get(player.targetId);
+                            player.x = t.x; player.y = t.y + 32;
+                            sendTo(player, { action: 'force_position', x: player.x, y: player.y });
+                            broadcast({ action: 'spell_anim', type: 'charge', x: player.x, y: player.y });
+                            hitMob(t, 60 + player.level * 3);
+                        }
+                    }
+                } else if (c === 'mage') {
+                    if (spellId === 1) { // Fireball
+                        if (player.targetId && mobs.has(player.targetId)) {
+                            const t = mobs.get(player.targetId);
+                            broadcast({ action: 'spell_anim', type: 'fireball', x: t.x, y: t.y });
+                            for (let [mid, m] of mobs) {
+                                if (dist(t.x, t.y, m.x, m.y) <= 80) hitMob(m, 60 + player.level * 3);
+                            }
+                        }
+                    } else { // Frost Nova
+                        broadcast({ action: 'spell_anim', type: 'frostnova', x: player.x, y: player.y });
+                        for (let [mid, m] of mobs) {
+                            if (dist(player.x, player.y, m.x, m.y) <= 100) hitMob(m, 30 + player.level);
+                        }
+                    }
+                } else if (c === 'ranger') {
+                    if (spellId === 1) { // Multishot
+                        broadcast({ action: 'spell_anim', type: 'multishot', x: player.x, y: player.y });
+                        let hits = 0;
+                        for (let [mid, m] of mobs) {
+                            if (dist(player.x, player.y, m.x, m.y) <= 200 && hits < 3) {
+                                hitMob(m, 40 + player.level * 2);
+                                hits++;
+                            }
+                        }
+                    } else { // Trap (Instant damage for now)
+                        if (player.targetId && mobs.has(player.targetId)) {
+                            const t = mobs.get(player.targetId);
+                            broadcast({ action: 'spell_anim', type: 'trap', x: t.x, y: t.y });
+                            hitMob(t, 80 + player.level * 4);
+                        }
+                    }
+                } else if (c === 'healer') {
+                    if (spellId === 1) { // Flash Heal
+                        player.hp = Math.min(player.maxHp, player.hp + 50 + player.level * 5);
+                        broadcast({ action: 'spell_anim', type: 'heal', x: player.x, y: player.y });
+                        broadcast({ action: 'fct', x: player.x, y: player.y, text: `+50`, color: '#44ff44' });
+                    } else { // Holy Smite
+                        if (player.targetId && mobs.has(player.targetId)) {
+                            const t = mobs.get(player.targetId);
+                            broadcast({ action: 'spell_anim', type: 'smite', x: t.x, y: t.y });
+                            hitMob(t, 50 + player.level * 2);
+                        }
+                    }
                 }
             }
 
             if (data.action === 'talk_npc') {
+                // The workbench is a separate interactable, not a quest giver.
+                if (data.npc_id === CRAFTING.WORKBENCH.id) {
+                    if (dist(player.x, player.y, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y) > 96) return;
+                    sendTo(player, {
+                        action: 'crafting_open',
+                        recipes: CRAFTING.listRecipes(player),
+                        inventory: player.inventory,
+                        level: player.level
+                    });
+                    return;
+                }
                 const npc = npcs.get(data.npc_id);
                 if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
                 
@@ -1088,27 +1284,76 @@ wss.on('connection', (ws) => {
                     sendTo(player, { action: 'open_shop', inventory: SHOP_INVENTORY, gold: player.gold });
                     return;
                 }
-                
-                let turnedIn = false;
-                Object.keys(player.quests.active).forEach(qid => {
-                    const questDef = Q.QUEST_DB[qid];
-                    if (questDef && questDef.giver === data.npc_id && Q.checkQuestComplete(player.quests, qid)) {
-                        const result = Q.completeQuest(player.quests, qid, player);
-                        if (result) {
-                            broadcast({ action: 'fct', x: player.x+16, y: player.y, text: `+${result.rewards.xp} XP`, color: '#ffcc00' });
-                            addXp(player, result.rewards.xp); turnedIn = true;
-                        }
-                    }
-                });
-                if (!turnedIn) {
-                    const available = Q.getAvailableQuests(player.quests, data.npc_id);
-                    if (available.length > 0) {
-                        sendTo(player, { action: 'npc_dialogue', npc_id: data.npc_id, npc_name: npc.name, quests: available });
-                    } else {
-                        sendTo(player, { action: 'log', message: `🗣️ ${npc.name}: "Greetings, traveler. I have no more tasks for you right now."` });
+
+                // Hand in anything the player has finished with this giver.
+                const turnedInNow = grantQuestTurnIns(player, data.npc_id);
+
+                if (Q.hasDialogueTree(data.npc_id)) {
+                    const ctx = Q.buildDialogueContext(player, data.npc_id);
+                    const node = Q.resolveDialogue(data.npc_id, null, ctx);
+                    if (node) {
+                        sendTo(player, { action: 'npc_dialogue', npc_id: data.npc_id, npc_name: npc.name, ...node });
+                        sendQuestJournal(player);
+                        return;
                     }
                 }
+
+                // Legacy NPCs (no dialogue tree) keep the flat quest list, so
+                // the existing browser acceptance flow is unchanged.
+                const available = Q.getAvailableQuests(player.quests, data.npc_id);
+                if (available.length > 0) {
+                    sendTo(player, { action: 'npc_dialogue', npc_id: data.npc_id, npc_name: npc.name, quests: available });
+                } else if (turnedInNow.length === 0) {
+                    sendTo(player, { action: 'log', message: `🗣️ ${npc.name}: "Greetings, traveler. I have no more tasks for you right now."` });
+                }
                 sendQuestJournal(player);
+            }
+
+            if (data.action === 'dialogue_choice') {
+                if (typeof data.npc_id !== 'string' || typeof data.node_id !== 'string' || typeof data.choice_id !== 'string') {
+                    sendProtocolError(player, 'Invalid dialogue choice.');
+                    return;
+                }
+                const npc = npcs.get(data.npc_id);
+                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) {
+                    sendProtocolError(player, 'You must be near the speaker.');
+                    return;
+                }
+                const ctx = Q.buildDialogueContext(player, data.npc_id);
+                // The predicate is re-evaluated here, so a forged or replayed
+                // choice is rejected rather than trusted.
+                const choice = Q.resolveChoice(data.npc_id, data.node_id, data.choice_id, ctx);
+                if (!choice) {
+                    sendTo(player, { action: 'npc_dialogue', npc_id: data.npc_id, npc_name: npc.name, ...(Q.resolveDialogue(data.npc_id, null, Q.buildDialogueContext(player, data.npc_id)) || { text: '"..."', choices: [] }) });
+                    return;
+                }
+
+                if (choice.action && choice.action.type === 'accept_quest') {
+                    if (Q.acceptQuest(player.quests, choice.action.questId, data.npc_id)) {
+                        const questDef = Q.QUEST_DB[choice.action.questId];
+                        sendTo(player, { action: 'log', message: `📜 [QUEST] Accepted: ${questDef.name}` });
+                        sendQuestJournal(player);
+                    } else {
+                        sendProtocolError(player, 'Quest cannot be accepted yet.');
+                        return;
+                    }
+                } else if (choice.action && choice.action.type === 'turn_in') {
+                    const result = Q.completeQuest(player.quests, choice.action.questId, player);
+                    if (!result) {
+                        sendProtocolError(player, 'That task is not complete.');
+                        return;
+                    }
+                    announceQuestCompletion(player, result);
+                    sendQuestJournal(player);
+                    ctx.lastCompletion = { text: result.completion_text };
+                }
+
+                const next = choice.next ? Q.resolveDialogue(data.npc_id, choice.next, ctx) : null;
+                if (next) {
+                    sendTo(player, { action: 'npc_dialogue', npc_id: data.npc_id, npc_name: npc.name, ...next });
+                } else {
+                    closeNpcDialogue(player, data.npc_id, npc.name);
+                }
             }
 
         } catch (e) { console.error(e); }
@@ -1320,11 +1565,32 @@ scheduleServerInterval(() => {
                         // Distribute loot
                         const loot = ITEMS.lootTable[boss.type];
                         if (loot) {
-                            loot.forEach(item => {
-                                if (Math.random() < item.chance) {
-                                    player.inventory.push(item.name);
-                                    broadcast({ action: 'fct', x: boss.x+16, y: boss.y-20, text: `+${item.name}`, color: '#ff00ff' });
-                                }
+                            // Find all eligible players (the killer + party members in range)
+                            const eligiblePlayers = [player];
+                            const party = PARTY.getParty(player.id);
+                            if (party) {
+                                party.members.forEach(memberId => {
+                                    if (memberId !== player.id) {
+                                        const member = players.get(memberId);
+                                        if (member && member.hp > 0 && Math.hypot(member.x - boss.x, member.y - boss.y) <= 800) {
+                                            eligiblePlayers.push(member);
+                                        }
+                                    }
+                                });
+                            }
+                            
+                            // Roll loot for each eligible player
+                            eligiblePlayers.forEach(p => {
+                                loot.forEach(item => {
+                                    if (Math.random() < item.chance) {
+                                        p.inventory.push(item.name);
+                                        sendTo(p, { action: 'log', message: `You looted: ${item.name}` });
+                                        if (p.id === player.id) { // Only show FCT for the actual killer
+                                            broadcast({ action: 'fct', x: boss.x+16, y: boss.y-20, text: `+${item.name}`, color: '#ff00ff' });
+                                        }
+                                    }
+                                });
+                                persistPlayer(p); // save inventory
                             });
                         }
                         addXp(player, boss.xpReward);
@@ -1352,9 +1618,26 @@ scheduleServerInterval(() => {
 function checkPlayerDeath(player, killerName = 'Unknown') {
     if (player.hp <= 0) {
         broadcast({ action: 'log', message: `☠️ ${player.charName} was slain by ${killerName}!` });
+        
+        const droppedGold = Math.floor(player.gold * 0.5);
+        player.gold -= droppedGold;
+        
+        const req = player.level * 100;
+        const xpPenalty = Math.floor(req * 0.1);
+        player.xp -= xpPenalty;
+        if (player.xp < 0 && player.level > 1) {
+            player.level--;
+            player.xp = (player.level * 100) + player.xp;
+        } else if (player.xp < 0) {
+            player.xp = 0;
+        }
+
+        const cid = "corpse_" + corpseIdCounter++;
+        corpses.set(cid, { id: cid, x: player.x, y: player.y, gold: droppedGold, ownerName: player.charName, expireAt: Date.now() + 120000 });
+        broadcast({ action: 'corpse_spawn', corpse: corpses.get(cid) });
+
         player.hp = player.maxHp; player.mana = player.maxMana; 
         player.poisonStacks = 0; player.bleedStacks = 0; player.stunUntil = 0;
-        player.gold = Math.floor(player.gold * (1 - CFG.DEATH_GOLD_PENALTY));
         player.x = 320; player.y = 320; player.targetId = null;
         sendTo(player, { action: 'force_position', x: 320, y: 320 });
     }
