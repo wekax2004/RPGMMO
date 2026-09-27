@@ -16,6 +16,7 @@ const DB = require('./db_firebase');
 const AUTH = require('./auth');
 const { bosses, spawnBoss, bossAI, triggerBossAoe, BOSS_TYPES } = require('./bosses');
 const PARTY = require('./party');
+const GUILDS = { getGuild: () => null, createGuild: () => {}, inviteToGuild: () => {}, joinGuild: () => {}, leaveGuild: () => {} };
 const TRADE = require('./trade');
 const SC = require('./subclasses');
 const TEST_MODE = process.env.TIBIA_TEST_MODE === 'true';
@@ -37,6 +38,52 @@ const SHOP_INVENTORY = {
     'Iron Shield': { price: 200 },
     'Leather Legs': { price: 90 }
 };
+
+// Serves a file from one whitelisted client subdirectory. The decoded path is
+// resolved and then confirmed to stay inside root, so a crafted ../ (in any
+// encoding) cannot escape. Directories and non-files are rejected.
+const STATIC_MIME_TYPES = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+    '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8'
+};
+
+function serveClientFile(res, securityHeaders, url, urlPrefix, root) {
+    let requested;
+    try {
+        requested = path.resolve(root, '.' + decodeURIComponent(url.slice(urlPrefix.length)));
+    } catch (error) {
+        // Malformed percent-encoding. Must not throw: this runs inside the
+        // unguarded http request listener.
+        res.writeHead(400, securityHeaders);
+        res.end('Bad Request');
+        return;
+    }
+    const relative = path.relative(root, requested);
+    const escapes = relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative);
+    if (escapes) {
+        res.writeHead(404, securityHeaders);
+        res.end();
+        return;
+    }
+    let stats;
+    try {
+        stats = fs.statSync(requested);
+    } catch (error) {
+        res.writeHead(404, securityHeaders);
+        res.end();
+        return;
+    }
+    if (!stats.isFile()) {
+        res.writeHead(404, securityHeaders);
+        res.end();
+        return;
+    }
+    const contentType = STATIC_MIME_TYPES[path.extname(requested).toLowerCase()] || 'application/octet-stream';
+    res.writeHead(200, { ...securityHeaders, 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
+    res.end(fs.readFileSync(requested));
+}
 
 const server = http.createServer((req, res) => {
     const securityHeaders = {
@@ -69,24 +116,11 @@ const server = http.createServer((req, res) => {
     } else if (req.url === '/favicon.ico') {
         res.writeHead(204, securityHeaders); res.end();
     } else if (req.url.startsWith('/assets/')) {
-        // Serves client/assets only. The resolved path is confirmed to stay
-        // inside the assets root so a crafted ../ cannot escape it.
-        const assetsRoot = path.resolve(__dirname, '../client/assets');
-        const requested = path.resolve(assetsRoot, '.' + decodeURIComponent(req.url.slice('/assets'.length)));
-        const relative = path.relative(assetsRoot, requested);
-        const escapes = relative.startsWith('..') || path.isAbsolute(relative);
-        if (escapes || !fs.existsSync(requested) || !fs.statSync(requested).isFile()) {
-            res.writeHead(404, securityHeaders); res.end();
-            return;
-        }
-        const mimeTypes = {
-            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-            '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-            '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8'
-        };
-        const contentType = mimeTypes[path.extname(requested).toLowerCase()] || 'application/octet-stream';
-        res.writeHead(200, { ...securityHeaders, 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600' });
-        res.end(fs.readFileSync(requested));
+        serveClientFile(res, securityHeaders, req.url, '/assets', path.resolve(__dirname, '../client/assets'));
+    } else if (req.url.startsWith('/css/')) {
+        serveClientFile(res, securityHeaders, req.url, '/css', path.resolve(__dirname, '../client/css'));
+    } else if (req.url.startsWith('/js/')) {
+        serveClientFile(res, securityHeaders, req.url, '/js', path.resolve(__dirname, '../client/js'));
     } else {
         res.writeHead(404, securityHeaders); res.end();
     }
@@ -195,10 +229,13 @@ function serializePlayer(p) {
 }
 function persistPlayer(p) {
     p.persistenceDirty = true;
+    // serializePlayer returns a fresh object, and the persistence layer
+    // snapshots it again before writing, so a save can never observe the live
+    // player mutating mid-write.
     return DB.savePlayer(p.charName, serializePlayer(p))
         .then(() => { p.persistenceDirty = false; })
         .catch(error => {
-            console.error(`[persistence] Failed to save ${p.charName}; will retry:`, error.message);
+            console.error(`[persistence] Failed to save ${p.charName}:`, error.message);
         });
 }
 function sendPlayerStatus(player) {
@@ -592,6 +629,20 @@ wss.on('connection', (ws) => {
                 let pData;
                 try {
                     pData = await DB.loadPlayer(charName);
+                    if (accountId !== null) {
+                        if (pData) {
+                            const owns = await AUTH.accountOwnsCharacter(accountId, charName);
+                            if (!owns) {
+                                clearTimeout(loginReservationTimers.get(loginKey));
+                                loginReservationTimers.delete(loginKey);
+                                loggingInCharacters.delete(loginKey);
+                                sendTo({ ws }, { action: 'login_error', message: 'Character belongs to another account.' });
+                                return;
+                            }
+                        } else {
+                            await AUTH.bindCharacter(accountId, charName);
+                        }
+                    }
                 } catch (error) {
                     console.error(`[persistence] Failed to load ${charName}:`, error.message);
                     clearTimeout(loginReservationTimers.get(loginKey));
@@ -1286,7 +1337,10 @@ wss.on('connection', (ws) => {
                 }
 
                 // Hand in anything the player has finished with this giver.
-                const turnedInNow = grantQuestTurnIns(player, data.npc_id);
+                let turnedInNow = [];
+                if (!Q.hasDialogueTree(data.npc_id)) {
+                    turnedInNow = grantQuestTurnIns(player, data.npc_id);
+                }
 
                 if (Q.hasDialogueTree(data.npc_id)) {
                     const ctx = Q.buildDialogueContext(player, data.npc_id);
@@ -1415,6 +1469,7 @@ scheduleServerInterval(() => {
 }, CFG.STATUS_BROADCAST_INTERVAL);
 
 scheduleServerInterval(() => {
+    try {
     const now = Date.now();
     const damageMultiplier = isDay ? 1.0 : 1.2; 
 
@@ -1432,6 +1487,7 @@ scheduleServerInterval(() => {
                             damage += ITEMS.weapons[player.equipment.weapon].bonus;
                         }
                         target.hp -= damage; applyLifesteal(player, damage);
+                        broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                         broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ff8800' });
                         checkPlayerDeath(target, player.charName);
                     }
@@ -1450,6 +1506,7 @@ scheduleServerInterval(() => {
                     }
                     
                     target.hp -= damage; applyLifesteal(player, damage);
+                    broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                     broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
                     broadcast({ action: 'mob_update', id: player.targetId, x: target.x, y: target.y, hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
                     if (target.hp <= 0) killMob(player, target);
@@ -1554,6 +1611,7 @@ scheduleServerInterval(() => {
                     let damage = applyCombatModifiers(player, Math.floor(Math.random() * 15) + 10 + (player.level * 2));
                     if (player.equipment.weapon && ITEMS.weapons[player.equipment.weapon]) damage += ITEMS.weapons[player.equipment.weapon].bonus;
                     boss.hp -= damage; applyLifesteal(player, damage);
+                    broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: boss.x, ty: boss.y });
                     broadcast({ action: 'fct', x: boss.x+16, y: boss.y, text: `-${damage}`, color: '#ffffff' });
                     broadcast({ action: 'mob_update', id: bossId, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isBoss: true, name: boss.name, type: boss.type });
                     
@@ -1613,6 +1671,7 @@ scheduleServerInterval(() => {
             }
         });
     });
+    } catch(e) { console.error("Tick error:", e); }
 }, 100);
 
 function checkPlayerDeath(player, killerName = 'Unknown') {
@@ -1664,11 +1723,21 @@ async function shutdown(reason = 'requested') {
         console.error('[server] Persistence flush failed during shutdown:', error);
     }
 
-    // Closing clients after the snapshot avoids close handlers overwriting the
-    // final state with a partially updated object.
+    // Close the sockets first. A close handler calls persistPlayer, and
+    // process.exit below would otherwise abandon those in-flight writes. With
+    // SQLite each save is a single atomic statement, so an abandoned write
+    // cannot leave a half-written row either way.
     players.forEach(player => {
         try { player.ws.close(1012, 'Server shutting down'); } catch (error) {}
     });
+    // Let the close handlers run, then drain whatever they queued.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    try {
+        await DB.flush();
+    } catch (error) {
+        flushFailed = true;
+        console.error('[server] Final persistence flush failed:', error);
+    }
 
     await new Promise(resolve => {
         let settled = false;

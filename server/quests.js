@@ -162,7 +162,10 @@ function spawnGatheringNodes(broadcast) {
     const nodeTypes = [
         { name: 'Moonflower', color: '#ee88ff', symbol: '🌸', count: 30 },
         { name: 'Poison Mushroom', color: '#44cc44', symbol: '🍄', count: 20 },
-        { name: 'Ancient Bone', color: '#ccccaa', symbol: '🦴', count: 15 }
+        { name: 'Ancient Bone', color: '#ccccaa', symbol: '🦴', count: 15 },
+        { name: 'Iron Ore', color: '#888888', symbol: '🪨', count: 30 },
+        { name: 'Wood', color: '#8B4513', symbol: '🪵', count: 30 },
+        { name: 'Leather', color: '#D2691E', symbol: '🐪', count: 20 }
     ];
 
     nodeTypes.forEach(type => {
@@ -282,6 +285,7 @@ function isQuestReadyToComplete(questDef, state) {
     const step = steps[state.stepIndex];
     if (!step) return false;
     if (step.type === 'turn_in') return true;
+    if (state.stepIndex < steps.length - 1) return false;
     return stepObjectivesComplete(questDef, state);
 }
 
@@ -317,6 +321,7 @@ function sanitizePlayerQuests(raw) {
                 ? Math.max(0, Math.min(saved.stepIndex, maxIndex))
                 : 0;
             const state = { id: questId, name: questDef.name, stepIndex };
+            if (hasSteps(questDef)) skipSatisfiedTalkSteps(questDef, state);
             state.objectives = buildObjectives(questDef, state, saved.objectives);
             active[questId] = state;
         });

@@ -1,18 +1,17 @@
 'use strict';
 
 /**
- * Local account and session authentication.
+ * Account and session authentication.
  *
- * Passwords are hashed with scrypt and salted per account. The account file
- * is intentionally separate from character saves so credentials are never
- * serialized with player state. Replace this store with a database/identity
- * provider later without changing the WebSocket protocol.
+ * Passwords are hashed with scrypt and salted per account. Accounts live in
+ * the same SQLite database as character state but in a separate table, so
+ * credentials are never serialized together with a player's inventory or
+ * quests. Sessions are held in memory: a restart invalidates them, which is
+ * the safe default.
  */
 
 const crypto = require('crypto');
-const fs = require('fs');
-const fsp = fs.promises;
-const path = require('path');
+const DB = require('./database');
 
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
@@ -23,11 +22,16 @@ const SESSION_TTL_MS = Number(process.env.TIBIA_SESSION_TTL_MS) > 0
     : 24 * 60 * 60 * 1000;
 const AUTH_REQUIRED = process.env.TIBIA_REQUIRE_AUTH === 'true' ||
     (process.env.TIBIA_REQUIRE_AUTH !== 'false' && process.env.TIBIA_TEST_MODE !== 'true');
-const accountsFile = path.resolve(
-    process.env.TIBIA_AUTH_FILE || path.join(__dirname, 'data', 'accounts.json')
-);
 const sessions = new Map();
-let writeQueue = Promise.resolve();
+
+// A real scrypt hash of an unguessable value. Used to spend the same CPU on a
+// login for an unknown username as on a wrong password, so response time does
+// not reveal whether an account exists.
+const DUMMY_HASH = [
+    'scrypt', SCRYPT_N, SCRYPT_R, SCRYPT_P,
+    '00000000000000000000000000000000',
+    'f'.repeat(SCRYPT_KEYLEN * 2)
+].join('$');
 
 function normalizeUsername(username) {
     return typeof username === 'string' ? username.trim().toLowerCase() : '';
@@ -75,43 +79,6 @@ async function verifyPassword(password, encoded) {
     return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
-async function readAccounts() {
-    try {
-        const raw = await fsp.readFile(accountsFile, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error(`Invalid account database shape in ${accountsFile}`);
-        }
-        return parsed;
-    } catch (error) {
-        if (error.code === 'ENOENT') return {};
-        throw error;
-    }
-}
-
-async function writeAccounts(accounts) {
-    await fsp.mkdir(path.dirname(accountsFile), { recursive: true });
-    const tempPath = `${accountsFile}.${process.pid}.${Date.now()}.tmp`;
-    await fsp.writeFile(tempPath, JSON.stringify(accounts, null, 2), 'utf8');
-    try {
-        await fsp.rename(tempPath, accountsFile);
-    } catch (error) {
-        if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(error.code)) {
-            await fsp.rm(tempPath, { force: true }).catch(() => undefined);
-            throw error;
-        }
-        await fsp.copyFile(accountsFile, `${accountsFile}.previous`).catch(() => undefined);
-        await fsp.rm(accountsFile, { force: true });
-        await fsp.rename(tempPath, accountsFile);
-    }
-}
-
-function enqueueWrite(operation) {
-    const next = writeQueue.catch(() => undefined).then(operation);
-    writeQueue = next;
-    return next;
-}
-
 function publicAccount(account) {
     if (!account) return null;
     return {
@@ -124,10 +91,10 @@ function publicAccount(account) {
 async function register(username, password) {
     const validation = validateCredentials(username, password);
     if (!validation.ok) return { success: false, message: validation.message };
-    const accounts = await readAccounts();
-    if (Object.prototype.hasOwnProperty.call(accounts, validation.username)) {
-        return { success: false, message: 'Username is already registered.' };
-    }
+
+    const existing = await DB.getAccountByUsername(validation.username);
+    if (existing) return { success: false, message: 'Username is already registered.' };
+
     const account = {
         accountId: `acct_${crypto.randomBytes(12).toString('hex')}`,
         username: validation.username,
@@ -135,25 +102,33 @@ async function register(username, password) {
         characters: [],
         createdAt: Date.now()
     };
-    await enqueueWrite(async () => {
-        const latest = await readAccounts();
-        if (Object.prototype.hasOwnProperty.call(latest, validation.username)) {
-            const conflict = new Error('Username is already registered.');
-            conflict.code = 'ACCOUNT_EXISTS';
-            throw conflict;
+
+    try {
+        // UNIQUE(username) is the real guard. Two concurrent registrations of
+        // the same name both pass the check above; only one INSERT can win.
+        await DB.insertAccount(account);
+    } catch (error) {
+        if (String(error && error.message || '').includes('UNIQUE')) {
+            return { success: false, message: 'Username is already registered.' };
         }
-        latest[validation.username] = account;
-        await writeAccounts(latest);
-    });
+        throw error;
+    }
     return { success: true, account: publicAccount(account) };
 }
 
 async function authenticate(username, password) {
     const normalized = normalizeUsername(username);
     if (!normalized || typeof password !== 'string') return null;
-    const accounts = await readAccounts();
-    const account = Object.prototype.hasOwnProperty.call(accounts, normalized) ? accounts[normalized] : null;
-    if (!account || !await verifyPassword(password, account.passwordHash)) return null;
+
+    const account = await DB.getAccountByUsername(normalized);
+    if (!account) {
+        // Run a hash against a throwaway account so a missing username costs
+        // the same wall-clock time as a wrong password. Without this the
+        // response time is a reliable oracle for which usernames exist.
+        await verifyPassword(password, DUMMY_HASH);
+        return null;
+    }
+    if (!await verifyPassword(password, account.passwordHash)) return null;
     return publicAccount(account);
 }
 
@@ -178,30 +153,38 @@ function revokeSession(token) {
     return sessions.delete(token);
 }
 
+function normalizeCharacterKey(characterName) {
+    return typeof characterName === 'string' ? characterName.trim().toLowerCase() : '';
+}
+
+async function findAccountById(accountId) {
+    const accounts = await DB.loadAccounts();
+    return Object.values(accounts).find(candidate => candidate.accountId === accountId) || null;
+}
+
 async function bindCharacter(accountId, characterName) {
-    if (!accountId || typeof characterName !== 'string') return false;
-    const key = characterName.trim().toLowerCase();
+    if (!accountId) return false;
+    const key = normalizeCharacterKey(characterName);
     if (!key) return false;
-    await enqueueWrite(async () => {
-        const accounts = await readAccounts();
-        const account = Object.values(accounts).find(candidate => candidate.accountId === accountId);
-        if (!account) return;
-        account.characters = Array.isArray(account.characters) ? account.characters : [];
-        if (!account.characters.includes(key)) account.characters.push(key);
-        await writeAccounts(accounts);
-    });
+    const account = await findAccountById(accountId);
+    // No matching account means there is nothing to bind to. Returning true
+    // here would silently skip the ownership check at login.
+    if (!account) return false;
+    if (account.characters.includes(key)) return true;
+    await DB.updateCharacters(accountId, [...account.characters, key]);
     return true;
 }
 
 async function accountOwnsCharacter(accountId, characterName) {
-    if (!accountId || typeof characterName !== 'string') return false;
-    const accounts = await readAccounts();
-    const account = Object.values(accounts).find(candidate => candidate.accountId === accountId);
-    return Boolean(account && Array.isArray(account.characters) && account.characters.includes(characterName.trim().toLowerCase()));
+    if (!accountId) return false;
+    const key = normalizeCharacterKey(characterName);
+    if (!key) return false;
+    const account = await findAccountById(accountId);
+    return Boolean(account && account.characters.includes(key));
 }
 
 async function flush() {
-    await writeQueue;
+    await DB.flush();
 }
 
 module.exports = {

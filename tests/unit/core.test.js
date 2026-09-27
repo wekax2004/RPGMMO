@@ -5,7 +5,9 @@ const os = require('os');
 const path = require('path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tibia-mmo-unit-'));
-process.env.TIBIA_DB_DRIVER = 'local';
+process.env.TIBIA_DB_DRIVER = 'sqlite';
+// The SQLite layer maps a .json path to <name>.sqlite, so this stays isolated
+// from the real database and from other test files.
 process.env.TIBIA_DB_FILE = path.join(tempDir, 'players.json');
 
 const DB = require('../../server/persistence');
@@ -14,7 +16,10 @@ const PARTY = require('../../server/party');
 const QUESTS = require('../../server/quests');
 const SUBCLASSES = require('../../server/subclasses');
 
-test.after(() => {
+test.after(async () => {
+  // Close SQLite before deleting the directory, otherwise the still-open
+  // handle keeps the -wal and -shm files locked and rmSync fails on Windows.
+  await DB.close();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 

@@ -3,22 +3,27 @@
 /**
  * Persistence boundary for the game server.
  *
- * Local JSON storage is the default so development and tests do not depend on
- * a browser Firebase configuration. Set TIBIA_DB_DRIVER=firebase to use the
- * optional Firestore adapter. All adapters expose the same small async API.
+ * Character state lives in SQLite (see database.js). Player data is
+ * serialized to JSON before it reaches the database so a snapshot is written
+ * atomically as one row, and the player object handed in by the caller is
+ * never retained or mutated.
+ *
+ * TIBIA_DB_DRIVER=firebase keeps the optional Firestore adapter for a hosted
+ * deployment. All adapters expose the same small async API.
  */
 
-const fs = require('fs');
-const fsp = fs.promises;
-const path = require('path');
+const DB = require('./database');
 
-const requestedDriver = String(process.env.TIBIA_DB_DRIVER || 'local').toLowerCase();
-if (!['local', 'firebase'].includes(requestedDriver)) {
-    throw new Error(`Unsupported TIBIA_DB_DRIVER '${requestedDriver}'. Use 'local' or 'firebase'.`);
+// 'local' was the old name for the default file-backed driver. It is
+// accepted and mapped to sqlite so existing configurations and the test
+// harness keep working unchanged.
+const requestedDriver = String(process.env.TIBIA_DB_DRIVER || 'sqlite').toLowerCase() === 'local'
+    ? 'sqlite'
+    : String(process.env.TIBIA_DB_DRIVER || 'sqlite').toLowerCase();
+if (!['sqlite', 'firebase'].includes(requestedDriver)) {
+    throw new Error(`Unsupported TIBIA_DB_DRIVER '${requestedDriver}'. Use 'sqlite' (or its former name 'local') or 'firebase'.`);
 }
-const localFile = path.resolve(
-    process.env.TIBIA_DB_FILE || path.join(__dirname, 'data', 'players.json')
-);
+
 const writeQueues = new Map();
 let globalWriteQueue = Promise.resolve();
 
@@ -34,14 +39,7 @@ function assertPlayerName(charName) {
     return charName.trim();
 }
 
-function playerKey(charName) {
-    return assertPlayerName(charName).toLowerCase();
-}
-
 function enqueueWrite(charName, operation) {
-    // Serialize the whole file, not only writes for one character. Otherwise
-    // two different players can read the same snapshot and the second write
-    // can erase the first player's state.
     const next = globalWriteQueue.catch(() => undefined).then(operation);
     globalWriteQueue = next;
     writeQueues.set(charName, next);
@@ -53,83 +51,25 @@ function enqueueWrite(charName, operation) {
     return next;
 }
 
-async function readLocalStore() {
-    try {
-        const raw = await fsp.readFile(localFile, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error(`Invalid player database shape in ${localFile}`);
-        }
-        return parsed;
-    } catch (error) {
-        if (error.code === 'ENOENT') return {};
-        if (error instanceof SyntaxError) {
-            const backupPath = `${localFile}.corrupt-${Date.now()}`;
-            await fsp.copyFile(localFile, backupPath).catch(() => undefined);
-            const recoveryError = new Error(`Corrupt player database; a copy was preserved at ${backupPath}`);
-            recoveryError.code = 'PERSISTENCE_CORRUPT';
-            recoveryError.cause = error;
-            throw recoveryError;
-        }
-        throw error;
-    }
-}
-
-async function atomicWriteJson(filePath, value) {
-    await fsp.mkdir(path.dirname(filePath), { recursive: true });
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-    await fsp.writeFile(tempPath, JSON.stringify(value, null, 2), 'utf8');
-    const tempHandle = await fsp.open(tempPath, 'r+');
-    try {
-        await tempHandle.sync();
-    } finally {
-        await tempHandle.close();
-    }
-
-    try {
-        await fsp.rename(tempPath, filePath);
-    } catch (error) {
-        // Some Windows filesystems reject replacing an existing file with
-        // rename(). Keep the normal path atomic and use a best-effort fallback.
-        if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(error.code)) {
-            await fsp.rm(tempPath, { force: true }).catch(() => undefined);
-            throw error;
-        }
-        const backupPath = `${filePath}.previous`;
-        await fsp.copyFile(filePath, backupPath).catch(() => undefined);
-        await fsp.rm(filePath, { force: true });
-        await fsp.rename(tempPath, filePath);
-    }
-}
-
-const localStore = {
-    driver: 'local',
-    file: localFile,
+const sqliteStore = {
+    driver: 'sqlite',
+    file: DB.file,
 
     async loadPlayer(charName) {
         const name = assertPlayerName(charName);
-        const key = playerKey(name);
-        const players = await readLocalStore();
-        const record = Object.prototype.hasOwnProperty.call(players, key)
-            ? players[key]
-            : players[name];
+        const record = await DB.loadPlayer(name);
         return cloneData(record || null);
     },
 
     savePlayer(charName, playerData) {
         const name = assertPlayerName(charName);
-        const key = playerKey(name);
-        const snapshot = cloneData(playerData);
-        if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-            throw new TypeError('Player data must be an object.');
+        if (!playerData || typeof playerData !== 'object' || Array.isArray(playerData)) {
+            return Promise.reject(new TypeError('Player data must be an object.'));
         }
-
-        return enqueueWrite(name, async () => {
-            const players = await readLocalStore();
-            players[key] = snapshot;
-            if (key !== name) delete players[name];
-            await atomicWriteJson(localFile, players);
-        });
+        // Snapshot now, at the call site, so later mutations of the live
+        // player object cannot change what this write commits.
+        const snapshot = cloneData(playerData);
+        return enqueueWrite(name, () => DB.savePlayer(name, snapshot));
     }
 };
 
@@ -139,7 +79,7 @@ function createFirebaseStore() {
         throw new Error('FIREBASE_PROJECT_ID is required when TIBIA_DB_DRIVER=firebase.');
     }
 
-    // Load lazily: the default local adapter must not require Firebase.
+    // Load lazily: the default SQLite adapter must not require Firebase.
     const { getApp, getApps, initializeApp } = require('firebase/app');
     const { doc, getDoc, getFirestore, setDoc } = require('firebase/firestore');
     const app = getApps().length > 0 ? getApp() : initializeApp({
@@ -155,14 +95,14 @@ function createFirebaseStore() {
 
         async loadPlayer(charName) {
             const name = assertPlayerName(charName);
-            const snapshot = await getDoc(doc(db, 'players', playerKey(name)));
+            const snapshot = await getDoc(doc(db, 'players', name.toLowerCase()));
             return snapshot.exists() ? cloneData(snapshot.data()) : null;
         },
 
         async savePlayer(charName, playerData) {
             const name = assertPlayerName(charName);
             const snapshot = cloneData(playerData);
-            await setDoc(doc(db, 'players', playerKey(name)), snapshot);
+            await setDoc(doc(db, 'players', name.toLowerCase()), snapshot);
         }
     };
 }
@@ -174,29 +114,43 @@ if (requestedDriver === 'firebase') {
         console.warn('[persistence] Using Firebase Firestore adapter.');
     } catch (error) {
         if (process.env.TIBIA_DB_ALLOW_LOCAL_FALLBACK !== 'true') throw error;
-        store = localStore;
-        console.warn(`[persistence] Firebase unavailable; explicitly falling back to local storage: ${error.message}`);
+        store = sqliteStore;
+        console.warn(`[persistence] Firebase unavailable; explicitly falling back to SQLite: ${error.message}`);
     }
 } else {
-    store = localStore;
+    store = sqliteStore;
 }
 
+// Open the schema eagerly so a bad file surfaces at boot rather than on the
+// first player save.
+const ready = requestedDriver === 'sqlite' ? DB.initialize() : Promise.resolve();
+
 async function loadPlayer(charName) {
+    await ready;
     return store.loadPlayer(charName);
 }
 
 function savePlayer(charName, playerData) {
-    if (store.driver === 'firebase') {
-        const name = assertPlayerName(charName);
-        const snapshot = cloneData(playerData);
-        return enqueueWrite(name, () => store.savePlayer(name, snapshot));
+    if (!playerData || typeof playerData !== 'object' || Array.isArray(playerData)) {
+        return Promise.reject(new TypeError('Player data must be an object.'));
     }
-    return store.savePlayer(charName, playerData);
+    const snapshot = cloneData(playerData);
+    return ready.then(() => store.savePlayer(charName, snapshot));
 }
 
 async function flush() {
+    await ready;
+    if (store.driver === 'sqlite') await DB.flush();
     const pending = Array.from(writeQueues.values());
     if (pending.length > 0) await Promise.all(pending);
+}
+
+// Drains writes and then closes the underlying connection, so the SQLite
+// file and its WAL can be released. Callers that only want the writes to land
+// should use flush().
+async function close() {
+    await flush();
+    if (store.driver === 'sqlite') await DB.close();
 }
 
 module.exports = {
@@ -205,5 +159,5 @@ module.exports = {
     loadPlayer,
     savePlayer,
     flush,
-    close: flush
+    close
 };

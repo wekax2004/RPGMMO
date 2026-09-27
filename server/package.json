@@ -13,6 +13,7 @@
   "type": "commonjs",
   "dependencies": {
     "firebase": "^12.19.0",
+    "sqlite3": "^6.0.1",
     "ws": "^8.21.3"
   }
 }
