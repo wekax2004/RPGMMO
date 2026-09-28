@@ -1,4 +1,10 @@
-const { broadcast, sendTo, getPlayerByName } = require('./network_utils'); // Assuming these exist, or we will inject them in server.js
+let broadcast, sendTo, getPlayerByName;
+
+function init(networkUtils) {
+    broadcast = networkUtils.broadcast;
+    sendTo = networkUtils.sendTo;
+    getPlayerByName = networkUtils.getPlayerByName;
+}
 
 const guilds = new Map();
 // guilds: id -> { id, name, leader, members: Set<playerName> }
@@ -110,4 +116,4 @@ function syncAllGuildMembers(g) {
     }
 }
 
-module.exports = { guilds, createGuild, inviteGuild, acceptGuild, kickGuild, leaveGuild, broadcastGuild };
+module.exports = { init, guilds, createGuild, inviteGuild, acceptGuild, kickGuild, leaveGuild, broadcastGuild };

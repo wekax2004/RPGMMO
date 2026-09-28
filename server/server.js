@@ -3,8 +3,9 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const CFG = require('./config');
-const { isWalkable, obstacleData } = require('./map');
-const { mobs, spawnMobPack, moveMobToward, mobAttack, inSafeZone } = require('./mobs');
+const { isWalkable, obstacleData, isWater, hasWaterNear } = require('./map');
+const MAP = require('./map');
+const { mobs, spawnMobPack, spawnMobAt, moveMobToward, mobAttack, inSafeZone } = require('./mobs');
 const { chests, spawnChest } = require('./chests');
 const { npcs } = require('./npcs');
 const corpses = new Map();
@@ -14,28 +15,71 @@ const CRAFTING = require('./crafting');
 const ITEMS = require('./items');
 const DB = require('./db_firebase');
 const AUTH = require('./auth');
+
+process.on('uncaughtException', (err) => {
+    console.error('CRITICAL: Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Per-IP login throttle. This exists to blunt the scrypt CPU cost of a
+// brute-force run, not to ration logins: several legitimate players can share
+// one address (a school, a NAT'd household, a load test), so the window has
+// to be generous enough for a real burst. The previous 5-per-10s locked out
+// the 50-bot load test, where every bot shares 127.0.0.1.
+const LOGIN_LIMIT_MAX = Number(process.env.TIBIA_LOGIN_MAX) > 0
+    ? Number(process.env.TIBIA_LOGIN_MAX)
+    : 30;
+const LOGIN_LIMIT_WINDOW_MS = Number(process.env.TIBIA_LOGIN_WINDOW_MS) > 0
+    ? Number(process.env.TIBIA_LOGIN_WINDOW_MS)
+    : 60_000;
+const authAttempts = new Map();
+function authLimiter(ip) {
+    if (!ip) return false;
+    // A test harness legitimately bursts; the throttle is an abuse control,
+    // not a correctness gate, so do not let it fail a load test.
+    if (TEST_MODE) return false;
+    const now = Date.now();
+    const entry = authAttempts.get(ip) || { count: 0, windowStart: now };
+    if (now - entry.windowStart >= LOGIN_LIMIT_WINDOW_MS) { entry.count = 0; entry.windowStart = now; }
+    entry.count++;
+    authAttempts.set(ip, entry);
+    return entry.count > LOGIN_LIMIT_MAX;
+}
+// Bounded so a long-lived server cannot accumulate an entry per source IP.
+function sweepAuthAttempts() {
+    const cutoff = Date.now() - LOGIN_LIMIT_WINDOW_MS;
+    for (const [ip, entry] of authAttempts.entries()) {
+        if (entry.windowStart < cutoff) authAttempts.delete(ip);
+    }
+}
 const { bosses, spawnBoss, bossAI, triggerBossAoe, BOSS_TYPES } = require('./bosses');
 const PARTY = require('./party');
-const GUILDS = { getGuild: () => null, createGuild: () => {}, inviteToGuild: () => {}, joinGuild: () => {}, leaveGuild: () => {} };
+const GUILDS = require('./guilds');
+const AUCTION = require('./auction');
+
+// The auction pays sellers who may be logged out, so it needs to be able to
+// read and write a character's row directly. This is what stops a sale from
+// destroying gold when the seller is offline.
+AUCTION.init({
+    loadPlayer: (charName) => DB.loadPlayer(charName),
+    savePlayer: (charName, record) => DB.savePlayer(charName, record)
+});
 const TRADE = require('./trade');
 const SC = require('./subclasses');
+const OLLAMA = require('./ollama');
+const { createCombat } = require('./combat');
+const SKILLS = require('./skills');
 const TEST_MODE = process.env.TIBIA_TEST_MODE === 'true';
 
 const SHOP_INVENTORY = {
     'Health Potion': { price: 20 },
     'Mana Potion': { price: 30 },
-    'Greater Health Potion': { price: 80 },
-    'Greater Mana Potion': { price: 100 },
     'Iron Sword': { price: 150 },
-    'Steel Longsword': { price: 400 },
-    'Elven Bow': { price: 350 },
-    'Holy Staff': { price: 300 },
     'Leather Tunic': { price: 100 },
-    'Chain Mail': { price: 250 },
     'Leather Helmet': { price: 60 },
-    'Iron Helmet': { price: 150 },
     'Leather Boots': { price: 80 },
-    'Iron Shield': { price: 200 },
     'Leather Legs': { price: 90 }
 };
 
@@ -52,7 +96,8 @@ const STATIC_MIME_TYPES = {
 function serveClientFile(res, securityHeaders, url, urlPrefix, root) {
     let requested;
     try {
-        requested = path.resolve(root, '.' + decodeURIComponent(url.slice(urlPrefix.length)));
+        const urlWithoutQuery = url.split('?')[0];
+        requested = path.resolve(root, '.' + decodeURIComponent(urlWithoutQuery.slice(urlPrefix.length)));
     } catch (error) {
         // Malformed percent-encoding. Must not throw: this runs inside the
         // unguarded http request listener.
@@ -138,18 +183,43 @@ function scheduleServerInterval(callback, delay) {
     return handle;
 } 
 
+// Reap the per-IP login counters so the map cannot grow without bound.
+scheduleServerInterval(() => sweepAuthAttempts(), 60_000);
+
 let isDay = true;
 scheduleServerInterval(() => {
-    isDay = !isDay;
-    broadcast({ action: 'log', message: isDay ? '☀️ The sun rises...' : '🌙 Night falls. Monsters are stronger and drop more loot!' });
+    isDay = !isDay;    broadcast({ action: 'log', message: isDay ? '☀️ The sun rises...' : '🌙 Night falls. Monsters are stronger and drop more loot!' });
     broadcast({ action: 'time_sync', isDay });
 }, 60000); 
 
 const MAX_SOCKET_BUFFER_BYTES = 1024 * 1024;
 
+// Sends to every connected player. Pass no second argument.
 function broadcast(dataObj) {
     const msg = JSON.stringify(dataObj);
     players.forEach(p => {
+        if (p.ws.readyState === WebSocket.OPEN && p.ws.bufferedAmount <= MAX_SOCKET_BUFFER_BYTES) {
+            p.ws.send(msg);
+        }
+    });
+}
+
+// Floor-scoped counterpart to broadcast(). A separate function rather than an
+// optional second parameter on broadcast(): there are 107 broadcast() call
+// sites, and threading a filter argument through all of them invites a call
+// that passes a player object or a packet where a floor index was expected --
+// which fails as a filter nobody notices, not as a type error. A distinct name
+// puts the scope at the call site and leaves all 107 callers byte-identical.
+//
+// Both sides are normalised. A player whose stored z is missing or corrupt --
+// any save written before Stage 0 -- counts as being on the surface, so an
+// unnormalised compare would drop that player from every floor-scoped packet
+// and they would silently stop seeing the world.
+function broadcastToFloor(z, dataObj) {
+    const floor = MAP.normalizeZ(z);
+    const msg = JSON.stringify(dataObj);
+    players.forEach(p => {
+        if (MAP.normalizeZ(p.z) !== floor) return;
         if (p.ws.readyState === WebSocket.OPEN && p.ws.bufferedAmount <= MAX_SOCKET_BUFFER_BYTES) {
             p.ws.send(msg);
         }
@@ -169,6 +239,7 @@ function findPlayerByName(name) {
     }
     return null;
 }
+GUILDS.init({ broadcast, sendTo, getPlayerByName: findPlayerByName });
 function sendPartySync(party) {
     const snapshot = PARTY.getPartySnapshot(party, players);
     const packet = { action: 'party_sync', ...snapshot, party: snapshot };
@@ -210,6 +281,46 @@ function abortSeparatedTrade(playerId) {
     TRADE.cancelTrade(trade.id);
     return true;
 }
+// Sends the full skill panel. Called on login so the HUD is populated
+// before the player does anything.
+function sendSkillPanel(player) {
+    sendTo(player, { action: 'skill_update', skills: SKILLS.skillSummary(player.skills) });
+}
+
+function syncNpcs(player) {
+    npcs.forEach((npc, id) => {
+        let hasQuest = false;
+        if (npc.quests_offered && Array.isArray(npc.quests_offered)) {
+            hasQuest = npc.quests_offered.some(qId => Q.canAcceptQuest(player.quests, qId, id));
+        }
+        sendTo(player, { action: 'npc_sync', id, name: npc.name, x: npc.x, y: npc.y, hasQuest });
+    });
+    // The workbench is a static interactable, synced like an NPC
+    sendTo(player, { action: 'npc_sync', id: CRAFTING.WORKBENCH.id, name: CRAFTING.WORKBENCH.name, x: CRAFTING.WORKBENCH.x, y: CRAFTING.WORKBENCH.y, hasQuest: false });
+}
+
+// Awards skill XP and, when that levels a skill, tells the client. Returns
+// the descriptor so callers can add their own flavour of notification.
+function awardSkill(player, skillId, amount) {
+    const result = SKILLS.grantSkillXp(player.skills, skillId, amount);
+    if (!result) return null;
+    sendTo(player, { action: 'skill_update', skill: result });
+    if (result.leveled) {
+        sendTo(player, {
+            action: 'log',
+            message: `⭐ ${result.name} is now level ${result.level}!`
+        });
+        broadcast({
+            action: 'fct',
+            x: player.x + 16,
+            y: player.y - 24,
+            text: `${result.name} ${result.level}`,
+            color: '#fbbf24'
+        });
+    }
+    return result;
+}
+
 function serializePlayer(p) {
     return {
         level: p.level,
@@ -219,9 +330,41 @@ function serializePlayer(p) {
         inventory: [...p.inventory],
         classType: p.classType,
         subclass: p.subclass,
+        x: p.x,
+        y: p.y,
+        z: MAP.normalizeZ(p.z),
         guild: p.guild || null,
+        // Auction escrow and unpaid proceeds travel with the character, so a
+        // restart can never destroy a listed item or an offline payout.
+        auctionEscrow: Array.isArray(p.auctionEscrow)
+            ? p.auctionEscrow
+                .filter(r => r && typeof r.item === 'string' && Number.isSafeInteger(r.price))
+                .map(r => ({
+                    id: typeof r.id === 'string' ? r.id : null,
+                    item: r.item,
+                    price: r.price,
+                    listedAt: safePersistInt(r.listedAt, Date.now()),
+                    expiresAt: safePersistInt(r.expiresAt, Date.now() + CFG.AUCTION_LISTING_TTL_MS)
+                }))
+            : [],
+        pendingMailbox: (p.pendingMailbox && typeof p.pendingMailbox === 'object')
+            ? {
+                gold: safePersistInt(p.pendingMailbox.gold, 0, 0),
+                items: Array.isArray(p.pendingMailbox.items)
+                    ? p.pendingMailbox.items.filter(i => typeof i === 'string').slice(0, 200)
+                    : []
+            }
+            : { gold: 0, items: [] },
+        // Persisted so a skull survives a reconnect. hasActiveSkull still
+        // applies the timer, so an expired flag comes back as inactive.
+        skull: normalizeSkull(p.skull),
+        isMounted: p.isMounted === true,
+        skullExpiresAt: Number.isSafeInteger(p.skullExpiresAt) && p.skullExpiresAt > 0 ? p.skullExpiresAt : 0,
         quests: p.quests,
         craftedRecipes: Array.isArray(p.craftedRecipes) ? [...p.craftedRecipes] : [],
+        skills: SKILLS.normalizeSkills(p.skills),
+        bankGold: Number.isSafeInteger(p.bankGold) ? p.bankGold : 0,
+        bankItems: Array.isArray(p.bankItems) ? [...p.bankItems] : [],
         equipment: { ...p.equipment },
         maxHp: p.maxHp,
         maxMana: p.maxMana
@@ -238,6 +381,29 @@ function persistPlayer(p) {
             console.error(`[persistence] Failed to save ${p.charName}:`, error.message);
         });
 }
+// Combat lives in ./combat and gets its world state and side-effect
+// callbacks from here, so the dependency stays one-way. isDay is passed as
+// a getter because it flips on a timer.
+const COMBAT = createCombat({
+    players,
+    mobs,
+    isDay: () => isDay,
+    dist,
+    inSafeZone,
+    broadcast,
+    sendTo,
+    addXp,
+    checkPlayerDeath,
+    sendQuestJournal,
+    spawnMobPack,
+    persistPlayer,
+    awardSkill,
+    grantWhiteSkull,
+    hasActiveSkull,
+    sendPlayerStatus,
+    sendProtocolError
+});
+
 function sendPlayerStatus(player) {
     let speedBonus = 0;
     if (player.equipment.boots && ITEMS.boots[player.equipment.boots]) {
@@ -265,6 +431,151 @@ function sendPlayerStatus(player) {
         partyId: party ? party.id : null
     });
 }
+// --- Mounts --------------------------------------------------------------
+// A mount is a movement stance. The server is the only authority on it: the
+// client asks to toggle, the server decides, and everyone is told.
+function mountPlayer(player) {
+    if (player.isMounted) return false;
+    player.isMounted = true;
+    player.persistenceDirty = true;
+    return true;
+}
+
+function dismountPlayer(player, reason) {
+    if (!player.isMounted) return false;
+    player.isMounted = false;
+    player.persistenceDirty = true;
+    if (reason) sendTo(player, { action: 'log', message: `🐴 ${reason}` });
+    // Tell everyone the stance changed, and push the new speed to the
+    // mounted player so the client can animate it immediately.
+    broadcast({
+        action: 'mount_changed',
+        id: player.id,
+        isMounted: false
+    });
+    sendTo(player, { action: 'status', isMounted: false });
+    return true;
+}
+
+// --- Ground loot ---------------------------------------------------------
+// Items a player sets down on the map. The drop position is always the
+// server's own player.x/player.y, never a client-supplied coordinate, so a
+// modified client cannot place loot anywhere on the map.
+const groundItems = new Map();
+let groundItemCounter = 1;
+
+// Trimmed payload for the client. ownerId is deliberately omitted so the
+// wire format cannot be used to enumerate who dropped what.
+// Full snapshot of the ground loot on one floor, or on every floor when no
+// floor is given. ground_sync replaces the client's whole set, so the client
+// never has to reconcile a delta against a list it may have missed.
+function groundItemPayload(z) {
+    const scoped = z === undefined;
+    const floor = MAP.normalizeZ(z);
+    const out = [];
+    for (const g of groundItems.values()) {
+        const gz = MAP.normalizeZ(g.z);
+        if (!scoped && gz !== floor) continue;
+        out.push({ id: g.id, name: g.name, x: g.x, y: g.y, z: gz });
+    }
+    return out;
+}
+
+function broadcastGroundSync() {
+    broadcast({ action: 'ground_sync', items: groundItemPayload() });
+}
+
+// Despawns expired drops and enforces the hard cap, so neither a slow client
+// nor a drop_item spam can grow the Map without bound.
+function sweepGroundItems() {
+    const now = Date.now();
+    let changed = false;
+    for (const [id, g] of groundItems.entries()) {
+        if (g.expiresAt <= now) {
+            groundItems.delete(id);
+            changed = true;
+        }
+    }
+    // Oldest-first eviction via Map insertion order.
+    while (groundItems.size > CFG.GROUND_MAX_ITEMS) {
+        const oldest = groundItems.keys().next().value;
+        if (oldest === undefined) break;
+        groundItems.delete(oldest);
+        changed = true;
+    }
+    if (changed) broadcastGroundSync();
+}
+
+// Resolves the target of a pickup: an explicit id, or the nearest drop within
+// reach when the client only sent coordinates. Returns null when nothing
+// qualifies; the caller reports the refusal.
+function resolveGroundTarget(player, data) {
+    if (typeof data.itemId === 'string' && data.itemId) {
+        return groundItems.get(data.itemId) || null;
+    }
+    if (!Number.isInteger(data.x) || !Number.isInteger(data.y)) return null;
+    let best = null;
+    let bestDist = Infinity;
+    for (const g of groundItems.values()) {
+        const d = dist(player.x, player.y, g.x, g.y);
+        // The coordinate the client named must actually be the drop's tile,
+        // otherwise a client could sweep every nearby item by guessing.
+        if (g.x !== data.x || g.y !== data.y) continue;
+        if (d <= CFG.GROUND_PICKUP_RANGE && d < bestDist) {
+            best = g;
+            bestDist = d;
+        }
+    }
+    return best;
+}
+
+// --- Skull system (PvP) -------------------------------------------------
+// A white skull marks a player who has attacked someone who was not already
+// flagged. While skulled they drop a larger share of their gold on death,
+// which is the incentive to stay out of PvP. The flag decays on a timer so
+// a single mistake is not permanent.
+const SKULL_WHITE = 'white';
+const SKULL_DURATION_MS = Number(process.env.TIBIA_SKULL_MS) > 0
+    ? Number(process.env.TIBIA_SKULL_MS)
+    : 5 * 60 * 1000;
+// Fraction of a player's gold left on the corpse. checkPlayerDeath already
+// dropped a flat 0.5 for everyone; a skull makes it worse, it never makes it
+// better, so this must stay >= NORMAL_DROP_RATIO.
+const SKULL_DROP_RATIO = 1;
+const NORMAL_DROP_RATIO = 0.5;
+
+function normalizeSkull(value) {
+    return value === SKULL_WHITE ? SKULL_WHITE : null;
+}
+
+// A skull only counts while its timer is in the future. Reading it through
+// one function keeps the "is this player flagged" rule in a single place.
+function hasActiveSkull(player, now = Date.now()) {
+    return normalizeSkull(player.skull) === SKULL_WHITE && player.skullExpiresAt > now;
+}
+
+function grantWhiteSkull(player, now = Date.now()) {
+    if (hasActiveSkull(player, now)) return false;   // already flagged
+    player.skull = SKULL_WHITE;
+    player.skullExpiresAt = now + SKULL_DURATION_MS;
+    player.persistenceDirty = true;
+    return true;
+}
+
+function clearSkull(player) {
+    const had = normalizeSkull(player.skull) !== null;
+    player.skull = null;
+    player.skullExpiresAt = 0;
+    if (had) player.persistenceDirty = true;
+    return had;
+}
+
+// Integer coercion for persisted auction fields: a hand-edited save must not be
+// able to inject a float, a negative, or a non-numeric value.
+function safePersistInt(value, fallback, minimum = 0) {
+    return Number.isSafeInteger(value) && value >= minimum ? value : fallback;
+}
+
 function normalizePlayerData(raw) {
     const data = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     const safeInteger = (value, fallback, minimum = 0) =>
@@ -292,12 +603,69 @@ function normalizePlayerData(raw) {
         quests,
         equipment,
         craftedRecipes: CRAFTING.sanitizeCraftedRecipes(data.craftedRecipes),
+        skills: SKILLS.normalizeSkills(data.skills),
+        bankGold: safeInteger(data.bankGold, 0),
+        bankItems: Array.isArray(data.bankItems) ? data.bankItems.filter(item => typeof item === 'string') : [],
+        // serializePlayer has always written these; without reading them back
+        // guild membership and any active skull were silently dropped on
+        // every login.
+        x: data.x ?? 320,
+        y: data.y ?? 320,
+        z: MAP.normalizeZ(data.z),
+        guild: typeof data.guild === 'string' && data.guild ? data.guild : null,
+        auctionEscrow: Array.isArray(data.auctionEscrow)
+            ? data.auctionEscrow
+                .filter(r => r && typeof r.item === 'string' && r.item.length <= 100 && AUCTION.isValidPrice(r.price))
+                .slice(0, CFG.AUCTION_MAX_LISTINGS)
+                .map(r => ({
+                    id: typeof r.id === 'string' ? r.id : null,
+                    item: r.item,
+                    price: r.price,
+                    listedAt: safeInteger(r.listedAt, Date.now()),
+                    expiresAt: safeInteger(r.expiresAt, Date.now() + CFG.AUCTION_LISTING_TTL_MS)
+                }))
+            : [],
+        pendingMailbox: (data.pendingMailbox && typeof data.pendingMailbox === 'object')
+            ? {
+                gold: safeInteger(data.pendingMailbox.gold, 0),
+                items: Array.isArray(data.pendingMailbox.items)
+                    ? data.pendingMailbox.items.filter(i => typeof i === 'string' && i.length <= 100).slice(0, 200)
+                    : []
+            }
+            : { gold: 0, items: [] },
+        skull: normalizeSkull(data.skull),
+        // A mount is a stance, not a stat, but persisting it stops a logout
+        // silently dismounting the player.
+        isMounted: data.isMounted === true,
+        skullExpiresAt: safeInteger(data.skullExpiresAt, 0),
         maxHp: safeInteger(data.maxHp, 100, 1),
         maxMana: safeInteger(data.maxMana, 50, 1)
     };
 }
 function isInBounds(x, y) { return x >= 0 && y >= 0 && x < CFG.MAP_WIDTH && y < CFG.MAP_HEIGHT; }
-function dist(x1, y1, x2, y2) { return Math.abs(x1 - x2) + Math.abs(y1 - y2); }
+
+// Manhattan distance on one floor. Deliberately floor-unaware: it takes no z at
+// all, so a caller cannot pass a stale or defaulted floor index and get a
+// plausible-looking number. Every existing 2D comparison uses this unchanged.
+//
+// An earlier revision added `z1 = 0, z2 = 0` parameters with the same shape. It
+// was correct only while every entity sat on z = 0, because the defaults then
+// cancelled: a mob on z = -1 measured against a player on z = 0 with a 4-arg
+// call compared the default 0 to the default 0 and returned a real distance
+// straight through the floor. Ranges, aggro and AoE all read this value, so the
+// failure was silent and game-wide. Floor-aware measurement is opt-in below.
+function dist(x1, y1, x2, y2) {
+    return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+}
+
+// Floor-aware distance: Infinity across different floors, so every existing
+// `<= RANGE` and `minD <=` comparison rejects a cross-floor target for free
+// without needing a second condition. Use this for any measurement that
+// decides whether one entity can reach another.
+function dist3D(x1, y1, z1, x2, y2, z2) {
+    if (MAP.normalizeZ(z1) !== MAP.normalizeZ(z2)) return Infinity;
+    return dist(x1, y1, x2, y2);
+}
 
 function recalcPlayerStats(player) {
     let baseMaxHp = 0; let baseMaxMana = 0;
@@ -333,38 +701,6 @@ function recalcPlayerStats(player) {
     if (player.mana > player.maxMana) player.mana = player.maxMana;
 }
 
-function getSubclassModifiers(player) {
-    if (!player || !player.subclass) return {};
-    const data = SC.getSubclassData(player.subclass);
-    return data && data.statModifiers ? data.statModifiers : {};
-}
-
-function applyCombatModifiers(player, baseAmount, type = 'generic') {
-    const modifiers = getSubclassModifiers(player);
-    let multiplier = Number(modifiers.damageMulti) || 1;
-    if (type === 'fire') multiplier *= Number(modifiers.fireDamageMulti) || 1;
-    if (type === 'heal') multiplier *= Number(modifiers.healMulti) || 1;
-    if (player && player.maxHp > 0 && player.hp / player.maxHp < 0.3) {
-        multiplier *= Number(modifiers.lowHpDamageMulti) || 1;
-    }
-    return Math.max(1, Math.floor(baseAmount * multiplier));
-}
-
-function getAttackRange(player, baseRange) {
-    const modifiers = getSubclassModifiers(player);
-    return Math.floor(baseRange * (Number(modifiers.rangeMulti) || 1));
-}
-
-function getAttackCooldown(player, baseCooldown) {
-    const modifiers = getSubclassModifiers(player);
-    return Math.max(100, Math.floor(baseCooldown / (Number(modifiers.attackSpeedMulti) || 1)));
-}
-
-function applyLifesteal(player, damage) {
-    const lifesteal = Number(getSubclassModifiers(player).lifesteal) || 0;
-    if (lifesteal > 0) player.hp = Math.min(player.maxHp, player.hp + Math.floor(damage * lifesteal));
-}
-
 function addXp(player, amount) {
     if (player.warmode) amount = Math.floor(amount * 1.2); 
     player.xp += amount;
@@ -386,55 +722,17 @@ function addXp(player, amount) {
 
 for(let i=0; i<15; i++) spawnMobPack(broadcast, 3);
 for(let i=0; i<CFG.MAX_CHESTS; i++) spawnChest(broadcast);
-Q.spawnGatheringNodes(broadcast);
+Q.spawnGatheringNodes(broadcast, isWalkable);
 scheduleServerInterval(() => { if (chests.size < CFG.MAX_CHESTS) spawnChest(broadcast); }, CFG.CHEST_SPAWN_INTERVAL);
 
 // Spawn all bosses
-Object.keys(BOSS_TYPES).forEach(type => spawnBoss(type, broadcast));
+// Silent on purpose: a restart would otherwise announce every boss at once.
+Object.keys(BOSS_TYPES).forEach(type => spawnBoss(type, broadcast, { announce: false }));
 
 function syncTrade(tradeId, action = 'trade_sync') {
     const trade = TRADE.activeTrades.get(tradeId);
     if (!trade) return;
     sendTradeSyncAll(trade, action);
-}
-
-function killMob(player, target) {
-    // Multiple attackers can observe the same lethal hit in one tick. Only
-    // the first observer is allowed to grant rewards or update the world.
-    if (!mobs.has(target.id) || target.hp > 0) return;
-    player.gold += CFG.MOB_KILL_GOLD;
-    const partyShares = PARTY.shareXp(PARTY.getParty(player.id), target.xpReward, player, players);
-    const xpRecipients = partyShares.length > 0
-        ? partyShares
-        : [{ member: player, xp: target.xpReward }];
-    const mobName = target.name.replace('Elite ', '');
-    xpRecipients.forEach(({ member, xp }) => {
-        addXp(member, xp);
-        const updates = Q.onMobKilled(member.quests, mobName);
-        if (updates.length > 0) {
-            updates.forEach(update => sendTo(member, { action: 'log', message: `📜 [QUEST] ${update.questName}: ${update.objective}` }));
-            sendQuestJournal(member);
-        }
-    });
-    broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `+${target.xpReward} XP`, color: '#ffcc00' });
-    
-    const loot = ITEMS.lootTable[target.type];
-    if (loot) {
-        loot.forEach(item => {
-            let chance = item.chance;
-            if (!isDay) chance *= 1.5; 
-            if (Math.random() < chance) {
-                player.inventory.push(item.name);
-                broadcast({ action: 'fct', x: target.x+16, y: target.y-20, text: `+${item.name}`, color: '#ffffff' });
-            }
-        });
-    }
-
-    mobs.delete(target.id);
-    broadcast({ action: 'mob_update', id: target.id, alive: false });
-    if (player.targetId === target.id) player.targetId = null;
-    
-    setTimeout(() => spawnMobPack(broadcast, Math.floor(Math.random() * 2) + 1), 5000);
 }
 
 function sendQuestJournal(player) {
@@ -461,6 +759,7 @@ function sendQuestJournal(player) {
         });
     });
     sendTo(player, { action: 'quest_journal', ...data });
+    syncNpcs(player);
 }
 
 // Grants every finished quest whose giver is this NPC. Returns the results
@@ -505,6 +804,10 @@ function closeNpcDialogue(player, npcId, npcName) {
 
 wss.on('connection', (ws) => {
     const playerId = 'p_' + Math.random().toString(36).substr(2, 6);
+    // Captured here because this is the only place the peer address exists.
+    // Inside the 'message' handler below there is no HTTP request object, so
+    // reaching for `req` there is a ReferenceError that breaks every login.
+    const remoteAddress = (ws._socket && ws._socket.remoteAddress) || null;
     
     sendTo({ ws }, { action: AUTH.required ? 'auth_required' : 'show_class_select' });
 
@@ -535,6 +838,10 @@ wss.on('connection', (ws) => {
             }
 
             if (data.action === 'auth_register') {
+                if (authLimiter(remoteAddress)) {
+                    sendTo({ ws }, { action: 'auth_error', message: 'Too many attempts. Try again later.' });
+                    return;
+                }
                 try {
                     const result = await AUTH.register(data.username, data.password);
                     if (!result.success) {
@@ -555,6 +862,11 @@ wss.on('connection', (ws) => {
                 return;
             }
             if (data.action === 'auth_login') {
+                // This is the scrypt path, so it is the one worth throttling.
+                if (authLimiter(remoteAddress)) {
+                    sendTo({ ws }, { action: 'auth_error', message: 'Too many attempts. Try again later.' });
+                    return;
+                }
                 try {
                     const account = await AUTH.authenticate(data.username, data.password);
                     if (!account) {
@@ -581,6 +893,10 @@ wss.on('connection', (ws) => {
             }
 
             if (data.action === 'login') {
+                if (authLimiter(remoteAddress)) {
+                    ws.send(JSON.stringify({ action: 'login_fail', message: 'Rate limit exceeded. Try again later.' }));
+                    return;
+                }
                 let accountId = null;
                 if (AUTH.required || typeof data.authToken === 'string') {
                     const session = AUTH.validateSession(data.authToken);
@@ -664,7 +980,7 @@ wss.on('connection', (ws) => {
 
                 players.set(playerId, {
                     id: playerId, ws, charName,
-                    x: 320, y: 320,
+                    x: pData.x ?? 320, y: pData.y ?? 320, z: MAP.normalizeZ(pData.z),
                     hp: pData.maxHp || 100, maxHp: pData.maxHp || 100, 
                     mana: pData.maxMana || 50, maxMana: pData.maxMana || 50, 
                     gold: pData.gold || 0,
@@ -675,6 +991,13 @@ wss.on('connection', (ws) => {
                     quests: pData.quests || Q.initPlayerQuests(),
                     equipment: pData.equipment || { weapon: null, shield: null, helmet: null, armor: null, legs: null, boots: null, amulet: null },
                     craftedRecipes: pData.craftedRecipes || [],
+                    skills: SKILLS.normalizeSkills(pData.skills),
+                    guild: pData.guild || null,
+                    auctionEscrow: Array.isArray(pData.auctionEscrow) ? pData.auctionEscrow : [],
+                    pendingMailbox: pData.pendingMailbox || { gold: 0, items: [] },
+                    skull: normalizeSkull(pData.skull),
+                    isMounted: pData.isMounted === true,
+                    skullExpiresAt: pData.skullExpiresAt || 0,
                     warmode: data.warmode === true,
                     targetId: null, lastAttackTime: 0, lastMoveTime: 0,
                     poisonStacks: 0, lastPoisonTick: 0, bleedStacks: 0, lastBleedTick: 0, stunUntil: 0, persistenceDirty: false
@@ -688,21 +1011,63 @@ wss.on('connection', (ws) => {
                 if (!pData.maxHp) { player.hp = player.maxHp; player.mana = player.maxMana; }
 
                 sendTo(player, { action: 'your_id', id: playerId, name: charName });
+                sendTo(player, { action: 'item_dict', items: ITEMS, materials: CRAFTING.MATERIALS, recipes: CRAFTING.RECIPES });
                 sendTo(player, { action: 'time_sync', isDay });
                 sendTo(player, { action: 'log', message: `Welcome ${charName} (${player.classType}). Warmode: ${player.warmode?'ON ⚔️':'OFF'}` });
                 sendQuestJournal(player);
                 
-                mobs.forEach((mob, id) => sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite }));
-                bosses.forEach((boss, id) => sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true, phase: boss.phase }));
-                chests.forEach((c, id) => sendTo(player, { action: 'chest_update', id, x: c.x, y: c.y, active: true }));
-                corpses.forEach((c, id) => sendTo(player, { action: 'corpse_spawn', corpse: c }));
-                corpses.forEach((c, id) => sendTo(player, { action: 'corpse_spawn', corpse: c }));
-                npcs.forEach((npc, id) => sendTo(player, { action: 'npc_sync', id, name: npc.name, x: npc.x, y: npc.y }));
-                // The workbench is a static interactable, synced like an NPC
-                // so the client can draw and highlight it.
-                sendTo(player, { action: 'npc_sync', id: CRAFTING.WORKBENCH.id, name: CRAFTING.WORKBENCH.name, x: CRAFTING.WORKBENCH.x, y: CRAFTING.WORKBENCH.y });
-                Q.gatheringNodes.forEach((node, id) => { if (node.active) sendTo(player, { action: 'node_sync', id, name: node.name, x: node.x, y: node.y, color: node.color, symbol: node.symbol }); });
-                sendTo(player, { action: 'map_data', obstacles: obstacleData, width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE });
+                // The roster below is this player's floor only. Sending every
+                // entity in the world would put dungeon mobs on the surface
+                // client's canvas at coordinates that mean nothing there, and
+                // the client has no way to tell the difference. Every entity
+                // normalises the same way, so a pre-Stage-0 save with no z at
+                // all still matches the surface.
+                const pz = MAP.normalizeZ(player.z);
+                mobs.forEach((mob, id) => { if (MAP.normalizeZ(mob.z) === pz) sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, z: pz, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite }); });
+                bosses.forEach((boss, id) => { if (MAP.normalizeZ(boss.z) === pz) sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, z: pz, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true, phase: boss.phase }); });
+                chests.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'chest_update', id, x: c.x, y: c.y, z: pz, active: true }); });
+                corpses.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'corpse_spawn', corpse: c }); });
+                // Populate the skill panel immediately so the HUD is correct
+                // before the player gathers or fights anything.
+                sendSkillPanel(player);
+                syncNpcs(player);
+                Q.gatheringNodes.forEach((node, id) => { if (node.active && MAP.normalizeZ(node.z) === pz) sendTo(player, { action: 'node_sync', id, name: node.name, x: node.x, y: node.y, z: pz, color: node.color, symbol: node.symbol }); });
+                // map_data describes one floor. Stage 0 only the surface has
+                // generated terrain, so this is that floor's obstacle set; the
+                // explicit z lets the client key its cached terrain by floor
+                // instead of assuming whatever arrived last is the ground
+                // under its feet.
+                const floorTerrain = MAP.getFloorTerrain(pz) || { z: CFG.Z_SURFACE, obstacleData: [] };
+                sendTo(player, { action: 'map_data', z: floorTerrain.z, obstacles: floorTerrain.obstacleData, width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE });
+                // A joining client must learn about anything already on the
+                // ground, not only about future drops. Filtered to this floor,
+                // so a drop on another level is not drawn on this one.
+                sendTo(player, { action: 'ground_sync', items: groundItemPayload(pz) });
+                // Anything an offline auction sale or expiry owed this character.
+                const owed = AUCTION.claimMailbox(player);
+                if (owed.gold > 0 || owed.items.length > 0) {
+                    player.gold += owed.gold;
+                    owed.items.forEach(item => player.inventory.push(item));
+                    player.persistenceDirty = true;
+                    const parts = [];
+                    if (owed.gold > 0) parts.push(`${owed.gold} gold`);
+                    if (owed.items.length > 0) parts.push(owed.items.join(', '));
+                    sendTo(player, {
+                        action: 'log',
+                        message: `📬 While you were away you received: ${parts.join(' and ')}.`
+                    });
+                    sendPlayerStatus(player);
+                }
+                // Put anything this character still has listed back on the board.
+                const restored = AUCTION.rehydrate(player);
+                if (restored > 0) {
+                    sendTo(player, {
+                        action: 'log',
+                        message: `📦 ${restored} of your auction listing(s) are active again.`
+                    });
+                }
+                // Current auction board, so the modal can open with data.
+                sendTo(player, { action: 'auction_sync', listings: AUCTION.listForClient() });
                 
                 broadcast({ action: 'player_update', id: playerId, name: charName, x: player.x, y: player.y, classType: player.classType, warmode: player.warmode });
                 return;
@@ -727,6 +1092,21 @@ wss.on('connection', (ws) => {
                 if (boss) player.targetId = boss.id;
                 return;
             }
+            if (TEST_MODE && data.action === 'test_spawn_mob') {
+                // Deterministic melee/gather testing: normal mob spawning is
+                // randomised across the whole map, so a test can never
+                // reliably reach a mob on foot.
+                const type = typeof data.type === 'string' ? data.type : 'spider';
+                const x = Number.isInteger(data.x) ? data.x : player.x + CFG.TILE_SIZE;
+                const y = Number.isInteger(data.y) ? data.y : player.y;
+                if (!isInBounds(x, y) || !isWalkable(x, y)) {
+                    sendProtocolError(player, 'Spawn point is not walkable.');
+                    return;
+                }
+                const id = spawnMobAt(x, y, type, broadcast);
+                sendTo(player, { action: 'log', message: `Spawned ${type} at ${x},${y} (${id}).` });
+                return;
+            }
             if (TEST_MODE && data.action === 'trigger_boss_aoe') {
                 const spellId = triggerBossAoe(data.bossType || 'spider_queen', players, broadcast, player);
                 if (!spellId) sendProtocolError(player, 'Boss not found.');
@@ -743,6 +1123,13 @@ wss.on('connection', (ws) => {
                 sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
                 return;
             }
+            if (TEST_MODE && data.action === 'test_grant_mana') {
+                const amount = Number(data.amount);
+                if (Number.isFinite(amount) && amount > 0) {
+                    player.mana = Math.min(player.maxMana, player.mana + Math.floor(amount));
+                    sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
+                }
+            }
             if (TEST_MODE && data.action === 'test_grant_gold') {
                 const amount = Number(data.amount);
                 if (Number.isSafeInteger(amount) && amount >= 0) player.gold = amount;
@@ -751,6 +1138,17 @@ wss.on('connection', (ws) => {
             }
 
             if (data.action === 'chat') {
+                if (data.text.startsWith('/ask ')) {
+                    const prompt = data.text.substring(5).trim();
+                    sendTo(player, { action: 'chat', name: 'Gemma', sender: 'Gemma', channel: 'zone', text: 'Thinking...' });
+                    OLLAMA.generateOllamaResponse(prompt).then(reply => {
+                        sendTo(player, { action: 'chat', name: 'Gemma', sender: 'Gemma', channel: 'zone', text: reply });
+                    }).catch(err => {
+                        sendTo(player, { action: 'chat', name: 'System', sender: 'System', channel: 'zone', text: 'Ollama is unavailable: ' + err.message });
+                    });
+                    return;
+                }
+                
                 if (data.text.startsWith('/guild create ')) { GUILDS.createGuild(player, data.text.substring(14).trim()); return; }
                 if (data.text.startsWith('/guild invite ')) { GUILDS.inviteGuild(player, data.text.substring(14).trim()); return; }
                 if (data.text === '/guild accept') { GUILDS.acceptGuild(player); return; }
@@ -1026,7 +1424,7 @@ wss.on('connection', (ws) => {
                     }
                 }
                 player.mana -= 25;
-                const healAmt = applyCombatModifiers(player, 40 + player.level * 2, 'heal');
+                const healAmt = COMBAT.applyCombatModifiers(player, 40 + player.level * 2, 'heal');
                 target.hp = Math.min(target.maxHp, target.hp + healAmt);
                 broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `+${healAmt} HP`, color: '#44ff44' });
             }
@@ -1062,9 +1460,13 @@ wss.on('connection', (ws) => {
                 let speedBonus = 0;
                 if (player.equipment.boots && ITEMS.boots[player.equipment.boots]) speedBonus = ITEMS.boots[player.equipment.boots].speedBonus || 0;
                 
-                const moveSpeed = Math.max(80, CFG.PLAYER_MOVE_COOLDOWN_BASE - (player.level * 3) - speedBonus);
+                // A mounted player moves faster, so the server's own cooldown
+                // check has to allow the same rate or every mounted step is
+                // rejected and the client is snapped back.
+                const mountBonus = player.isMounted ? CFG.MOUNT_MOVE_COOLDOWN_REDUCTION : 0;
+                const moveSpeed = Math.max(80, CFG.PLAYER_MOVE_COOLDOWN_BASE - (player.level * 3) - speedBonus - mountBonus);
 
-                if (now - (player.lastMoveTime || 0) >= moveSpeed && isOneStep && isWalkable(data.x, data.y)) {
+                if (now - (player.lastMoveTime || 0) >= moveSpeed && isOneStep && isWalkable(data.x, data.y, player.z)) {
                     player.lastMoveTime = now;
                     player.x = data.x; player.y = data.y;
                     abortSeparatedTrade(playerId);
@@ -1093,6 +1495,16 @@ wss.on('connection', (ws) => {
                             const updates = Q.onItemGathered(player.quests, node.name);
                             updates.forEach(u => sendTo(player, { action: 'log', message: `📜 [QUEST] ${u.questName}: ${u.objective}` }));
                             sendQuestJournal(player);
+                            // Ore trains mining, logs train woodcutting.
+                            // Anything else gathered trains nothing.
+                            const gatherSkill = SKILLS.grantGatheringSkill(player.skills, node.name, 12);
+                            if (gatherSkill) {
+                                sendTo(player, { action: 'skill_update', skill: gatherSkill });
+                                if (gatherSkill.leveled) {
+                                    sendTo(player, { action: 'log', message: `⭐ ${gatherSkill.name} is now level ${gatherSkill.level}!` });
+                                    broadcast({ action: 'fct', x: player.x+16, y: player.y-24, text: `${gatherSkill.name} ${gatherSkill.level}`, color: '#fbbf24' });
+                                }
+                            }
                             setTimeout(() => {
                                 node.active = true;
                                 broadcast({ action: 'node_sync', id: nodeId, name: node.name, x: node.x, y: node.y, color: node.color, symbol: node.symbol });
@@ -1119,6 +1531,190 @@ wss.on('connection', (ws) => {
                         corpses.delete(data.id);
                         broadcast({ action: 'corpse_remove', id: data.id });
                     }
+                }
+            }
+
+            if (data.action === 'drop_item') {
+                // Accept either field name so the client can use whichever it
+                // already has a control for.
+                const raw = typeof data.item === 'string' ? data.item
+                    : (typeof data.itemName === 'string' ? data.itemName : '');
+                const item = raw.slice(0, 100);
+                if (!item) {
+                    sendProtocolError(player, 'No item specified.');
+                    return;
+                }
+                const index = player.inventory.indexOf(item);
+                if (index === -1) {
+                    sendProtocolError(player, 'You do not own that item.');
+                    return;
+                }
+                if (groundItems.size >= CFG.GROUND_MAX_ITEMS) {
+                    sendProtocolError(player, 'The ground is too littered to drop more.');
+                    return;
+                }
+                // Exactly one instance leaves the inventory, and the drop lands
+                // on the tile the server believes the player occupies.
+                player.inventory.splice(index, 1);
+                const id = 'gi_' + groundItemCounter++;
+                groundItems.set(id, {
+                    id,
+                    name: item,
+                    x: player.x,
+                    y: player.y,
+                    ownerId: player.id,
+                    droppedAt: Date.now(),
+                    expiresAt: Date.now() + CFG.GROUND_ITEM_TTL_MS
+                });
+                player.persistenceDirty = true;
+                broadcastGroundSync();
+                broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `-${item}`, color: '#cccccc' });
+                sendPlayerStatus(player);
+            }
+
+            if (data.action === 'pickup_item') {
+                const entry = resolveGroundTarget(player, data);
+                if (!entry) {
+                    sendProtocolError(player, 'There is nothing to pick up there.');
+                    return;
+                }
+                // Server-side distance check. Cheap to forge a packet without
+                // it, so it is never inferred from the request.
+                if (dist(player.x, player.y, entry.x, entry.y) > CFG.GROUND_PICKUP_RANGE) {
+                    sendProtocolError(player, 'Too far away.');
+                    return;
+                }
+                groundItems.delete(entry.id);
+                player.inventory.push(entry.name);
+                player.persistenceDirty = true;
+                broadcastGroundSync();
+                broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${entry.name}`, color: '#88ff88' });
+                sendPlayerStatus(player);
+            }
+
+            if (data.action === 'toggle_mount') {
+                if (player.stunUntil > now) {
+                    sendProtocolError(player, 'You cannot mount while stunned.');
+                    return;
+                }
+                const mounting = !player.isMounted;
+                if (mounting) {
+                    if (!mountPlayer(player)) return;
+                } else {
+                    dismountPlayer(player);
+                }
+                broadcast({
+                    action: 'mount_changed',
+                    id: player.id,
+                    isMounted: player.isMounted
+                });
+                sendTo(player, {
+                    action: 'status',
+                    isMounted: player.isMounted
+                });
+                sendTo(player, {
+                    action: 'log',
+                    message: player.isMounted
+                        ? '🐴 You mount up and gain speed.'
+                        : '🐴 You dismount.'
+                });
+            }
+
+            if (data.action === 'fish') {
+                if (now - (player.lastFishTime || 0) < CFG.FISHING_COOLDOWN_MS) {
+                    const wait = ((CFG.FISHING_COOLDOWN_MS - (now - (player.lastFishTime || 0))) / 1000).toFixed(1);
+                    sendTo(player, { action: 'log', message: `⏳ Your line is still recovering (${wait}s).` });
+                    return;
+                }
+                // The cast is only legal next to water. Checked server-side
+                // from the player's real position, never from a client hint.
+                if (hasWaterNear(player.x, player.y, CFG.FISHING_RANGE) < 1) {
+                    sendProtocolError(player, 'You need to be standing next to water to fish.');
+                    return;
+                }
+                player.lastFishTime = now;
+                const caughtFish = Math.random() < CFG.FISHING_CATCH_CHANCE;
+                const item = caughtFish ? 'Raw Fish' : 'Old Boot';
+                player.inventory.push(item);
+                player.persistenceDirty = true;
+                broadcast({
+                    action: 'fct',
+                    x: player.x + 16,
+                    y: player.y,
+                    text: `+${item}`,
+                    color: caughtFish ? '#5bc0de' : '#8b7355'
+                });
+                sendTo(player, {
+                    action: 'log',
+                    message: caughtFish
+                        ? `🎣 You reeled in a ${item}!`
+                        : `🎣 You pull up an ${item}. Better luck next time.`
+                });
+                sendTo(player, {
+                    action: 'fishing_result',
+                    item,
+                    success: caughtFish
+                });
+                sendPlayerStatus(player);
+            }
+
+            if (data.action === 'auction_list') {
+                const result = AUCTION.createListing(player, data.item, data.price);
+                if (!result.success) {
+                    sendProtocolError(player, result.message);
+                    return;
+                }
+                sendTo(player, { action: 'log', message: `📦 Listed ${result.listing.item} for ${result.listing.price} gold.` });
+                broadcast({ action: 'auction_sync', listings: AUCTION.listForClient() });
+                sendPlayerStatus(player);
+            }
+
+            if (data.action === 'auction_buy') {
+                // Async: paying an offline seller may need to read and write
+                // that character's row.
+                const result = await AUCTION.buyListing(player, data.listingId || data.id, players);
+                if (!result.success) {
+                    sendProtocolError(player, result.message);
+                    return;
+                }
+                sendTo(player, {
+                    action: 'log',
+                    message: `🔨 Bought ${result.item} for ${result.pricePaid} gold.`
+                });
+                broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${result.item}`, color: '#ffcc44' });
+
+                // Tell the seller directly when they are online; otherwise the
+                // gold waits in their mailbox until they next log in.
+                const seller = AUCTION.findOnlinePlayer(players, result.sellerName);
+                if (seller) {
+                    sendTo(seller, {
+                        action: 'log',
+                        message: `💰 Your ${result.item} sold for ${result.pricePaid} gold (fee ${result.sellerFee}). You received ${result.sellerPayout}.`
+                    });
+                    broadcast({ action: 'fct', x: seller.x + 16, y: seller.y, text: `+${result.sellerPayout}g`, color: '#ffd700' });
+                    sendPlayerStatus(seller);
+                } else {
+                    sendTo(player, {
+                        action: 'log',
+                        message: `📬 ${result.sellerName} is offline; their ${result.sellerPayout} gold is held until they return.`
+                    });
+                }
+                broadcast({ action: 'auction_sync', listings: AUCTION.listForClient() });
+                sendPlayerStatus(player);
+            }
+
+            if (data.action === 'auction_request') {
+                // Always answer with a full snapshot so a client that missed an
+                // earlier sync can catch up.
+                sendTo(player, { action: 'auction_sync', listings: AUCTION.listForClient() });
+                const owed = AUCTION.mailboxPreview(player);
+                if (owed && (owed.gold > 0 || owed.items.length > 0)) {
+                    sendTo(player, {
+                        action: 'auction_mailbox',
+                        gold: owed.gold,
+                        items: owed.items,
+                        listingCount: owed.listingCount
+                    });
                 }
             }
 
@@ -1239,79 +1835,52 @@ wss.on('connection', (ws) => {
             }
 
             if (data.action === 'cast_spell') {
-                const cost = 20;
-                if (player.mana < cost) return sendTo(player, { action: 'fct', x: player.x, y: player.y, text: 'OOM', color: '#888' });
-                player.mana -= cost;
-                
-                const spellId = data.spellIndex; // 1 or 2
-                const c = player.classType;
-                
-                // Helper to damage a mob
-                const hitMob = (m, dmg) => {
-                    m.hp -= dmg;
-                    broadcast({ action: 'fct', x: m.x+16, y: m.y, text: `-${dmg}`, color: '#ff8866' });
-                    broadcast({ action: 'mob_update', id: m.id, type: m.type, name: m.name, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp, alive: true, isElite: m.isElite });
-                    if (m.hp <= 0) killMob(player, m);
-                };
+                COMBAT.castSpell(player, data.spellIndex);
+            }
 
-                if (c === 'warrior') {
-                    if (spellId === 1) { // Cleave
-                        broadcast({ action: 'spell_anim', type: 'cleave', x: player.x, y: player.y });
-                        for (let [mid, m] of mobs) {
-                            if (dist(player.x, player.y, m.x, m.y) <= 60) hitMob(m, 50 + player.level * 2);
-                        }
-                    } else { // Charge
-                        if (player.targetId && mobs.has(player.targetId)) {
-                            const t = mobs.get(player.targetId);
-                            player.x = t.x; player.y = t.y + 32;
-                            sendTo(player, { action: 'force_position', x: player.x, y: player.y });
-                            broadcast({ action: 'spell_anim', type: 'charge', x: player.x, y: player.y });
-                            hitMob(t, 60 + player.level * 3);
-                        }
+            if (data.action === 'bank_deposit_gold') {
+                const npc = npcs.get('n_banker');
+                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                let amt = parseInt(data.amount);
+                if (amt > 0 && player.gold >= amt) {
+                    player.gold -= amt;
+                    player.bankGold = (player.bankGold || 0) + amt;
+                    sendTo(player, { action: 'bank_update', gold: player.bankGold, items: player.bankItems || [] });
+                }
+            }
+            if (data.action === 'bank_withdraw_gold') {
+                const npc = npcs.get('n_banker');
+                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                let amt = parseInt(data.amount);
+                if (amt > 0 && (player.bankGold || 0) >= amt) {
+                    player.bankGold -= amt;
+                    player.gold += amt;
+                    sendTo(player, { action: 'bank_update', gold: player.bankGold, items: player.bankItems || [] });
+                }
+            }
+            if (data.action === 'bank_deposit_item') {
+                const npc = npcs.get('n_banker');
+                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                const idx = player.inventory.indexOf(data.item);
+                if (idx !== -1) {
+                    if (!player.bankItems) player.bankItems = [];
+                    if (player.bankItems.length < 50) {
+                        player.inventory.splice(idx, 1);
+                        player.bankItems.push(data.item);
+                        sendTo(player, { action: 'bank_update', gold: player.bankGold || 0, items: player.bankItems });
                     }
-                } else if (c === 'mage') {
-                    if (spellId === 1) { // Fireball
-                        if (player.targetId && mobs.has(player.targetId)) {
-                            const t = mobs.get(player.targetId);
-                            broadcast({ action: 'spell_anim', type: 'fireball', x: t.x, y: t.y });
-                            for (let [mid, m] of mobs) {
-                                if (dist(t.x, t.y, m.x, m.y) <= 80) hitMob(m, 60 + player.level * 3);
-                            }
-                        }
-                    } else { // Frost Nova
-                        broadcast({ action: 'spell_anim', type: 'frostnova', x: player.x, y: player.y });
-                        for (let [mid, m] of mobs) {
-                            if (dist(player.x, player.y, m.x, m.y) <= 100) hitMob(m, 30 + player.level);
-                        }
-                    }
-                } else if (c === 'ranger') {
-                    if (spellId === 1) { // Multishot
-                        broadcast({ action: 'spell_anim', type: 'multishot', x: player.x, y: player.y });
-                        let hits = 0;
-                        for (let [mid, m] of mobs) {
-                            if (dist(player.x, player.y, m.x, m.y) <= 200 && hits < 3) {
-                                hitMob(m, 40 + player.level * 2);
-                                hits++;
-                            }
-                        }
-                    } else { // Trap (Instant damage for now)
-                        if (player.targetId && mobs.has(player.targetId)) {
-                            const t = mobs.get(player.targetId);
-                            broadcast({ action: 'spell_anim', type: 'trap', x: t.x, y: t.y });
-                            hitMob(t, 80 + player.level * 4);
-                        }
-                    }
-                } else if (c === 'healer') {
-                    if (spellId === 1) { // Flash Heal
-                        player.hp = Math.min(player.maxHp, player.hp + 50 + player.level * 5);
-                        broadcast({ action: 'spell_anim', type: 'heal', x: player.x, y: player.y });
-                        broadcast({ action: 'fct', x: player.x, y: player.y, text: `+50`, color: '#44ff44' });
-                    } else { // Holy Smite
-                        if (player.targetId && mobs.has(player.targetId)) {
-                            const t = mobs.get(player.targetId);
-                            broadcast({ action: 'spell_anim', type: 'smite', x: t.x, y: t.y });
-                            hitMob(t, 50 + player.level * 2);
-                        }
+                }
+            }
+            if (data.action === 'bank_withdraw_item') {
+                const npc = npcs.get('n_banker');
+                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                if (!player.bankItems) return;
+                const idx = player.bankItems.indexOf(data.item);
+                if (idx !== -1) {
+                    if (player.inventory.length < 30) {
+                        player.bankItems.splice(idx, 1);
+                        player.inventory.push(data.item);
+                        sendTo(player, { action: 'bank_update', gold: player.bankGold || 0, items: player.bankItems });
                     }
                 }
             }
@@ -1333,6 +1902,10 @@ wss.on('connection', (ws) => {
                 
                 if (data.npc_id === 'n_merchant') {
                     sendTo(player, { action: 'open_shop', inventory: SHOP_INVENTORY, gold: player.gold });
+                    return;
+                }
+                if (data.npc_id === 'n_banker') {
+                    sendTo(player, { action: 'bank_open', gold: player.bankGold || 0, items: player.bankItems || [] });
                     return;
                 }
 
@@ -1447,10 +2020,68 @@ scheduleServerInterval(() => {
     }); 
 }, 10000);
 
+// Despawn dropped items that have been lying around too long, and enforce the
+// cap. Runs on its own interval so an idle server still cleans up.
+scheduleServerInterval(() => sweepGroundItems(), CFG.GROUND_SWEEP_INTERVAL);
+
+// Clear out corpses once their timer expires.
+scheduleServerInterval(() => sweepCorpses(), CFG.CORPSE_SWEEP_INTERVAL);
+
+// Despawns corpses whose timer has run out. Without this the corpse Map grew
+// without bound and a kill stayed lootable forever.
+function sweepCorpses(now = Date.now()) {
+    let removed = 0;
+    for (const [id, corpse] of corpses.entries()) {
+        if (corpse.expiresAt <= now) {
+            corpses.delete(id);
+            // The client already handles corpse_remove, so this clears the
+            // sprite instead of leaving a phantom behind.
+            broadcast({ action: 'corpse_remove', id });
+            removed++;
+        }
+    }
+    return removed;
+}
+
+// Reap auction listings whose week is up, returning the item to the seller
+// (directly if they are online, otherwise via their mailbox).
 scheduleServerInterval(() => {
+    // sweepExpired is async because returning an item to a logged-out seller
+    // may need to write that character's row.
+    AUCTION.sweepExpired(Date.now(), players).then((expired) => {
+        if (expired && expired.length > 0) {
+            broadcast({ action: 'auction_sync', listings: AUCTION.listForClient() });
+        }
+    }).catch((error) => {
+        console.error('[auction] expiry sweep failed:', error.message);
+    });
+}, 60_000);
+
+scheduleServerInterval(() => {
+    const now = Date.now();
     const positions = [];
-    players.forEach((p, pid) => positions.push({ id: pid, name: p.charName, x: p.x, y: p.y, classType: p.classType, warmode: p.warmode }));
+    players.forEach((p, pid) => {
+        // Expire a lapsed skull here rather than only on read, so the flag
+        // cannot linger in a save and the client sees it clear promptly.
+        if (p.skull && !hasActiveSkull(p, now)) {
+            clearSkull(p);
+            sendTo(p, { action: 'log', message: '💀 Your white skull has faded.' });
+            broadcast({ action: 'fct', x: p.x + 16, y: p.y - 24, text: 'UNSKULL', color: '#aaaaaa' });
+        }
+        positions.push({
+            id: pid, name: p.charName, x: p.x, y: p.y, z: MAP.normalizeZ(p.z), classType: p.classType,
+            warmode: p.warmode, equipment: p.equipment,
+            // Clients read this to render the skull marker. Sent as a plain
+            // boolean so the client never has to reason about the timer.
+            skulled: hasActiveSkull(p, now),
+            isMounted: p.isMounted === true,
+            guild: p.guild || null
+        });
+    });
     if (positions.length > 0) broadcast({ action: 'players_sync', players: positions });
+    // Ground loot rides along with the same periodic broadcast so a client
+    // that missed an earlier ground_sync resynchronises on its own.
+    if (groundItems.size > 0) broadcastGroundSync();
 }, CFG.PLAYER_BROADCAST_INTERVAL);
 
 scheduleServerInterval(() => {
@@ -1473,47 +2104,7 @@ scheduleServerInterval(() => {
     const now = Date.now();
     const damageMultiplier = isDay ? 1.0 : 1.2; 
 
-    players.forEach((player, playerId) => {
-        if (player.targetId) {
-            if (players.has(player.targetId)) {
-                const target = players.get(player.targetId);
-                if (player.warmode && target.warmode && !inSafeZone(player.x, player.y) && !inSafeZone(target.x, target.y)) {
-                    const d = dist(player.x, player.y, target.x, target.y);
-                    const range = getAttackRange(player, (player.classType === 'mage' || player.classType === 'ranger') ? CFG.RANGED_RANGE : CFG.MELEE_RANGE);
-                    if (d <= range && now - player.lastAttackTime >= getAttackCooldown(player, CFG.PLAYER_ATTACK_COOLDOWN)) {
-                        player.lastAttackTime = now;
-                        let damage = applyCombatModifiers(player, Math.floor(Math.random() * 15) + 5 + (player.level * 2)); 
-                        if (player.equipment.weapon && ITEMS.weapons[player.equipment.weapon]) {
-                            damage += ITEMS.weapons[player.equipment.weapon].bonus;
-                        }
-                        target.hp -= damage; applyLifesteal(player, damage);
-                        broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
-                        broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ff8800' });
-                        checkPlayerDeath(target, player.charName);
-                    }
-                }
-            } 
-            else if (mobs.has(player.targetId)) {
-                const target = mobs.get(player.targetId);
-                const d = dist(player.x, player.y, target.x, target.y);
-                const range = getAttackRange(player, (player.classType === 'mage' || player.classType === 'ranger') ? CFG.RANGED_RANGE : CFG.MELEE_RANGE);
-                if (d <= range && now - player.lastAttackTime >= getAttackCooldown(player, CFG.PLAYER_ATTACK_COOLDOWN)) {
-                    player.lastAttackTime = now;
-                    let damage = applyCombatModifiers(player, Math.floor(Math.random() * 15) + 10 + (player.level * 2)); 
-                    
-                    if (player.equipment.weapon && ITEMS.weapons[player.equipment.weapon]) {
-                        damage += ITEMS.weapons[player.equipment.weapon].bonus;
-                    }
-                    
-                    target.hp -= damage; applyLifesteal(player, damage);
-                    broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
-                    broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
-                    broadcast({ action: 'mob_update', id: player.targetId, x: target.x, y: target.y, hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
-                    if (target.hp <= 0) killMob(player, target);
-                }
-            }
-        }
-    });
+    COMBAT.runAutoAttack(now);
 
     mobs.forEach((mob, mobId) => {
         let closest = null, minD = Infinity;
@@ -1602,74 +2193,20 @@ scheduleServerInterval(() => {
         }
         
         // Players attacking bosses
-        players.forEach(player => {
-            if (player.targetId === bossId && boss.hp > 0 && bosses.has(bossId)) {
-                const d = dist(player.x, player.y, boss.x, boss.y);
-                const range = getAttackRange(player, (player.classType === 'mage' || player.classType === 'ranger' || player.classType === 'healer') ? CFG.RANGED_RANGE : CFG.MELEE_RANGE);
-                if (d <= range && now - player.lastAttackTime >= getAttackCooldown(player, CFG.PLAYER_ATTACK_COOLDOWN)) {
-                    player.lastAttackTime = now;
-                    let damage = applyCombatModifiers(player, Math.floor(Math.random() * 15) + 10 + (player.level * 2));
-                    if (player.equipment.weapon && ITEMS.weapons[player.equipment.weapon]) damage += ITEMS.weapons[player.equipment.weapon].bonus;
-                    boss.hp -= damage; applyLifesteal(player, damage);
-                    broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: boss.x, ty: boss.y });
-                    broadcast({ action: 'fct', x: boss.x+16, y: boss.y, text: `-${damage}`, color: '#ffffff' });
-                    broadcast({ action: 'mob_update', id: bossId, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isBoss: true, name: boss.name, type: boss.type });
-                    
-                    if (boss.hp <= 0) {
-                        // Boss killed!
-                        broadcast({ action: 'log', message: `🏆 ${player.charName} has slain ${boss.name}!` });
-                        broadcast({ action: 'fct', x: boss.x, y: boss.y, text: '💀 BOSS SLAIN!', color: '#ff00ff' });
-                        
-                        // Distribute loot
-                        const loot = ITEMS.lootTable[boss.type];
-                        if (loot) {
-                            // Find all eligible players (the killer + party members in range)
-                            const eligiblePlayers = [player];
-                            const party = PARTY.getParty(player.id);
-                            if (party) {
-                                party.members.forEach(memberId => {
-                                    if (memberId !== player.id) {
-                                        const member = players.get(memberId);
-                                        if (member && member.hp > 0 && Math.hypot(member.x - boss.x, member.y - boss.y) <= 800) {
-                                            eligiblePlayers.push(member);
-                                        }
-                                    }
-                                });
-                            }
-                            
-                            // Roll loot for each eligible player
-                            eligiblePlayers.forEach(p => {
-                                loot.forEach(item => {
-                                    if (Math.random() < item.chance) {
-                                        p.inventory.push(item.name);
-                                        sendTo(p, { action: 'log', message: `You looted: ${item.name}` });
-                                        if (p.id === player.id) { // Only show FCT for the actual killer
-                                            broadcast({ action: 'fct', x: boss.x+16, y: boss.y-20, text: `+${item.name}`, color: '#ff00ff' });
-                                        }
-                                    }
-                                });
-                                persistPlayer(p); // save inventory
-                            });
-                        }
-                        addXp(player, boss.xpReward);
-                        const bossQuestUpdates = Q.onMobKilled(player.quests, boss.name);
-                         if (bossQuestUpdates.length > 0) {
-                             bossQuestUpdates.forEach(update => sendTo(player, { action: 'log', message: `📜 [QUEST] ${update.questName}: ${update.objective}` }));
-                             sendQuestJournal(player);
-                         }
-                         if (player.targetId === bossId) player.targetId = null;
-                        
-                        bosses.delete(bossId);
-                        broadcast({ action: 'mob_update', id: bossId, alive: false });
-                        
-                        // Respawn boss after 60s
-                        setTimeout(() => {
-                            spawnBoss(boss.type, broadcast);
-                        }, 60000);
-                    }
-                }
-            }
-        });
+        COMBAT.runBossAttacks(bossId, boss, now);
+    });
+
+    // Mounts come off when a player takes damage. Damage is applied in a dozen
+    // places across combat.js, bosses.js and here, so instead of instrumenting
+    // every site this compares each player's HP against the snapshot taken on
+    // the previous tick. That catches every source, including boss abilities
+    // and damage-over-time, without coupling the modules.
+    players.forEach(player => {
+        const previous = player.hpSnapshot;
+        player.hpSnapshot = player.hp;
+        if (player.isMounted && typeof previous === 'number' && player.hp < previous) {
+            dismountPlayer(player, 'You were struck and lost your mount!');
+        }
     });
     } catch(e) { console.error("Tick error:", e); }
 }, 100);
@@ -1678,8 +2215,17 @@ function checkPlayerDeath(player, killerName = 'Unknown') {
     if (player.hp <= 0) {
         broadcast({ action: 'log', message: `☠️ ${player.charName} was slain by ${killerName}!` });
         
-        const droppedGold = Math.floor(player.gold * 0.5);
+        // A skulled player loses everything. The flag is only relevant at the
+        // moment of death, so it is cleared here rather than left to run down
+        // the timer.
+        const wasSkulled = hasActiveSkull(player);
+        const dropRatio = wasSkulled ? SKULL_DROP_RATIO : NORMAL_DROP_RATIO;
+        const droppedGold = Math.floor(player.gold * dropRatio);
         player.gold -= droppedGold;
+        if (wasSkulled) {
+            clearSkull(player);
+            sendTo(player, { action: 'log', message: '💀 Your white skull has been consumed by your death.' });
+        }
         
         const req = player.level * 100;
         const xpPenalty = Math.floor(req * 0.1);
@@ -1692,13 +2238,20 @@ function checkPlayerDeath(player, killerName = 'Unknown') {
         }
 
         const cid = "corpse_" + corpseIdCounter++;
-        corpses.set(cid, { id: cid, x: player.x, y: player.y, gold: droppedGold, ownerName: player.charName, expireAt: Date.now() + 120000 });
+        // The corpse stays where the player fell, on the floor they fell on.
+        corpses.set(cid, { id: cid, x: player.x, y: player.y, z: MAP.normalizeZ(player.z), gold: droppedGold, ownerName: player.charName, expiresAt: Date.now() + CFG.CORPSE_TTL_MS });
         broadcast({ action: 'corpse_spawn', corpse: corpses.get(cid) });
 
         player.hp = player.maxHp; player.mana = player.maxMana; 
         player.poisonStacks = 0; player.bleedStacks = 0; player.stunUntil = 0;
         player.x = 320; player.y = 320; player.targetId = null;
-        sendTo(player, { action: 'force_position', x: 320, y: 320 });
+        // Respawn is to the surface, so the floor has to change with it. Without
+        // this a player who died below ground keeps z = -1 while standing at the
+        // surface spawn point, which is a position that does not exist on that
+        // floor -- and the client, which trusts this force_position, draws them
+        // inside the dungeon terrain.
+        player.z = CFG.Z_SURFACE;
+        sendTo(player, { action: 'force_position', x: 320, y: 320, z: CFG.Z_SURFACE });
     }
 }
 
@@ -1753,8 +2306,23 @@ async function shutdown(reason = 'requested') {
     await new Promise(resolve => {
         try { server.close(() => resolve()); } catch (error) { resolve(); }
     });
-    if (!flushFailed) console.log('[server] State flush complete; shutdown finished cleanly.');
-    process.exit(flushFailed ? 1 : 0);
+
+    // Close the database last, once nothing can write again. flush() only
+    // waits for queued writes; it does not checkpoint, so without this the
+    // write-ahead log is never folded back into the main file and is left
+    // sitting on disk indefinitely.
+    let closeFailed = false;
+    try {
+        if (typeof DB.close === 'function') {
+            await DB.close();
+        }
+    } catch (error) {
+        closeFailed = true;
+        console.error('[server] Database close/checkpoint failed:', error.message);
+    }
+
+    if (!flushFailed && !closeFailed) console.log('[server] State flush complete; shutdown finished cleanly.');
+    process.exit(flushFailed || closeFailed ? 1 : 0);
 }
 
 process.once('SIGINT', () => shutdown('SIGINT'));

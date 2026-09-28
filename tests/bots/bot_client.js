@@ -626,7 +626,7 @@ class BotClient extends EventEmitter {
   }
 
   castSkill() {
-    this.send({ action: 'cast_skill' });
+    this.send({ action: 'cast_spell' });
   }
 
   castPurify() {

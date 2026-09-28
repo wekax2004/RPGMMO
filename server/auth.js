@@ -24,6 +24,15 @@ const AUTH_REQUIRED = process.env.TIBIA_REQUIRE_AUTH === 'true' ||
     (process.env.TIBIA_REQUIRE_AUTH !== 'false' && process.env.TIBIA_TEST_MODE !== 'true');
 const sessions = new Map();
 
+setInterval(() => {
+    const now = Date.now();
+    for (const [token, session] of sessions.entries()) {
+        if (session.expiresAt <= now) {
+            sessions.delete(token);
+        }
+    }
+}, 60 * 60 * 1000).unref();
+
 // A real scrypt hash of an unguessable value. Used to spend the same CPU on a
 // login for an unknown username as on a wrong password, so response time does
 // not reveal whether an account exists.
@@ -158,8 +167,7 @@ function normalizeCharacterKey(characterName) {
 }
 
 async function findAccountById(accountId) {
-    const accounts = await DB.loadAccounts();
-    return Object.values(accounts).find(candidate => candidate.accountId === accountId) || null;
+    return await DB.getAccountById(accountId);
 }
 
 async function bindCharacter(accountId, characterName) {
@@ -167,12 +175,14 @@ async function bindCharacter(accountId, characterName) {
     const key = normalizeCharacterKey(characterName);
     if (!key) return false;
     const account = await findAccountById(accountId);
-    // No matching account means there is nothing to bind to. Returning true
-    // here would silently skip the ownership check at login.
+    // No matching account means there is nothing to bind to.
     if (!account) return false;
-    if (account.characters.includes(key)) return true;
-    await DB.updateCharacters(accountId, [...account.characters, key]);
-    return true;
+    try {
+        return await DB.addCharacterToAccount(accountId, key);
+    } catch (e) {
+        console.error("bindCharacter failed:", e);
+        return false;
+    }
 }
 
 async function accountOwnsCharacter(accountId, characterName) {

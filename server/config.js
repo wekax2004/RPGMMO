@@ -2,13 +2,29 @@ const parsedPort = Number.parseInt(process.env.PORT, 10);
 
 module.exports = {
     PORT: Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : 8080,
+    // Loopback by default. A game server reached from every interface is
+    // reachable by anything else on the network, and with auth enabled that
+    // puts the scrypt login path on the open. Set HOST=0.0.0.0 deliberately
+    // (for example for a Tailscale QA session) rather than by accident.
     HOST: process.env.HOST || '127.0.0.1',
     
     // גבולות מפה (בפיקסלים) - עולם פתוח גדול
     MAP_WIDTH: 3200,
     MAP_HEIGHT: 3200,
     TILE_SIZE: 32,
-    
+
+    // --- Z-levels (Stage 0: coordinate exists, only the surface is built) ---
+    // The world is stacked floors. 0 is the surface; negative values are
+    // underground. Stage 0 introduces the coordinate and the range guards but
+    // generates no floor below 0, so every query for another floor answers
+    // "nothing there" rather than guessing. Populating floors is a later stage.
+    Z_SURFACE: 0,
+    // Inclusive bounds. A save or packet carrying z outside this range is
+    // treated as corrupt and clamped back to the surface, so a hand-edited
+    // database can never strand a character on a floor that does not exist.
+    Z_MIN: -3,
+    Z_MAX: 0,
+
     // Safe Zone (City)
     SAFE_ZONE: { x: 0, y: 0, w: 640, h: 640 },
 
@@ -37,6 +53,54 @@ module.exports = {
     MAX_CHESTS: 30,
     CHEST_SPAWN_INTERVAL: 10000,
     CHEST_GOLD_REWARD: 50,
+
+    // Epic area spells. Deliberately expensive and slow so they cannot be
+    // spammed; every value is server-side and never taken from the client.
+    EPIC_SPELL_MANA_COST: 60,
+    EPIC_SPELL_COOLDOWN_MS: 6000,
+    METEOR_STRIKE_RADIUS: 220,
+    METEOR_STRIKE_DAMAGE: 140,       // plus a per-level component
+    HOLY_NOVA_RADIUS: 180,
+    HOLY_NOVA_HEAL: 90,              // plus a per-level component
+    HOLY_NOVA_DAMAGE: 70,            // plus a per-level component
+
+    // Ground loot: items a player sets down on the map.
+
+    // Ground loot: items a player sets down on the map.
+    GROUND_ITEM_TTL_MS: 180000,      // despawn after 3 minutes
+    GROUND_PICKUP_RANGE: 64,         // matches the corpse interaction range
+    GROUND_SWEEP_INTERVAL: 10000,
+    // Hard cap so a mass drop_item spam cannot grow the Map without bound.
+    GROUND_MAX_ITEMS: 500,
+
+    // Corpses. A corpse used to carry an expireAt that nothing ever read, so
+    // they accumulated forever and old kills stayed permanently lootable.
+    // Env-tunable so a test can use a short TTL instead of waiting two minutes.
+    CORPSE_TTL_MS: Number(process.env.TIBIA_CORPSE_TTL_MS) > 0
+        ? Number(process.env.TIBIA_CORPSE_TTL_MS)
+        : 120000,
+    CORPSE_SWEEP_INTERVAL: Number(process.env.TIBIA_CORPSE_SWEEP_MS) > 0
+        ? Number(process.env.TIBIA_CORPSE_SWEEP_MS)
+        : 15000,
+
+    // Mounts. MOUNT_MOVE_COOLDOWN_REDUCTION is subtracted from the same move
+    // cooldown the server validates against, so a mounted client moving at the
+    // faster rate is never rubber-banded back.
+    MOUNT_MOVE_COOLDOWN_REDUCTION: 140,
+    MOUNT_MAX_PLAYERS_PER_TILE: 0,   // 0 disables the stack limit
+
+    // Fishing.
+    FISHING_COOLDOWN_MS: 2500,
+    FISHING_RANGE: 32,               // one tile; must stand within reach of water
+    FISHING_CATCH_CHANCE: 0.65,      // otherwise you pull up an Old Boot
+
+    // Auction house.
+    AUCTION_MIN_PRICE: 1,
+    AUCTION_MAX_PRICE: 1000000,
+    AUCTION_FEE_PERCENT: 0.05,       // taken from the seller on a successful sale
+    AUCTION_MAX_LISTINGS: 200,
+    AUCTION_LISTING_TTL_MS: 7 * 24 * 60 * 60 * 1000,
+    AUCTION_REFUND_ITEM_MS: 24 * 60 * 60 * 1000,  // unsold item returns to the seller
     
     // מוות
     DEATH_GOLD_PENALTY: 0.5,

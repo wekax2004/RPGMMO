@@ -1,5 +1,6 @@
 const CFG = require('./config');
 const { getZone, isWalkable } = require('./map');
+const MAP = require('./map');
 
 const mobs = new Map();
 
@@ -53,13 +54,45 @@ function spawnMobPack(broadcast, size = 3) {
         if (isWalkable(x, y) && !inSafeZone(x, y)) {
             const id = 'm_' + Math.random().toString(36).substr(2, 6);
             mobs.set(id, {
-                id, type, name, x, y,
+                id, type, name, x, y, z: CFG.Z_SURFACE,
                 hp: stats.hp, maxHp: stats.hp,
                 xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
             });
-            broadcast({ action: 'mob_update', id, type, name, x, y, hp: stats.hp, maxHp: stats.hp, alive: true, isElite });
+            broadcast({ action: 'mob_update', id, type, name, x, y, z: CFG.Z_SURFACE, hp: stats.hp, maxHp: stats.hp, alive: true, isElite });
         }
     }
+}
+
+const KNOWN_MOB_TYPES = ['spider', 'skeleton', 'bandit', 'bear', 'minotaur', 'yeti'];
+
+// Spawns a single mob of an exact type at an exact spot. Normal spawning is
+// randomised across the whole map, which makes it impossible for a test to
+// reliably get into melee range; this is the deterministic entry point the
+// TEST_MODE test_spawn_mob action uses.
+//
+// z is a trailing parameter with a default, not an inserted third argument.
+// The documented alternative -- spawnMobAt(x, y, z, type) -- would silently
+// reinterpret every existing call's type as a floor index, and this function
+// already has a test-mode caller that would have broken with no type error.
+function spawnMobAt(x, y, type, broadcast, z = CFG.Z_SURFACE) {
+    const resolved = KNOWN_MOB_TYPES.indexOf(type) !== -1 ? type : 'spider';
+    const isElite = false;
+    const stats = getMobStats(resolved, isElite);
+    const floor = MAP.normalizeZ(z);
+    const id = 'm_' + Math.random().toString(36).substr(2, 6);
+    const name = resolved.charAt(0).toUpperCase() + resolved.slice(1);
+    mobs.set(id, {
+        id, type: resolved, name, x, y, z: floor,
+        hp: stats.hp, maxHp: stats.hp,
+        xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
+    });
+    if (typeof broadcast === 'function') {
+        broadcast({
+            action: 'mob_update', id, type: resolved, name, x, y, z: floor,
+            hp: stats.hp, maxHp: stats.hp, alive: true, isElite
+        });
+    }
+    return id;
 }
 
 function inSafeZone(x, y) {
@@ -134,4 +167,4 @@ function mobAttack(mob, player, damageMultiplier = 1.0, defense = 0) {
     return { damage, poisoned, bled, stunned };
 }
 
-module.exports = { mobs, spawnMobPack, inSafeZone, moveMobToward, mobAttack };
+module.exports = { mobs, spawnMobPack, spawnMobAt, inSafeZone, moveMobToward, mobAttack };

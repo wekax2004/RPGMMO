@@ -45,6 +45,9 @@ class BrowserDriver {
 
     this.browser = null;
     this.executablePath = null;
+    // Uncaught client errors from every page this driver created, in order.
+    // Accumulated on the driver so a test can check them after closing pages.
+    this.clientErrors = [];
   }
 
   /**
@@ -104,6 +107,24 @@ class BrowserDriver {
     const context = await this.browser.createBrowserContext();
     const page = await context.newPage();
     await page.setViewport(this.options.viewport);
+
+    // Collect uncaught client-side errors. Without this a ReferenceError in
+    // ui.js/engine.js/renderer.js is invisible to every acceptance test, so a
+    // feature can fail to render while the suite stays green. The listeners are
+    // attached here, before navigation, so nothing is missed during load.
+    const clientErrors = [];
+    page.on('pageerror', (err) => {
+      clientErrors.push(String((err && err.message) || err));
+    });
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') clientErrors.push('console.error: ' + msg.text());
+    });
+    // Exposed so a test can assert on it, e.g. getClientErrors(page).
+    page.__clientErrors = clientErrors;
+    // Also accumulated on the driver, so finalizeResult can still see them
+    // after the test has closed the page.
+    this.clientErrors.push(...clientErrors);
+    this.clientErrorsPage = clientErrors;
 
     // Inject telemetry hooks before any page scripts execute
     await page.evaluateOnNewDocument(() => {
@@ -213,4 +234,46 @@ class BrowserDriver {
   }
 }
 
-module.exports = { BrowserDriver, findBrowserExecutable };
+/**
+ * Returns the uncaught client-side errors recorded for a page.
+ *
+ * createAgentPage installs the listeners, so any test that drives the real UI
+ * can call this to turn "the page threw" into a reported failure instead of a
+ * silently blank panel.
+ *
+ * @param {object} page  a page returned by createAgentPage
+ * @returns {string[]}   human-readable error descriptions, empty when clean
+ */
+function getClientErrors(page) {
+  if (!page) return [];
+  return Array.isArray(page.__clientErrors) ? page.__clientErrors.slice() : [];
+}
+
+/**
+ * Wraps a test's result so an uncaught client-side error fails it.
+ *
+ * Acceptance tests assert on modals, canvas pixels and DOM state, none of
+ * which notice that a handler threw on the way. That is how a panel can render
+ * nothing while the suite stays green. Passing the result through here ties
+ * "the page threw" to the test outcome.
+ *
+ * Usage:  return driver.finalize({ success, durationMs, results });
+ *
+ * @param {object} driver   the BrowserDriver that created the page
+ * @param {object} result   the test result to finalize
+ * @returns {object}        the same object, with success forced false on errors
+ */
+function finalizeResult(driver, result) {
+  const errors = driver && Array.isArray(driver.clientErrors)
+    ? driver.clientErrors.slice()
+    : [];
+  const finished = Object.assign({}, result);
+  finished.clientErrors = errors;
+  if (errors.length > 0) {
+    finished.success = false;
+    finished.clientErrorDetail = errors.slice(0, 5);
+  }
+  return finished;
+}
+
+module.exports = { BrowserDriver, findBrowserExecutable, getClientErrors, finalizeResult };

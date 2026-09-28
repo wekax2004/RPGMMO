@@ -1,7 +1,50 @@
 const CFG = require('./config');
 
+// --- Z-level storage -------------------------------------------------------
+// A world floor owns its own obstacle set, obstacle list and water index.
+// Only the surface (z = 0) is generated in Stage 0; the per-floor shape is
+// what lets a later stage add a cave without touching any call site.
+//
+// The surface keeps its storage in the module-level `obstacles` /
+// `obstacleData` / `waterTiles` bindings rather than moving into the
+// registry, so the map_data payload the client already parses is unchanged.
+const floors = new Map();
+
+function getFloor(z) {
+    return floors.get(normalizeZ(z)) || null;
+}
+
+function hasFloor(z) {
+    return floors.has(normalizeZ(z));
+}
+
+function registerFloor(z, data) {
+    const src = data && typeof data === 'object' ? data : {};
+    const floor = {
+        z: normalizeZ(z),
+        obstacles: src.obstacles instanceof Set ? src.obstacles : new Set(),
+        obstacleData: Array.isArray(src.obstacleData) ? src.obstacleData : [],
+        waterTiles: src.waterTiles instanceof Set ? src.waterTiles : new Set()
+    };
+    floors.set(floor.z, floor);
+    return floor;
+}
+
+// Clamps an incoming z to a legal floor index. Guards three things: a save
+// written by a future build, a hand-edited database row, and a malformed
+// client packet. Anything out of range resolves to the surface rather than
+// throwing, because a bad z must never be able to reject a login.
+function normalizeZ(z) {
+    if (!Number.isSafeInteger(z) || z < CFG.Z_MIN || z > CFG.Z_MAX) return CFG.Z_SURFACE;
+    return z;
+}
+
 const obstacles = new Set();
 const obstacleData = [];
+// Water is generated as an impassable obstacle of type 'water'. Fishing needs
+// to know which tiles are water without re-scanning obstacleData on every cast,
+// so the keys are indexed once at generation time.
+const waterTiles = new Set();
 
 function getZone(x, y) {
     if (x < 800 && y < 800) return 'City';
@@ -64,15 +107,67 @@ function generateMap() {
             if (Math.random() < chance) {
                 obstacles.add(`${x},${y}`);
                 obstacleData.push({x, y, type});
+                if (type === 'water') waterTiles.add(`${x},${y}`);
             }
         }
     }
 }
 
-function isWalkable(x, y) {
+// Can a player stand on this tile, on floor `z`?
+// The z parameter is additive and defaults to the surface, so all 13 existing
+// call sites keep their exact behaviour. A floor with no generated terrain is
+// not walkable anywhere: that answers "nowhere to go" honestly instead of
+// falling through to the surface's layout, which would let a player stand on
+// an underground tile that only exists above them.
+function isWalkable(x, y, z = CFG.Z_SURFACE) {
+    const floor = getFloor(z);
+    if (!floor) return false;
     if (x < 0 || y < 0 || x >= CFG.MAP_WIDTH || y >= CFG.MAP_HEIGHT) return false;
-    return !obstacles.has(`${x},${y}`);
+    return !floor.obstacles.has(`${x},${y}`);
+}
+
+// Is this exact tile water, on floor `z`? Water is an obstacle, so a player can
+// never stand on it -- they fish from an adjacent walkable tile.
+function isWater(x, y, z = CFG.Z_SURFACE) {
+    const floor = getFloor(z);
+    if (!floor) return false;
+    if (x < 0 || y < 0 || x >= CFG.MAP_WIDTH || y >= CFG.MAP_HEIGHT) return false;
+    return floor.waterTiles.has(`${x},${y}`);
+}
+
+// Is there water within `range` of the given point (Manhattan distance)?
+// Counts the distinct water tiles found so a client cannot fish from a spot
+// that only grazes one tile diagonally-cornered. Scoped to one floor: water on
+// the surface above must not make a dungeon floor fishable.
+function hasWaterNear(x, y, range, z = CFG.Z_SURFACE) {
+    const floor = getFloor(z);
+    if (!floor) return 0;
+    let found = 0;
+    for (let dx = -range; dx <= range; dx += CFG.TILE_SIZE) {
+        for (let dy = -range; dy <= range; dy += CFG.TILE_SIZE) {
+            if (dx === 0 && dy === 0) continue;   // standing on water is impossible anyway
+            if (isWater(x + dx, y + dy, floor.z)) found++;
+        }
+    }
+    return found;
+}
+
+// The full terrain description of one floor, for the map_data packet. Stage 0
+// returns null for any floor but the surface, so a client asking for a
+// dungeon gets nothing rather than the surface's tiles relabelled.
+function getFloorTerrain(z) {
+    const floor = getFloor(z);
+    if (!floor) return null;
+    return { z: floor.z, obstacleData: floor.obstacleData, waterTiles: floor.waterTiles };
 }
 
 generateMap();
-module.exports = { isWalkable, getZone, obstacleData };
+registerFloor(CFG.Z_SURFACE, { obstacles, obstacleData, waterTiles });
+
+module.exports = {
+    isWalkable, isWater, hasWaterNear, getZone, getFloor, hasFloor, getFloorTerrain,
+    normalizeZ, registerFloor,
+    // Kept as the surface's terrain: the map_data payload the client already
+    // parses is unchanged, and no existing consumer has to learn about floors.
+    obstacleData, waterTiles
+};

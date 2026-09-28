@@ -9,7 +9,7 @@
  * 4. Verifying real-time updates in the Quest Journal HUD panel (#quest-list).
  */
 
-const { BrowserDriver } = require('./browser_driver');
+const { BrowserDriver, finalizeResult } = require('./browser_driver');
 
 /**
  * Runs the NPC dialogue & quest acceptance test.
@@ -101,12 +101,12 @@ async function runNpcQuestTest(options = {}) {
     console.log(` Duration: ${Date.now() - startTime}ms`);
     console.log(`=============================================================\n`);
 
-    return {
+    return finalizeResult(driver, {
       success: allPassed,
       durationMs: Date.now() - startTime,
       results: testSteps,
       error: allPassed ? null : new Error('AC3 NPC Quest test assertions failed')
-    };
+    });
   } catch (err) {
     console.error(`\n[!] Error during AC3 NPC Quest Test:`, err);
     await driver.close();

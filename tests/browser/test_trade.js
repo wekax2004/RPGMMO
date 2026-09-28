@@ -10,7 +10,7 @@
  * 5. Mutual confirmation and atomic item/gold transfer.
  */
 
-const { BrowserDriver } = require('./browser_driver');
+const { BrowserDriver, finalizeResult } = require('./browser_driver');
 
 /**
  * Runs the secure trade acceptance test.
@@ -186,12 +186,12 @@ async function runTradeTest(options = {}) {
     console.log(` Duration: ${Date.now() - startTime}ms`);
     console.log(`=============================================================\n`);
 
-    return {
+    return finalizeResult(driver, {
       success: allPassed,
       durationMs: Date.now() - startTime,
       results: testSteps,
       error: allPassed ? null : new Error('AC4 Trade flow assertions failed')
-    };
+    });
   } catch (err) {
     console.error(`\n[!] Error during AC4 Trade Flow Test:`, err);
     await driver.close();

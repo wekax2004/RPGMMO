@@ -1,3 +1,4 @@
+const CFG = require('./config');
 // === מערכת קווסטים ===
 const QUEST_DB = {
     quest_spider_slayer: {
@@ -158,7 +159,7 @@ const QUEST_DB = {
 const gatheringNodes = new Map();
 let nodeCounter = 0;
 
-function spawnGatheringNodes(broadcast) {
+function spawnGatheringNodes(broadcast, isWalkable) {
     const nodeTypes = [
         { name: 'Moonflower', color: '#ee88ff', symbol: '🌸', count: 30 },
         { name: 'Poison Mushroom', color: '#44cc44', symbol: '🍄', count: 20 },
@@ -170,12 +171,20 @@ function spawnGatheringNodes(broadcast) {
 
     nodeTypes.forEach(type => {
         for(let i=0; i<type.count; i++) {
-            // פיזור על מפה גדולה (2560x2560)
-            const rx = Math.floor(Math.random() * 80) * 32;
-            const ry = Math.floor(Math.random() * 80) * 32;
+            let rx, ry;
+            let attempts = 0;
+            do {
+                rx = Math.floor(Math.random() * 80) * 32;
+                ry = Math.floor(Math.random() * 80) * 32;
+                attempts++;
+            } while (isWalkable && !isWalkable(rx, ry) && attempts < 100);
+
             const id = 'node_' + nodeCounter++;
             gatheringNodes.set(id, { 
-                id, name: type.name, x: rx, y: ry, 
+                // Resources belong to a floor. Node positions are generated
+                // per process, so the floor is recorded rather than inferred;
+                // the client filters node_sync on it once floors exist.
+                id, name: type.name, x: rx, y: ry, z: CFG.Z_SURFACE,
                 color: type.color, symbol: type.symbol,
                 respawnTime: 30000, active: true 
             });
@@ -622,7 +631,11 @@ function resolveNodeChoices(node, ctx) {
     const raw = typeof node.choices === 'function' ? node.choices(ctx) : (node.choices || []);
     return raw
         .filter(choice => !choice.when || choice.when(ctx))
-        .map(choice => ({ id: choice.id, text: String(choice.text || ''), next: choice.next || null }));
+        .map(choice => ({ 
+            id: choice.id, 
+            text: typeof choice.text === 'function' ? String(choice.text(ctx)) : String(choice.text || ''), 
+            next: choice.next || null 
+        }));
 }
 
 // Resolves a node for display. `nodeId` may be omitted to use the tree's

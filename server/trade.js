@@ -74,7 +74,12 @@ function findTradeRequest(targetPlayerId, requestId = null, fromPlayerId = null)
     for (const request of tradeRequests.values()) {
         if (request.toPlayerId !== targetPlayerId) continue;
         if (requestId && request.id !== requestId) continue;
-        if (fromPlayerId && request.fromPlayerId !== fromPlayerId && request.fromName !== fromPlayerId) continue;
+        // Match on the stored sender id only. This used to also compare
+        // request.fromName, but that field is only ever put on the outgoing
+        // client packet, never on the stored request, so the clause could
+        // never be true. The id is canonical anyway: character names can be
+        // reused, ids cannot.
+        if (fromPlayerId && request.fromPlayerId !== fromPlayerId) continue;
         return request;
     }
     return null;

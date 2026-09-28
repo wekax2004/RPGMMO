@@ -80,6 +80,12 @@ async function runBrowserSuite(options = {}) {
   console.log(`----------------------------------------------------------------------`);
   results.forEach(r => {
     console.log(`   ${r.success ? '✓ PASS' : '✗ FAIL'} [${r.key}] ${r.name} (${r.durationMs}ms)`);
+    // A client-side throw is reported separately: the assertions can all pass
+    // while a handler is broken, so make the cause obvious.
+    if (Array.isArray(r.clientErrors) && r.clientErrors.length > 0) {
+      console.log(`        ↳ ${r.clientErrors.length} uncaught client error(s):`);
+      r.clientErrors.slice(0, 5).forEach(e => console.log(`          ${e}`));
+    }
   });
   console.log(`======================================================================\n`);
 

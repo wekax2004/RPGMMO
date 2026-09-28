@@ -257,7 +257,8 @@ function readCharacters(value) {
         const parsed = JSON.parse(value);
         return Array.isArray(parsed) ? parsed.filter(entry => typeof entry === 'string') : [];
     } catch (error) {
-        return [];
+        console.error("FATAL: Corrupt characters_json encountered.", error);
+        throw new Error("Corrupt characters_json: " + error.message);
     }
 }
 
@@ -274,6 +275,22 @@ function loadAccounts() {
             };
         });
         return accounts;
+    });
+}
+
+function getAccountById(accountId) {
+    return initialize().then(() => get(
+        'SELECT * FROM accounts WHERE account_id = ?',
+        [accountId]
+    )).then(row => {
+        if (!row) return null;
+        return {
+            accountId: row.account_id,
+            username: row.username,
+            passwordHash: row.password_hash,
+            characters: readCharacters(row.characters_json),
+            createdAt: row.created_at
+        };
     });
 }
 
@@ -300,20 +317,25 @@ function insertAccount(account) {
     )));
 }
 
-function updateCharacters(accountId, characters) {
-    return enqueueWrite(() => initialize().then(() => run(
-        'UPDATE accounts SET characters_json = ? WHERE account_id = ?',
-        [JSON.stringify(characters), accountId]
-    )));
+function addCharacterToAccount(accountId, characterName) {
+    return enqueueWrite(() => initialize().then(() => get(
+        'SELECT characters_json FROM accounts WHERE account_id = ?', [accountId]
+    ).then(row => {
+        if (!row) return false;
+        let characters = readCharacters(row.characters_json);
+        if (characters.includes(characterName)) return true;
+        characters.push(characterName);
+        return run(
+            'UPDATE accounts SET characters_json = ? WHERE account_id = ?',
+            [JSON.stringify(characters), accountId]
+        ).then(() => true);
+    })));
 }
 
 async function flush() {
-    // Drain repeatedly: a save enqueued while we were awaiting must also land.
-    let previous;
-    do {
-        previous = pendingWrites.size;
-        if (pendingWrites.size > 0) await Promise.all(Array.from(pendingWrites));
-    } while (pendingWrites.size > 0 && pendingWrites.size !== previous);
+    while (pendingWrites.size > 0) {
+        await Promise.all(Array.from(pendingWrites));
+    }
 }
 
 function close() {
@@ -333,9 +355,10 @@ module.exports = {
     deletePlayer,
     listPlayers,
     loadAccounts,
+    getAccountById,
     getAccountByUsername,
     insertAccount,
-    updateCharacters,
+    addCharacterToAccount,
     flush,
     close
 };

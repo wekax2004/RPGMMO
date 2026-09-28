@@ -1,4 +1,5 @@
 const { getZone, isWalkable } = require('./map');
+const MAP = require('./map');
 const CFG = require('./config');
 
 const bosses = new Map();
@@ -70,17 +71,21 @@ const BOSS_TYPES = {
     }
 };
 
-function spawnBoss(type, broadcast) {
+function spawnBoss(type, broadcast, options = {}) {
     const def = BOSS_TYPES[type];
     if (!def) return null;
 
+    // A boss belongs to one floor. BOSS_TYPES.bounds are 2D surface bounds, so
+    // a lair that is not the surface is opted into via options.z, and the
+    // walkability search is scoped to that floor rather than the surface's.
+    const floorZ = MAP.normalizeZ(options.z);
     let x, y;
     let attempts = 0;
     do {
         x = def.bounds.minX + Math.floor(Math.random() * ((def.bounds.maxX - def.bounds.minX) / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
         y = def.bounds.minY + Math.floor(Math.random() * ((def.bounds.maxY - def.bounds.minY) / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
         attempts++;
-    } while (!isWalkable(x, y) && attempts < 100);
+    } while (!isWalkable(x, y, floorZ) && attempts < 100);
 
     const id = 'boss_' + type + '_' + Date.now().toString(36);
     const boss = {
@@ -89,6 +94,7 @@ function spawnBoss(type, broadcast) {
         name: def.name,
         x,
         y,
+        z: floorZ,
         hp: def.hp,
         maxHp: def.hp,
         damage: def.damage,
@@ -104,6 +110,12 @@ function spawnBoss(type, broadcast) {
     bosses.set(id, boss);
     
     if (broadcast) {
+        let zone = "world";
+        if (type === "yeti") zone = "frozen mountains";
+        else if (type === "spider_queen") zone = "dark swamp";
+        else if (type === "skeleton_king") zone = "cursed graveyard";
+        broadcast({ action: 'log', message: `⚠️ 💀 A terrible roar echoes... The ${def.name} has spawned in the ${zone}! 💀 ⚠️` });
+
         broadcast({ 
             action: 'mob_update', 
             id: boss.id, 
@@ -117,6 +129,26 @@ function spawnBoss(type, broadcast) {
             isBoss: true,
             phase: boss.phase
         });
+
+        // Server-wide spawn announcement. The startup path passes
+        // { announce: false } so a restart does not fire one alert per boss.
+        if (options.announce !== false) {
+            broadcast({
+                action: 'log',
+                message: `⚔️ [GLOBAL ALERT] The terrifying ${boss.name} has spawned!`
+            });
+            // A dedicated action as well, so a client can raise a banner
+            // without parsing the log text.
+            broadcast({
+                action: 'boss_spawned',
+                bossId: boss.id,
+                bossType: boss.type,
+                name: boss.name,
+                x: boss.x,
+                y: boss.y,
+                maxHp: boss.maxHp
+            });
+        }
     }
     
     return boss;
@@ -257,7 +289,7 @@ function bossAI(boss, players, broadcast, mobs) {
             if (pList.length > 0) {
                 const p = pList[Math.floor(Math.random() * pList.length)];
                 p.stunUntil = now + 3000;
-                broadcast({ action: 'log', message: `Spider Queen traps ${p.name} in a web!` });
+                broadcast({ action: 'log', message: `Spider Queen traps ${p.charName} in a web!` });
                 broadcastAoe(broadcast, { bossId: boss.id, spellId: nextAoeId(boss.id, 'web_trap'), x: p.x, y: p.y, radius: 16, type: 'poison', phase: 'detonate', durationMs: 0 });
             }
         }

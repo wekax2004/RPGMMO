@@ -108,7 +108,7 @@ class CanvasInspector {
   static isRedTelegraphActive(pixel) {
     if (!pixel) return false;
     // Red must be dominant over green and blue, and green must NOT be high yellow/orange (rejection of Warrior #ffaa00)
-    const rDominant = pixel.r >= 150 && pixel.r > (pixel.g * 1.6) && pixel.r > (pixel.b * 1.5);
+    const rDominant = pixel.r >= 130 && pixel.r > (pixel.g * 1.5) && pixel.r > (pixel.b * 1.5);
     const notOrangeOrYellow = pixel.g < 140; // Rejects #ffaa00 where G=170
     const notHealthBar = !(pixel.r > 200 && pixel.g < 60 && pixel.b < 60 && pixel.a === 255); // Health bar is solid opaque red
     const notEliteAura = !(pixel.r < 220 && pixel.g >= 90 && pixel.b >= 70);

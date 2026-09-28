@@ -20,11 +20,39 @@
         let chests = {};
         let clientCorpses = {};
         let gatherNodes = {};
+        let groundItemsLocal = [];
+        let floatingTextsLocal = [];
+        let itemDict = { items: {}, materials: {}, recipes: {} };
+        window.currentZ = 0;
+
+        function getItemTooltip(name) {
+            let tooltip = name + "\n";
+            if (itemDict.materials && itemDict.materials[name]) {
+                tooltip += "[Crafting Material] Tier " + itemDict.materials[name].tier + "\n";
+            }
+            if (itemDict.items) {
+                for (let cat in itemDict.items) {
+                    if (itemDict.items[cat][name]) {
+                        let itm = itemDict.items[cat][name];
+                        if (itm.type === 'weapon') tooltip += `Damage: +${itm.bonus}\n`;
+                        if (itm.type === 'armor' || itm.type === 'helmet' || itm.type === 'legs' || itm.type === 'shield') tooltip += `Defense: +${itm.def}\n`;
+                        if (itm.type === 'boots') tooltip += `Defense: +${itm.def} | Speed: +${itm.speedBonus}\n`;
+                        if (itm.type === 'amulet') tooltip += `HP Bonus: +${itm.maxHpBonus}\n`;
+                        if (itm.type === 'heal') tooltip += `Heals: ${itm.val} HP\n`;
+                        if (itm.type === 'mana') tooltip += `Restores: ${itm.val} Mana\n`;
+                        break;
+                    }
+                }
+            }
+            return tooltip.trim();
+        }
+
         let npcsLocal = {};
         
         let obstacles = [];
         let obstacleSet = new Set();
         let fcts = [];
+        let particles = [];
         let currentTargetId = null;
         let cameraX = 0, cameraY = 0;
         let isDay = true;
@@ -35,7 +63,15 @@
         let bossAoeEffects = [];
         let activeSpells = [];
 
+        let packetQueue = [];
+        window.CLIENT_READY = false;
+
         socket.onmessage = (event) => {
+            if (!window.CLIENT_READY) {
+                packetQueue.push(event);
+                return;
+            }
+            
             const data = JSON.parse(event.data);
             
             if (data.action === "login_error" || data.action === "auth_error") {
@@ -152,7 +188,33 @@
                 addLog("📨 " + pendingPartyInvite.inviter + " invited you to a party.");
                 renderParty({ members: [] });
             }
+            else if (data.action === "guild_invited") {
+                pendingGuildInvite = { guildName: data.guildName, inviter: data.inviter || "A player" };
+                addLog("🛡️ " + pendingGuildInvite.inviter + " invited you to " + data.guildName);
+                if (typeof renderGuild === 'function') renderGuild({ members: [] });
+            }
+            else if (data.action === "guild_update") {
+                if (data.guild === null && typeof renderGuild === 'function') {
+                    renderGuild({ members: [] });
+                } else if (data.guild && typeof renderGuild === 'function') {
+                    renderGuild(data.guild);
+                }
+            }
+            else if (data.action === "bank_open") {
+                if (typeof openBank === 'function') openBank(data);
+            }
+            else if (data.action === "bank_update") {
+                if (typeof renderBank === 'function') renderBank(data);
+            }
             else if (data.action === "map_data") { 
+                const newZ = data.z || 0;
+                if (window.currentZ !== undefined && window.currentZ !== newZ) {
+                    otherPlayers = {};
+                    mobs = {};
+                    clientCorpses = {};
+                    groundItemsLocal = [];
+                }
+                window.currentZ = newZ;
                 obstacles = data.obstacles; 
                 if (data.width) MAP_W = data.width;
                 if (data.height) MAP_H = data.height;
@@ -165,6 +227,20 @@
                 fcts.push({ text: data.text, x: data.x, y: data.y, color: data.color, life: 1.0, driftX: (Math.random() - 0.5) * 40 });
                 // Floating combat text is how the server reports loot and XP.
                 if (/^\+.*Gold$|^\+\d+G$/.test(data.text || "")) audio.loot();
+                
+                // Spawn blood particles on damage
+                if (data.text.startsWith("-")) {
+                    for (let i = 0; i < 6; i++) {
+                        particles.push({
+                            x: data.x + (Math.random() - 0.5) * 20,
+                            y: data.y + (Math.random() - 0.5) * 20,
+                            vx: (Math.random() - 0.5) * 4,
+                            vy: (Math.random() - 0.5) * 4 - 2, // jump up
+                            life: 1.0,
+                            color: '#b91c1c' // Deep red blood
+                        });
+                    }
+                }
             }
 else if (data.action === "spell_anim") {
                 let color = "rgba(255, 255, 255, 0.5)";
@@ -177,17 +253,58 @@ else if (data.action === "spell_anim") {
                 else if (data.type === 'trap') { color = "rgba(100, 100, 100, 0.8)"; radius = 40; }
                 else if (data.type === 'heal') { color = "rgba(50, 255, 50, 0.6)"; radius = 40; }
                 else if (data.type === 'smite') { color = "rgba(255, 255, 100, 0.8)"; radius = 40; }
-                
                 bossAoeEffects.push({ x: data.x, y: data.y, radius: radius, state: "detonate", type: data.type });
                 setTimeout(() => { bossAoeEffects.pop(); }, 300);
                 audio.spellBlast();
             }
+            else if (data.action === "spell") {
+                activeSpells.push({ startTime: Date.now(), sx: data.sx, sy: data.sy, tx: data.tx, ty: data.ty, type: data.type });
+                audio.spellBlast();
+            }
+            else if (data.action === "spell_anim") {
+                // Epic AoE Spell Visuals
+                if (data.type === "meteor_strike") {
+                    for(let i=0; i<80; i++) {
+                        let angle = Math.random() * Math.PI * 2;
+                        let speed = 2 + Math.random() * 6;
+                        particles.push({ 
+                            x: data.x + 16, y: data.y + 16, 
+                            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
+                            life: 1.0, maxLife: 1.0, gravity: 0,
+                            color: Math.random() > 0.5 ? "#f97316" : "#dc2626", size: 4 
+                        });
+                    }
+                    audio.spellBlast();
+                }
+                else if (data.type === "holy_nova") {
+                    for(let i=0; i<80; i++) {
+                        let angle = Math.random() * Math.PI * 2;
+                        let speed = 2 + Math.random() * 6;
+                        particles.push({ 
+                            x: data.x + 16, y: data.y + 16, 
+                            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
+                            life: 1.0, maxLife: 1.0, gravity: 0,
+                            color: Math.random() > 0.5 ? "#fef08a" : "#fef9c3", size: 4 
+                        });
+                    }
+                    audio.spellBlast();
+                }
+            }
+            else if (data.action === "ground_sync") { groundItemsLocal = data.items; }
             else if (data.action === "your_id") { myId = data.id; myName = data.name; }
             else if (data.action === "force_position") { player.x = data.x; player.y = data.y; }
             else if (data.action === "mob_update") {
                 if (data.alive) { 
-                    if(!mobs[data.id]) mobs[data.id] = { x: data.x, y: data.y, id: data.id, hp: data.hp, maxHp: data.maxHp, isElite: data.isElite, isBoss: data.isBoss, name: data.name, type: data.type, phase: data.phase || 1, renderX: data.x, renderY: data.y }; 
-                    else { mobs[data.id].hp = data.hp; mobs[data.id].maxHp = data.maxHp; mobs[data.id].x = data.x; mobs[data.id].y = data.y; } 
+                    if(!mobs[data.id]) mobs[data.id] = { x: data.x, y: data.y, id: data.id, hp: data.hp, maxHp: data.maxHp, isElite: data.isElite, isBoss: data.isBoss, name: data.name, type: data.type, phase: data.phase || 1, renderX: data.x, renderY: data.y, dir: 0, moveFrame: 0 }; 
+                    else { 
+                        let m = mobs[data.id];
+                        if (data.x > m.x) m.dir = 2;
+                        else if (data.x < m.x) m.dir = 1;
+                        else if (data.y > m.y) m.dir = 0;
+                        else if (data.y < m.y) m.dir = 3;
+                        if (m.x !== data.x || m.y !== data.y) m.moveFrame = ((m.moveFrame || 0) + 1) % 3;
+                        m.hp = data.hp; m.maxHp = data.maxHp; m.x = data.x; m.y = data.y; 
+                    } 
                 }
                 else { delete mobs[data.id]; if (currentTargetId === data.id) currentTargetId = null; }
             }
@@ -195,26 +312,70 @@ else if (data.action === "spell_anim") {
                 if (mobs[data.id]) mobs[data.id].phase = data.phase;
             }
             else if (data.action === "mob_move") {
-                if (mobs[data.id]) { mobs[data.id].x = data.x; mobs[data.id].y = data.y; }
+                if (mobs[data.id]) { 
+                    let m = mobs[data.id];
+                    if (data.x > m.x) m.dir = 2;
+                    else if (data.x < m.x) m.dir = 1;
+                    else if (data.y > m.y) m.dir = 0;
+                    else if (data.y < m.y) m.dir = 3;
+                    if (m.x !== data.x || m.y !== data.y) m.moveFrame = ((m.moveFrame || 0) + 1) % 3;
+                    m.x = data.x; m.y = data.y; 
+                }
             }
             else if (data.action === "corpse_spawn") { clientCorpses[data.corpse.id] = data.corpse; }
             else if (data.action === "corpse_remove") { delete clientCorpses[data.id]; }
             else if (data.action === "chest_update") { if (data.active) chests[data.id] = { x: data.x, y: data.y }; else delete chests[data.id]; }
-            else if (data.action === "npc_sync") { npcsLocal[data.id] = { x: data.x, y: data.y, name: data.name, id: data.id }; }
+            else if (data.action === "item_dict") { itemDict = data; }
+            else if (data.action === "npc_sync") { npcsLocal[data.id] = { x: data.x, y: data.y, name: data.name, id: data.id, hasQuest: data.hasQuest }; }
             else if (data.action === "node_sync") { gatherNodes[data.id] = { x: data.x, y: data.y, name: data.name, color: data.color, symbol: data.symbol }; }
             else if (data.action === "node_remove") { delete gatherNodes[data.id]; }
             else if (data.action === "players_sync") {
                 let newIds = data.players.map(p => p.id);
                 data.players.forEach(p => { 
                     if (p.id !== myId) {
-                        if (!otherPlayers[p.id]) otherPlayers[p.id] = { x: p.x, y: p.y, renderX: p.x, renderY: p.y, classType: p.classType, name: p.name, warmode: p.warmode };
-                        else { otherPlayers[p.id].x = p.x; otherPlayers[p.id].y = p.y; otherPlayers[p.id].classType = p.classType; otherPlayers[p.id].warmode = p.warmode; }
-                    } else { player.x = p.x; player.y = p.y; player.classType = p.classType; player.warmode = p.warmode; }
+                        if (!otherPlayers[p.id]) otherPlayers[p.id] = { x: p.x, y: p.y, renderX: p.x, renderY: p.y, classType: p.classType, name: p.name, warmode: p.warmode, dir: 0, moveFrame: 0, skulled: !!p.skulled, guild: p.guild || null, isMounted: !!p.isMounted };
+                        else { 
+                            let op = otherPlayers[p.id];
+                            if (p.x > op.x) op.dir = 2;
+                            else if (p.x < op.x) op.dir = 1;
+                            else if (p.y > op.y) op.dir = 0;
+                            else if (p.y < op.y) op.dir = 3;
+                            if (op.x !== p.x || op.y !== p.y) op.moveFrame = ((op.moveFrame || 0) + 1) % 3;
+                            op.x = p.x; op.y = p.y; op.classType = p.classType; op.warmode = p.warmode; 
+                            op.skulled = !!p.skulled; op.guild = p.guild || null; op.isMounted = !!p.isMounted;
+                        }
+                    } else { player.x = p.x; player.y = p.y; player.classType = p.classType; player.warmode = p.warmode; player.skulled = !!p.skulled; player.isMounted = !!p.isMounted; }
                 });
                 for (let id in otherPlayers) { if (!newIds.includes(id)) delete otherPlayers[id]; }
             }
+            else if (data.action === "auction_sync") { window.auctionItems = data.listings; if (window.renderAuctionUI) window.renderAuctionUI(); }
+            else if (data.action === "mount_changed") {
+                if (data.id === myId) player.isMounted = data.isMounted;
+                else if (otherPlayers[data.id]) otherPlayers[data.id].isMounted = data.isMounted;
+            }
+            else if (data.action === "boss_spawned") {
+                // Displaying a massive UI banner or shaking the screen
+                audio.spellBlast(); // Boom sound
+                addChat(Date.now(), "System", `⚠️ [GLOBAL ALERT] The terrifying ${data.name} has spawned!`);
+            }
+            else if (data.action === "auction_mailbox") {
+                if (data.gold > 0 || (data.items && data.items.length > 0)) {
+                    addChat(Date.now(), "System", `📬 You received ${data.gold}G and ${data.items ? data.items.length : 0} items from the Auction House!`);
+                }
+            }
+            else if (data.action === "fishing_result") {
+                if (data.success) {
+                    addChat(Date.now(), "System", `🎣 You caught a ${data.item}!`);
+                } else {
+                    addChat(Date.now(), "System", `🎣 You caught an ${data.item}...`);
+                }
+            }
+            else if (data.action === "fct") {
+                floatingTextsLocal.push({ x: data.x, y: data.y, text: data.text, color: data.color, life: 1.0 });
+            }
             else if (data.action === "player_left") { delete otherPlayers[data.id]; }
             else if (data.action === "status") {
+                if (data.isMounted !== undefined) player.isMounted = data.isMounted;
                 player.classType = data.classType;
                 // Level-up fanfare fires on the transition, not every tick.
                 if (lastKnownLevel && data.level > lastKnownLevel) audio.levelUp();
@@ -240,16 +401,19 @@ else if (data.action === "spell_anim") {
                 else if(data.classType==="healer") btnSkill.innerText = "💚 Heal (Press 2)";
                 
                 if (data.equipment) {
+                    player.equipment = data.equipment;
                     const slots = ['helmet', 'amulet', 'weapon', 'shield', 'armor', 'legs', 'boots'];
                     slots.forEach(slot => {
-                        const el = document.getElementById("eq-" + slot);
+                        const el = document.getElementById("equip-" + slot);
                         if (el) {
                             if (data.equipment[slot]) {
                                 el.innerText = data.equipment[slot];
                                 el.classList.add("filled");
+                                el.title = getItemTooltip(data.equipment[slot]) + "\n(Click to unequip)";
                             } else {
                                 el.innerText = slot.charAt(0).toUpperCase() + slot.slice(1);
                                 el.classList.remove("filled");
+                                el.removeAttribute("title");
                             }
                         }
                     });
@@ -262,7 +426,7 @@ else if (data.action === "spell_anim") {
                 if (myInventoryData.length > 0) {
                     let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
                     invEl.innerHTML = Object.keys(counts).map(k => 
-                        "<div class='inv-item' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='Click to equip/use'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
+                        "<div class='inv-item' draggable='true' ondragstart='window.dragStart(event, \"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='" + escapeHtml(getItemTooltip(k)).replace(/'/g, "&#39;") + "\n(Click to equip/use)'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
                     ).join("");
                 } else { invEl.innerHTML = "<em style=\"color:#666\">Empty</em>"; }
             }
@@ -299,6 +463,11 @@ else if (data.action === "spell_anim") {
                 document.getElementById("shop-buy-list").innerHTML = buyHtml;
                 renderShopSellList();
             }
+            else if (data.action === "skill_update") {
+                // Two shapes: a full panel on login, or one skill after an award.
+                if (Array.isArray(data.skills)) renderSkillPanel(data.skills);
+                else if (data.skill) applySkillUpdate(data.skill);
+            }
             else if (data.action === "crafting_open") { openCrafting(data); }
             else if (data.action === "crafting_sync") {
                 renderCraftingList(data.recipes);
@@ -309,7 +478,7 @@ else if (data.action === "spell_anim") {
                         const counts = {};
                         myInventoryData.forEach(i => counts[i] = (counts[i] || 0) + 1);
                         invEl.innerHTML = Object.keys(counts).map(k =>
-                            "<div class='inv-item' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='Click to equip/use'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
+                            "<div class='inv-item' draggable='true' ondragstart='window.dragStart(event, \"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='" + escapeHtml(getItemTooltip(k)).replace(/'/g, "&#39;") + "\n(Click to equip/use)'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
                         ).join("");
                     } else {
                         invEl.innerHTML = "<em style=\"color:#666\">Empty</em>";
@@ -323,6 +492,13 @@ else if (data.action === "spell_anim") {
                 renderShopSellList();
             }
         };
+
+        window.processPacketQueue = () => {
+            packetQueue.forEach(socket.onmessage);
+            packetQueue = [];
+        };
+        
+        // --- End of socket logic ---
 
         function shopBuy(itemName) {
             audio.coin();
@@ -438,6 +614,64 @@ else if (data.action === "spell_anim") {
             return !obstacleSet.has(nx + "," + ny);
         }
 
+        let pathQueue = [];
+        function findPath(sx, sy, gx, gy) {
+            sx = Math.floor(sx / 32) * 32;
+            sy = Math.floor(sy / 32) * 32;
+            gx = Math.floor(gx / 32) * 32;
+            gy = Math.floor(gy / 32) * 32;
+
+            if (!isWalkable(gx, gy)) return []; 
+            
+            let open = [{x: sx, y: sy, path: []}];
+            let closed = new Set();
+            closed.add(sx+","+sy);
+
+            let iterations = 0;
+            while(open.length > 0 && iterations < 800) {
+                let curr = open.shift();
+                iterations++;
+                if (curr.x === gx && curr.y === gy) return curr.path;
+                
+                const dirs = [[0,-32],[0,32],[-32,0],[32,0]];
+                for (let d of dirs) {
+                    let nx = curr.x + d[0], ny = curr.y + d[1];
+                    let key = nx+","+ny;
+                    if (!closed.has(key) && isWalkable(nx, ny)) {
+                        closed.add(key);
+                        open.push({x: nx, y: ny, path: [...curr.path, {x: nx, y: ny}]});
+                    }
+                }
+            }
+            return [];
+        }
+
+        setInterval(() => {
+            if (!myId || !player) return;
+            if (pathQueue.length > 0) {
+                const now = Date.now();
+                const clientMoveSpeed = Math.max(80, 300 - (myLevel * 3) - speedBonus) + 10;
+                if (now - lastMoveTime >= clientMoveSpeed) {
+                    let next = pathQueue.shift();
+                    let dx = next.x - player.x;
+                    let dy = next.y - player.y;
+
+                    if (Math.abs(dx) > 32 || Math.abs(dy) > 32) { pathQueue = []; return; } // Validation check
+
+                    if (dy > 0) player.dir = 0;
+                    else if (dy < 0) player.dir = 3;
+                    else if (dx > 0) player.dir = 2;
+                    else if (dx < 0) player.dir = 1;
+
+                    lastMoveTime = now;
+                    player.x = next.x; player.y = next.y; 
+                    player.moveFrame = ((player.moveFrame || 0) + 1) % 3;
+                    audio.footstep();
+                    socket.send(JSON.stringify({ action: "move", x: next.x, y: next.y }));
+                }
+            }
+        }, 50);
+
         document.addEventListener("keydown", (e) => {
             if (document.getElementById("overlay").style.display === "block") return;
             if (document.activeElement === chatInput) {
@@ -463,15 +697,26 @@ else if (data.action === "spell_anim") {
             else if (e.key === "Enter") chatInput.focus();
 if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 1 })); return; }
             if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); return; }
+            if (e.key === "r" || e.key === "R") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 3 })); return; }
+            if (e.key === "z" || e.key === "Z") { socket.send(JSON.stringify({ action: "toggle_mount" })); return; }
+            if (e.key === "f" || e.key === "F") { socket.send(JSON.stringify({ action: "fish" })); return; }
             
             if (dx||dy) {
+                pathQueue = []; // Cancel pathfinding on manual input
                 const clientMoveSpeed = Math.max(80, 300 - (myLevel * 3) - speedBonus) + 10;
                 if (now - lastMoveTime < clientMoveSpeed) return;
                 
+                if (dy > 0) player.dir = 0;
+                else if (dy < 0) player.dir = 3;
+                else if (dx > 0) player.dir = 2;
+                else if (dx < 0) player.dir = 1;
+
                 const nx = player.x + dx, ny = player.y + dy;
                 if (isWalkable(nx, ny)) {
                     lastMoveTime = now;
                     player.x = nx; player.y = ny; 
+                    player.moveFrame = ((player.moveFrame || 0) + 1) % 3;
+                    audio.footstep();
                     socket.send(JSON.stringify({ action: "move", x: nx, y: ny }));
                 }
             }
@@ -479,6 +724,10 @@ if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellInd
             if (e.key === "1") castPurify();
             if (e.key === "2") castSkill();
             if (e.key === "m" || e.key === "M") toggleAudio();
+            if (e.key === "Tab") { 
+                e.preventDefault(); 
+                toggleMinimap(); 
+            }
             if (e.key === "3") useItem("Health Potion");
             if (e.key === "4") useItem("Mana Potion");
             if (e.key === "Escape") currentTargetId = null;
@@ -506,6 +755,15 @@ if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellInd
             const clickY = e.clientY - rect.top + cameraY;
 
             let clicked = null;
+            
+            for (let i = 0; i < groundItemsLocal.length; i++) {
+                const item = groundItemsLocal[i];
+                if (clickX >= item.x && clickX <= item.x + 24 && clickY >= item.y && clickY <= item.y + 24) {
+                    socket.send(JSON.stringify({ action: "pickup_item", itemId: item.id }));
+                    return;
+                }
+            }
+
             for (let id in npcsLocal) {
                 if (clickX >= npcsLocal[id].x && clickX <= npcsLocal[id].x + 32 && clickY >= npcsLocal[id].y && clickY <= npcsLocal[id].y + 32) {
                     socket.send(JSON.stringify({ action: "talk_npc", npc_id: id }));
@@ -519,6 +777,11 @@ if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellInd
             if (!clicked) {
                 for (let id in otherPlayers) {
                     if (clickX >= otherPlayers[id].x && clickX <= otherPlayers[id].x + 32 && clickY >= otherPlayers[id].y && clickY <= otherPlayers[id].y + 32) { clicked = id; break; }
+                }
+                
+                if (!clicked) {
+                    // Click to move!
+                    pathQueue = findPath(player.x, player.y, clickX, clickY);
                 }
             }
             

@@ -7,8 +7,14 @@ const ITEMS = require('./items');
 const MATERIALS = {
     'Iron Ore': { from: 'gathering', tier: 1 },
     'Wood': { from: 'gathering', tier: 1 },
-    'Iron Sword': { from: 'loot', tier: 2 },
-    'Leather': { from: 'loot', tier: 2 }
+    'Leather': { from: 'gathering', tier: 2 },
+    'Moonflower': { from: 'gathering', tier: 1 },
+    'Poison Mushroom': { from: 'gathering', tier: 1 },
+    'Ancient Bone': { from: 'gathering', tier: 1 },
+    'Spider Silk': { from: 'loot', tier: 2 },
+    'Bone Dust': { from: 'loot', tier: 2 },
+    'Dragon Scale': { from: 'loot', tier: 3 },
+    'Frost Shard': { from: 'loot', tier: 3 }
 };
 
 const RECIPES = {
@@ -76,6 +82,57 @@ const RECIPES = {
         requires: 'craft_health_potion',
         inputs: { 'Moonflower': 4, 'Iron Ore': 1 },
         description: 'A stronger brew. Requires knowledge of the basic potion.'
+    },
+
+    // === High tier: boss materials ===
+    // These consume drops from the boss encounters, so the gear has to be
+    // earned in the field before the workbench can turn it into equipment.
+    craft_spider_silk_robes: {
+        id: 'craft_spider_silk_robes',
+        name: 'Spider Silk Robes',
+        result: 'Spider Silk Robes',
+        count: 1,
+        level: 12,
+        inputs: { 'Spider Silk': 8, 'Leather': 3 },
+        description: 'Woven from the Queen herself. Light, and deceptively tough.'
+    },
+    craft_frost_blade: {
+        id: 'craft_frost_blade',
+        name: 'Frost Blade',
+        result: 'Frost Blade',
+        count: 1,
+        level: 15,
+        inputs: { 'Frost Shard': 4, 'Iron Ore': 6 },
+        description: 'Tempered in dragon frost. The edge never dulls.'
+    },
+    craft_dragon_scale_armor: {
+        id: 'craft_dragon_scale_armor',
+        name: 'Dragon Scale Armor',
+        result: 'Dragon Scale Armor',
+        count: 1,
+        level: 20,
+        requires: 'craft_frost_blade',
+        inputs: { 'Dragon Scale': 6, 'Leather': 4, 'Iron Ore': 4 },
+        description: 'Scales layered over hide. Requires mastery of the Frost Blade.'
+    },
+    craft_venom_fang_sabre: {
+        id: 'craft_venom_fang_sabre',
+        name: 'Venom Fang Sabre',
+        result: 'Venom Fang Sabre',
+        count: 1,
+        level: 14,
+        inputs: { 'Spider Silk': 4, 'Iron Ore': 5, 'Wood': 2 },
+        description: 'A curved sabre bound in silk. Light and vicious.'
+    },
+    craft_greater_mana_potion: {
+        id: 'craft_greater_mana_potion',
+        name: 'Greater Mana Potion',
+        result: 'Greater Mana Potion',
+        count: 1,
+        level: 6,
+        requires: 'craft_mana_potion',
+        inputs: { 'Poison Mushroom': 4, 'Frost Shard': 1 },
+        description: 'A deep draught for spellcasters. Requires the basic brew.'
     }
 };
 

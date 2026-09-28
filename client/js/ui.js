@@ -177,6 +177,11 @@
                 this.tone({ freq: 200, type: 'square', duration: 0.14, gain: 0.1 });
             }
 
+            footstep() {
+                if (!this.throttled('footstep', 100)) return;
+                this.noise({ duration: 0.05, gain: 0.08, filter: 300 });
+            }
+
             // --- Background music ---
             // A slow drifting arpeggio over a soft drone. Scheduled with
             // setInterval so it keeps time regardless of render frames.
@@ -200,6 +205,59 @@
         }
 
         const audio = new AudioManager();
+
+        // === Skills panel ===
+        // The server owns skill levels and sends two shapes on skill_update:
+        // a full panel on login ({ skills: [...] }) and a single skill after
+        // an award ({ skill: {...} }). Both are handled here.
+        let skillState = [];
+
+        function renderSkillPanel(skills) {
+            if (!Array.isArray(skills)) return;
+            skillState = skills;
+            const el = document.getElementById("skill-list");
+            if (!el) return;
+            if (skillState.length === 0) {
+                el.innerHTML = "<em style='color:#666;font-size:11px'>No skills yet.</em>";
+                return;
+            }
+            el.innerHTML = skillState.map(s => {
+                const maxed = !s.xpForNext;
+                const pct = maxed ? 100 : Math.min(100, Math.floor((s.xp / s.xpForNext) * 100));
+                return `<div class="skill-row${maxed ? ' maxed' : ''}" data-skill="${escapeHtml(s.skill)}">
+                    <div class="skill-head"><span>${escapeHtml(s.name)}</span><span class="skill-level">${maxed ? 'MAX' : 'Lv ' + escapeHtml(String(s.level))}</span></div>
+                    <div class="skill-bar"><div style="width:${pct}%"></div></div>
+                </div>`;
+            }).join("");
+        }
+
+        // A single-skill award: update that row in place and flash it.
+        function applySkillUpdate(skill) {
+            if (!skill || typeof skill.skill !== 'string') return;
+            const index = skillState.findIndex(s => s.skill === skill.skill);
+            if (index === -1) return;
+            skillState[index] = {
+                skill: skill.skill,
+                name: skill.name,
+                level: skill.level,
+                xp: skill.xp,
+                xpForNext: skill.xpForNext,
+                maxLevel: skill.maxLevel
+            };
+            renderSkillPanel(skillState);
+            const row = document.querySelector(`.skill-row[data-skill="${skill.skill}"]`);
+            if (row) {
+                row.style.transition = 'none';
+                row.style.background = skill.leveled ? 'rgba(251,191,36,0.18)' : 'transparent';
+                setTimeout(() => {
+                    row.style.transition = 'background 0.8s ease';
+                    row.style.background = 'transparent';
+                }, 60);
+            }
+            if (skill.leveled) {
+                addLog(`⭐ ${skill.name} is now level ${skill.level}!`, 'system');
+            }
+        }
 
         function toggleAudio() {
             const muted = audio.toggleMute();
@@ -320,6 +378,39 @@
                 html += "<em style='color:#666'>No Party</em>";
             }
             document.getElementById("party-list").innerHTML = html;
+        }
+
+        let pendingGuildInvite = null;
+        function renderGuild(data) {
+            const members = Array.isArray(data.members) ? data.members : [];
+            let html = "";
+            if (pendingGuildInvite && members.length === 0) {
+                html += "<div style='font-size:11px; margin-bottom:5px;'>" + escapeHtml(pendingGuildInvite.inviter) + " invited you to <br><strong>" + escapeHtml(pendingGuildInvite.guildName) + "</strong></div>" +
+                    "<button onclick='acceptGuildInvite()' style='font-size:10px; margin-right:4px;'>Accept</button>" +
+                    "<button onclick='declineGuildInvite()' style='font-size:10px;'>Decline</button>";
+            }
+            if (members.length > 0) {
+                html += "<div style='font-size:12px; color:#fbbf24; margin-bottom:4px;'><strong>" + escapeHtml(data.name || "") + "</strong></div>";
+                members.forEach(member => {
+                    html += "<div style='font-size:11px; margin-bottom:2px;'>" + escapeHtml(member) + "</div>";
+                });
+            } else if (!pendingGuildInvite) {
+                html += "<em style='color:#666'>No Guild</em>";
+            }
+            document.getElementById("guild-list").innerHTML = html;
+        }
+
+        function acceptGuildInvite() {
+            if (pendingGuildInvite && socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "chat", text: "/guild accept " + pendingGuildInvite.guildName, channel: "global" }));
+                pendingGuildInvite = null;
+                renderGuild({ members: [] });
+            }
+        }
+
+        function declineGuildInvite() {
+            pendingGuildInvite = null;
+            renderGuild({ members: [] });
         }
 
         function renderShopSellList() {
@@ -488,3 +579,194 @@
             }
             ql.innerHTML = html;
         }
+
+        let bankState = { gold: 0, items: [] };
+
+        function openBank(data) {
+            document.getElementById("overlay").style.display = "block";
+            document.getElementById("bank-modal").style.display = "block";
+            renderBank(data);
+        }
+
+        function closeBank() {
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("bank-modal").style.display = "none";
+            document.getElementById("bank-gold-input").value = "";
+        }
+
+        function renderBank(data) {
+            if (data) bankState = data;
+            document.getElementById("bank-wallet-gold").innerText = myGold;
+            document.getElementById("bank-stored-gold").innerText = bankState.gold || 0;
+            document.getElementById("bank-vault-count").innerText = (bankState.items || []).length;
+            
+            let invHtml = "";
+            let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
+            for (let item in counts) {
+                invHtml += `<div style='display:flex; justify-content:space-between; margin-bottom:5px; font-size:12px;'><span>${escapeHtml(item)} x${counts[item]}</span><button onclick='depositItem("${escapeHtml(item)}")' style='background:#10b981; border:none; color:white; padding:2px 5px; cursor:pointer; border-radius:3px;'>Deposit</button></div>`;
+            }
+            if (myInventoryData.length === 0) invHtml = "<em style='color:#666'>Empty</em>";
+            document.getElementById("bank-inv-list").innerHTML = invHtml;
+
+            let vaultHtml = "";
+            let vcounts = {}; (bankState.items || []).forEach(i => vcounts[i] = (vcounts[i]||0)+1);
+            for (let item in vcounts) {
+                vaultHtml += `<div style='display:flex; justify-content:space-between; margin-bottom:5px; font-size:12px;'><span>${escapeHtml(item)} x${vcounts[item]}</span><button onclick='withdrawItem("${escapeHtml(item)}")' style='background:#ef4444; border:none; color:white; padding:2px 5px; cursor:pointer; border-radius:3px;'>Withdraw</button></div>`;
+            }
+            if ((bankState.items || []).length === 0) vaultHtml = "<em style='color:#666'>Empty</em>";
+            document.getElementById("bank-vault-list").innerHTML = vaultHtml;
+        }
+
+        function depositGold() {
+            const amt = parseInt(document.getElementById("bank-gold-input").value);
+            if (amt > 0 && socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "bank_deposit_gold", amount: amt }));
+                document.getElementById("bank-gold-input").value = "";
+            }
+        }
+
+        function withdrawGold() {
+            const amt = parseInt(document.getElementById("bank-gold-input").value);
+            if (amt > 0 && socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "bank_withdraw_gold", amount: amt }));
+                document.getElementById("bank-gold-input").value = "";
+            }
+        }
+
+        function depositItem(item) {
+            if (socket && socket.readyState === 1) socket.send(JSON.stringify({ action: "bank_deposit_item", item: item }));
+        }
+
+        function withdrawItem(item) {
+            if (socket && socket.readyState === 1) socket.send(JSON.stringify({ action: "bank_withdraw_item", item: item }));
+        }
+
+        window.dragStart = function(ev, item) {
+            ev.dataTransfer.setData("text/plain", item);
+        };
+
+        window.toggleMinimap = function() {
+            const mc = document.getElementById("minimap-container");
+            if (mc) mc.style.display = (mc.style.display === "none") ? "block" : "none";
+        };
+
+        window.dropTradeItem = function(ev) {
+            ev.preventDefault();
+            const item = ev.dataTransfer.getData("text/plain");
+            if (item && socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "trade_add_item", item: item }));
+            }
+        };
+
+        window.dropBankItem = function(ev) {
+            ev.preventDefault();
+            const item = ev.dataTransfer.getData("text/plain");
+            if (item && socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "bank_deposit_item", item: item }));
+            }
+        };
+
+        window.dropOnGround = function(ev) {
+            ev.preventDefault();
+            const item = ev.dataTransfer.getData("text/plain");
+            if (item && socket && socket.readyState === 1) {
+                // When OpenCode creates the drop_item handler, this will send the dragged item
+                // to be spawned on the ground at the player's current coordinates.
+                socket.send(JSON.stringify({ action: "drop_item", item: item }));
+            }
+        };
+
+        function openGuildModal() {
+            document.getElementById("overlay").style.display = "block";
+            document.getElementById("guild-modal").style.display = "block";
+            if (player && player.guild) {
+                document.getElementById("guild-create-section").style.display = "none";
+                document.getElementById("guild-manage-section").style.display = "block";
+                document.getElementById("guild-manage-name").innerText = player.guild;
+            } else {
+                document.getElementById("guild-create-section").style.display = "block";
+                document.getElementById("guild-manage-section").style.display = "none";
+            }
+        }
+
+        function closeGuildModal() {
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("guild-modal").style.display = "none";
+        }
+
+        function createGuild() {
+            const nameInput = document.getElementById("guild-name-input");
+            const name = nameInput.value.trim();
+            if (!name) return;
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "chat", text: "/guild create " + name, channel: "global" }));
+                nameInput.value = "";
+                closeGuildModal();
+            }
+        }
+
+        function inviteToGuild() {
+            const inviteInput = document.getElementById("guild-invite-input");
+            const target = inviteInput.value.trim();
+            if (!target) return;
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "chat", text: "/guild invite " + target, channel: "global" }));
+                inviteInput.value = "";
+                closeGuildModal();
+            }
+        }
+
+        function leaveGuild() {
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "chat", text: "/guild leave", channel: "global" }));
+                closeGuildModal();
+            }
+        }
+
+        window.openAuctionModal = function() {
+            document.getElementById("overlay").style.display = "block";
+            document.getElementById("auction-modal").style.display = "block";
+            if (socket && socket.readyState === 1) socket.send(JSON.stringify({ action: "auction_request" }));
+        };
+
+        window.closeAuctionModal = function() {
+            document.getElementById("overlay").style.display = "none";
+            document.getElementById("auction-modal").style.display = "none";
+        };
+
+        window.sellAuction = function() {
+            const item = document.getElementById("auction-item-name").value;
+            const price = parseInt(document.getElementById("auction-item-price").value, 10);
+            if (!item || isNaN(price) || price <= 0) return alert("Invalid item or price!");
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "auction_list", item: item, price: price }));
+                document.getElementById("auction-item-name").value = "";
+                document.getElementById("auction-item-price").value = "";
+            }
+        };
+
+        window.buyAuction = function(id) {
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({ action: "auction_buy", id: id }));
+            }
+        };
+
+        window.renderAuctionUI = function() {
+            const listDiv = document.getElementById("auction-list");
+            if (!listDiv) return;
+            if (!window.auctionItems || window.auctionItems.length === 0) {
+                listDiv.innerHTML = "<em style='color:#aaa'>The auction house is empty.</em>";
+                return;
+            }
+            let html = "";
+            window.auctionItems.forEach(item => {
+                html += `<div style="display:flex; justify-content:space-between; align-items:center; background:#222; padding:5px; margin-bottom:5px; border-radius:3px;">
+                    <div><span style="color:#fbbf24">${item.item}</span> <span style="color:#aaa; font-size:12px;">(Seller: ${item.sellerName})</span></div>
+                    <div>
+                        <span style="color:gold; margin-right: 10px;">${item.price}G</span>
+                        <button onclick="window.buyAuction('${item.id}')" style="background:#3b82f6; color:white; border:none; padding:4px 8px; cursor:pointer;">Buy</button>
+                    </div>
+                </div>`;
+            });
+            listDiv.innerHTML = html;
+        };

@@ -9,7 +9,7 @@
  * 4. UI title, skill button, and max HP updates reflecting promotion.
  */
 
-const { BrowserDriver } = require('./browser_driver');
+const { BrowserDriver, finalizeResult } = require('./browser_driver');
 
 /**
  * Runs the Sub-class transition acceptance test.
@@ -130,12 +130,12 @@ async function runSubclassTest(options = {}) {
     console.log(` Duration: ${Date.now() - startTime}ms`);
     console.log(`=============================================================\n`);
 
-    return {
+    return finalizeResult(driver, {
       success: allPassed,
       durationMs: Date.now() - startTime,
       results: testSteps,
       error: allPassed ? null : new Error('AC1 Sub-class test assertions failed')
-    };
+    });
   } catch (err) {
     console.error(`\n[!] Error during AC1 Sub-Class Test:`, err);
     await driver.close();

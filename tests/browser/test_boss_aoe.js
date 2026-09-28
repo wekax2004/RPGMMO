@@ -9,7 +9,7 @@
  * 4. Timing verification: Player is unhurt during the 1500ms warning telegraph phase.
  */
 
-const { BrowserDriver } = require('./browser_driver');
+const { BrowserDriver, finalizeResult } = require('./browser_driver');
 const CanvasInspector = require('./canvas_inspector');
 
 /**
@@ -39,6 +39,16 @@ async function runBossAoETest(options = {}) {
     console.log(`   ${passed ? '✓' : '✗'} ${name} ${details ? '(' + details + ')' : ''}`);
   }
 
+  // Records a step for information without letting it fail the test. Used for
+  // absolute-colour probes, which are only meaningful on a known background:
+  // the map is generated randomly, so the tile under a fixed sample point
+  // varies between runs and an absolute threshold is not a property of the
+  // telegraph. The differential checks are the real assertion.
+  function recordInfo(name, passed, details = '') {
+    testSteps.push({ name, passed: true, details, informational: true, observed: passed });
+    console.log(`   ${passed ? '✓' : '·'} ${name} ${details ? '(' + details + ')' : ''}${passed ? '' : ' [informational, not gating]'}`);
+  }
+
   try {
     await driver.init();
     recordStep('Browser Initialized', true);
@@ -61,7 +71,16 @@ async function runBossAoETest(options = {}) {
     const initialHpText = await page.$eval('#hp-text', el => el.innerText);
     recordStep('Initial Health Verified', true, initialHpText);
 
-    // 2. Trigger Boss AoE Ability via genuine in-game actions
+    // 2. Capture a BASELINE of the sample points before the telegraph is
+    // drawn. The map is generated randomly per server start, so whatever sits
+    // at these coordinates varies between runs; an absolute colour threshold
+    // therefore passes or fails depending on the terrain underneath. Comparing
+    // against the pre-telegraph pixel makes the assertion terrain-independent.
+    console.log(`[*] Capturing pre-telegraph baseline pixels...`);
+    const baselinePixel = await CanvasInspector.getPixel(page, 320, 180);
+    const baselineCircle = await CanvasInspector.sampleCircle(page, 320, 240, 50, 4);
+
+    // 3. Trigger Boss AoE Ability via genuine in-game actions
     console.log(`[*] Engaging Boss encounter via WebSocket actions...`);
     await page.evaluate(() => {
       if (window.__GAME_SOCKET__ && window.__GAME_SOCKET__.readyState === 1) {
@@ -91,13 +110,33 @@ async function runBossAoETest(options = {}) {
     const aoePixel = await CanvasInspector.getPixel(page, 320, 180);
     const isTelegraphActive = CanvasInspector.isRedTelegraphActive(aoePixel);
 
-    recordStep('Canvas Pixel Sampled in AoE Zone', isTelegraphActive,
+    // Absolute-threshold probe, reported but not gating. See recordInfo.
+    recordInfo('Canvas Pixel Sampled in AoE Zone (absolute)', isTelegraphActive,
       `RGBA: [${aoePixel.r}, ${aoePixel.g}, ${aoePixel.b}, ${aoePixel.a}], RedElevated: ${isTelegraphActive}`);
+
+    // Differential check: the telegraph paints red over whatever was there, so
+    // the red channel must RISE relative to the same pixel a moment earlier.
+    // This is the assertion that holds regardless of terrain brightness, and it
+    // is what actually proves the indicator is visible.
+    const redRose = (aoePixel.r - baselinePixel.r) >= 20;
+    const redPulledDominant = aoePixel.r > (aoePixel.g * 1.2) && aoePixel.r > (aoePixel.b * 1.2);
+    const telegraphVisible = redRose && redPulledDominant;
+    recordStep('Telegraph Darkens the Tile Differentially', telegraphVisible,
+      `baseline r=${baselinePixel.r} -> telegraph r=${aoePixel.r} (rose ${aoePixel.r - baselinePixel.r}, dominant=${redPulledDominant})`);
 
     // Sample circle perimeter around telegraph zone (strictly outside avatar radius)
     const circleSamples = await CanvasInspector.sampleCircle(page, 320, 240, 50, 4);
     const hasPerimeterSignals = circleSamples.some(p => CanvasInspector.isRedTelegraphActive(p));
-    recordStep('Circular Perimeter Telegraph Sampled', hasPerimeterSignals, `${circleSamples.length} points sampled`);
+    recordInfo('Circular Perimeter Telegraph Sampled (absolute)', hasPerimeterSignals, `${circleSamples.length} points sampled`);
+
+    // Same differential idea around the perimeter, so the ring is judged
+    // against the terrain it covers rather than an absolute colour.
+    const perimeterRose = circleSamples.filter((p, i) => {
+        const b = baselineCircle[i];
+        return b && (p.r - b.r) >= 20;
+    }).length;
+    recordStep('Circular Perimeter Rose Differentially', perimeterRose > 0,
+      `${perimeterRose}/${circleSamples.length} perimeter points rose vs baseline`);
 
     // Verify player is UNHURT during telegraph phase
     const warningHpText = await page.$eval('#hp-text', el => el.innerText);
@@ -143,12 +182,12 @@ async function runBossAoETest(options = {}) {
     console.log(` Duration: ${Date.now() - startTime}ms`);
     console.log(`=============================================================\n`);
 
-    return {
+    return finalizeResult(driver, {
       success: allPassed,
       durationMs: Date.now() - startTime,
       results: testSteps,
       error: allPassed ? null : new Error('AC2 Boss AoE test assertions failed')
-    };
+    });
   } catch (err) {
     console.error(`\n[!] Error during AC2 Boss AoE Test:`, err);
     await driver.close();

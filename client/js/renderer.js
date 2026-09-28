@@ -3,24 +3,73 @@
         // falls back to the emoji renderer instead of throwing inside draw().
         const SPRITE_BASE = "/assets/";
         const SPRITE_FILES = {
-            warrior: "warrior.png",
-            mage: "mage.png",
-            ranger: "ranger.png",
-            healer: "healer.png",
-            spider: "spider.png",
-            skeleton: "skeleton.png",
-            goblin: "goblin.png",
-            yeti: "yeti.png",
-            dragon: "dragon.png"
+            warrior: "warrior_sprite.jpg",
+            mage: "mage_sprite.jpg",
+            ranger: "ranger_sprite.jpg",
+            healer: "healer_sprite.jpg",
+            spider: "spider_sprite.jpg",
+            skeleton: "skeleton_sprite.jpg",
+            bear: "bear_sprite.jpg",
+            bandit: "bandit_sprite.jpg",
+            minotaur: "minotaur_sprite.jpg",
+            goblin: "goblin_sprite.jpg",
+            yeti: "yeti_sprite.jpg",
+            dragon: "dragon_sprite.jpg",
+            chest: "chest_sprite.jpg",
+            corpse: "corpse_sprite.jpg",
+            npc: "npc_sprite.jpg",
+            npc2: "npc_2_magenta_1790579483384.jpg",
+            grass: "grass_sprite.jpg",
+            grass2: "grass_sprite.jpg",
+            sand: "sand_tile.jpg",
+            water: "water_tile.jpg",
+            tree: "tree_sprite.jpg",
+            tree2: "tree_2_magenta_1790579447515.jpg",
+            iron: "iron_sprite.jpg",
+            wood: "wood_sprite.jpg",
+            leather: "leather_sprite.jpg",
+            mushroom: "mushroom_sprite.jpg",
+            bone: "bone_sprite.jpg"
         };
         const loadedSprites = {};
         Object.keys(SPRITE_FILES).forEach(key => {
             const img = new Image();
             const entry = { image: img, ready: false };
             loadedSprites[key] = entry;
-            img.onload = () => { entry.ready = true; };
+            img.crossOrigin = "Anonymous";
+            img.onload = () => {
+                const cvs = document.createElement("canvas");
+                cvs.width = img.width;
+                cvs.height = img.height;
+                const cCtx = cvs.getContext("2d");
+                cCtx.drawImage(img, 0, 0);
+                
+                try {
+                    if (key !== 'grass' && key !== 'grass2') {
+                        const imgData = cCtx.getImageData(0, 0, cvs.width, cvs.height);
+                        const data = imgData.data;
+                        for (let i = 0; i < data.length; i += 4) {
+                            const r = data[i], g = data[i+1], b = data[i+2];
+                            // Ultra-aggressive magenta killer: if red and blue both exceed green by at least 10%, it's purple/magenta.
+                            if (r > g * 1.1 && b > g * 1.1 && r > 30 && b > 30) { 
+                                data[i+3] = 0; 
+                            }
+                        }
+                        cCtx.putImageData(imgData, 0, 0);
+                    }
+                    
+                    const newImg = new Image();
+                    newImg.onload = () => {
+                        entry.image = newImg;
+                        entry.ready = true;
+                    };
+                    newImg.src = cvs.toDataURL("image/png");
+                } catch(e) {
+                    entry.ready = true; 
+                }
+            };
             img.onerror = () => { entry.ready = false; };
-            img.src = SPRITE_BASE + SPRITE_FILES[key];
+            img.src = SPRITE_BASE + SPRITE_FILES[key] + "?v=17";
         });
         function getSprite(key) {
             const entry = loadedSprites[key];
@@ -38,19 +87,53 @@
             ctx.translate(-cameraX, -cameraY);
 
             // Background color base
-            ctx.fillStyle = "#1e1e2f"; ctx.fillRect(0, 0, MAP_W, MAP_H);
+            ctx.fillStyle = (window.currentZ < 0) ? "#0c0c14" : "#1e1e2f"; 
+            ctx.fillRect(0, 0, MAP_W, MAP_H);
             
-            // Draw regions
-            ctx.fillStyle = "#2c4021"; ctx.fillRect(800, 0, 1200, 1200); // Forest
-            ctx.fillStyle = "#6b5b40"; ctx.fillRect(2000, 0, 1200, 1600); // Eastern Ruins
-            ctx.fillStyle = "#2a3b32"; ctx.fillRect(0, 800, 1600, 1000); // Swamp
-            ctx.fillStyle = "#e0f7fa"; ctx.fillRect(1600, 1600, 1600, 1000); // Snow Mountain
-            ctx.fillStyle = "#d4b872"; ctx.fillRect(0, 1800, 1600, 1400); // Desert
-            ctx.fillStyle = "#111118"; ctx.fillRect(1600, 2600, 1600, 600); // Crypt
-            
-            // City safe zone
-            ctx.fillStyle = "#4a5d4e"; ctx.fillRect(0, 0, 800, 800); // City base
-            ctx.fillStyle = "rgba(0, 255, 100, 0.15)"; ctx.fillRect(0, 0, 640, 640); // Safe zone aura
+            const grassImg = getSprite("grass");
+            const grass2Img = getSprite("grass2");
+            const sandImg = getSprite("sand");
+            const waterImg = getSprite("water");
+
+            if (window.currentZ >= 0) {
+                // Draw regions
+                ctx.fillStyle = "#2c4021"; 
+                ctx.fillRect(800, 0, 1200, 1200); // Forest base
+                if (grassImg) {
+                    const offscreen = document.createElement('canvas');
+                    offscreen.width = 256; offscreen.height = 256;
+                    offscreen.getContext('2d').drawImage(grassImg, 0, 0, 256, 256);
+                    const grassPattern = ctx.createPattern(offscreen, 'repeat');
+                    ctx.fillStyle = grassPattern;
+                    ctx.fillRect(800, 0, 1200, 1200); // Forest pattern
+                }
+                
+                ctx.fillStyle = "#6b5b40"; ctx.fillRect(2000, 0, 1200, 1600); // Eastern Ruins
+                ctx.fillStyle = "#2a3b32"; ctx.fillRect(0, 800, 1600, 1000); // Swamp
+                ctx.fillStyle = "#e0f7fa"; ctx.fillRect(1600, 1600, 1600, 1000); // Snow Mountain
+                
+                if (sandImg) {
+                    const sandPattern = ctx.createPattern(sandImg, 'repeat');
+                    ctx.fillStyle = sandPattern;
+                } else { ctx.fillStyle = "#d4b872"; }
+                ctx.fillRect(0, 1800, 1600, 1400); // Desert
+                
+                ctx.fillStyle = "#111118"; ctx.fillRect(1600, 2600, 1600, 600); // Crypt
+                
+                // City safe zone
+                ctx.fillStyle = "#4a5d4e";
+                ctx.fillRect(0, 0, 800, 800); // City base
+                if (grassImg) {
+                    const offscreen = document.createElement('canvas');
+                    offscreen.width = 256; offscreen.height = 256;
+                    offscreen.getContext('2d').drawImage(grassImg, 0, 0, 256, 256);
+                    const grassPattern = ctx.createPattern(offscreen, 'repeat');
+                    ctx.fillStyle = grassPattern;
+                    ctx.fillRect(0, 0, 800, 800); // City pattern
+                }
+                
+                ctx.fillStyle = "rgba(0, 255, 100, 0.15)"; ctx.fillRect(0, 0, 640, 640); // Safe zone aura
+            }
 
             ctx.strokeStyle = "rgba(0,0,0,0.1)";
             for (let x = 0; x <= MAP_W; x += 32) {
@@ -62,27 +145,69 @@
 
             obstacles.forEach(obs => {
                 if (obs.x < cameraX - 32 || obs.x > cameraX + SCREEN_W || obs.y < cameraY - 32 || obs.y > cameraY + SCREEN_H) return;
-                if (obs.type === "tree") { ctx.fillStyle = "#1b3e15"; ctx.fillRect(obs.x, obs.y, 32, 32); } 
+                
+                const treeImg = getSprite("tree");
+                const tree2Img = getSprite("tree2");
+                const waterImg = getSprite("water");
+
+                if (obs.type === "tree") { 
+                    const tImg = ((obs.x + obs.y) % 3 === 0 && tree2Img) ? tree2Img : treeImg;
+                    if (tImg) { ctx.drawImage(tImg, obs.x, obs.y - 16, 32, 48); } 
+                    else { ctx.fillStyle = "#1b3e15"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                } 
                 else if (obs.type === "rock") { ctx.fillStyle = "#757575"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 16, 14, 0, Math.PI*2); ctx.fill(); } 
                 else if (obs.type === "wall") { ctx.fillStyle = "#222"; ctx.fillRect(obs.x, obs.y, 32, 32); }
                 else if (obs.type === "ruin_wall") { ctx.fillStyle = "#4a4a40"; ctx.fillRect(obs.x, obs.y, 32, 32); }
-                else if (obs.type === "water") { ctx.fillStyle = "rgba(40, 150, 120, 0.7)"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                else if (obs.type === "water") { 
+                    if (waterImg) { ctx.drawImage(waterImg, obs.x, obs.y, 32, 32); }
+                    else { ctx.fillStyle = "rgba(40, 150, 120, 0.7)"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                }
                 else if (obs.type === "cactus") { ctx.fillStyle = "#2b6b25"; ctx.fillRect(obs.x + 8, obs.y + 4, 16, 24); }
                 else if (obs.type === "gravestone") { ctx.fillStyle = "#555"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 12, 10, 0, Math.PI, true); ctx.fillRect(obs.x + 6, obs.y + 12, 20, 16); ctx.fill(); }
             });
 
+            const nodeSprites = {
+                'Iron Ore': getSprite("iron"),
+                'Wood': getSprite("wood"),
+                'Ancient Bone': getSprite("bone"),
+                'Leather': getSprite("leather"),
+                'Poison Mushroom': getSprite("mushroom"),
+                'Moonflower': getSprite("mushroom")
+            };
             for (let id in gatherNodes) {
                 let n = gatherNodes[id];
-                ctx.fillStyle = n.color; ctx.beginPath(); ctx.arc(n.x + 16, n.y + 16, 10, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = "#000"; ctx.font = "10px Arial"; ctx.fillText(n.symbol, n.x + 12, n.y + 20);
+                const sprite = nodeSprites[n.name];
+                if (sprite) {
+                    ctx.drawImage(sprite, n.x, n.y, 32, 32);
+                } else {
+                    ctx.fillStyle = n.color; ctx.beginPath(); ctx.arc(n.x + 16, n.y + 16, 10, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = "#000"; ctx.font = "10px Arial"; ctx.fillText(n.symbol, n.x + 12, n.y + 20);
+                }
+            }
+            if (typeof groundItemsLocal !== 'undefined') {
+                for (let i = 0; i < groundItemsLocal.length; i++) {
+                    const item = groundItemsLocal[i];
+                    ctx.font = "20px Arial";
+                    ctx.fillText("🎁", item.x + 2, item.y + 20);
+                }
             }
             for (let id in clientCorpses) {
                 let corpse = clientCorpses[id];
-                ctx.font = "24px Arial"; ctx.fillText("☠️", corpse.x + 4, corpse.y + 24);
+                const corpseSprite = getSprite("corpse");
+                if (corpseSprite) {
+                    ctx.drawImage(corpseSprite, corpse.x, corpse.y, 32, 32);
+                } else {
+                    ctx.font = "24px Arial"; ctx.fillText("☠️", corpse.x + 4, corpse.y + 24);
+                }
             }
             for (let id in chests) {
                 let c = chests[id];
-                ctx.font = "24px Arial"; ctx.fillText("🎁", c.x + 4, c.y + 24);
+                const chestSprite = getSprite("chest");
+                if (chestSprite) {
+                    ctx.drawImage(chestSprite, c.x, c.y, 32, 32);
+                } else {
+                    ctx.font = "24px Arial"; ctx.fillText("🎁", c.x + 4, c.y + 24);
+                }
             }
             for (let id in npcsLocal) {
                 let npc = npcsLocal[id];
@@ -96,21 +221,39 @@
                     ctx.fillRect(npc.x + 8, npc.y + 18, 4, 4);
                     ctx.fillRect(npc.x + 20, npc.y + 18, 4, 4);
                 } else {
-                    ctx.font = "28px Arial"; ctx.fillText("🧙‍♂️", npc.x + 2, npc.y + 26);
+                    const npcSprite = getSprite("npc");
+                    const npc2Sprite = getSprite("npc2");
+                    const hash = id.charCodeAt(id.length - 1) % 2;
+                    const spr = (hash === 0 && npc2Sprite) ? npc2Sprite : npcSprite;
+                    if (spr) {
+                        ctx.drawImage(spr, npc.x, npc.y, 32, 32);
+                    } else {
+                        ctx.font = "28px Arial"; ctx.fillText("🧙‍♂️", npc.x + 2, npc.y + 26);
+                    }
                 }
                 ctx.fillStyle = "#fff"; ctx.font = "bold 12px 'Inter', sans-serif"; ctx.fillText(npc.name, npc.x - 4, npc.y - 8);
-                if (!isBench) { ctx.fillStyle = "#fbbf24"; ctx.fillText("!", npc.x + 12, npc.y - 22); }
+                if (!isBench && npc.hasQuest) { ctx.fillStyle = "#fbbf24"; ctx.fillText("!", npc.x + 12, npc.y - 22); }
+            }
+
+            let mobTileCounts = {};
+            for (let id in mobs) {
+                let key = mobs[id].x + "," + mobs[id].y;
+                mobTileCounts[key] = 0;
             }
 
             for (let id in mobs) {
                 let m = mobs[id];
+                let key = m.x + "," + m.y;
+                let stackOffset = mobTileCounts[key] * 8; // 8 pixels offset per stacked mob
+                mobTileCounts[key]++;
+
                 if (m.renderX === undefined) { m.renderX = m.x; m.renderY = m.y; }
                 m.renderX += (m.x - m.renderX) * 0.2;
                 m.renderY += (m.y - m.renderY) * 0.2;
                 let isBoss = m.isBoss;
                 let size = isBoss ? 48 : 32;
-                let drawX = m.renderX - (size - 32)/2;
-                let drawY = m.renderY - (size - 32)/2;
+                let drawX = m.renderX - (size - 32)/2 + stackOffset;
+                let drawY = m.renderY - (size - 32)/2 - stackOffset;
 
                 if (m.isElite) { ctx.fillStyle = "rgba(255,0,0,0.2)"; ctx.beginPath(); ctx.arc(m.renderX + 16, m.renderY + 16, 20, 0, Math.PI*2); ctx.fill(); }
                 if (isBoss) { 
@@ -124,10 +267,8 @@
                     }
                 }
 
-                // Map missing monsters to existing sprites temporarily
-                let spriteKey = m.type;
-                if (spriteKey === "minotaur") spriteKey = "goblin";
-                if (spriteKey === "bear") spriteKey = "yeti";
+                // Map elite monsters to their base sprites
+                let spriteKey = m.type.startsWith('elite_') ? m.type.substring(6) : m.type;
                 
                 const mobSprite = getSprite(spriteKey);
                 if (mobSprite) {
@@ -135,7 +276,15 @@
                     // Increase size if it's a boss
                     const renderSize = isBoss ? size * 1.5 : 32;
                     const offset = isBoss ? (renderSize - size) / 2 : 0;
-                    ctx.drawImage(mobSprite, drawX - offset, drawY - offset, renderSize, renderSize);
+                    if (['spider', 'skeleton', 'dragon', 'bear', 'bandit', 'minotaur', 'goblin', 'yeti', 'ranger', 'healer'].includes(spriteKey) || mobSprite.width !== mobSprite.height) { // Only slice if it's actually a spritesheet
+                        const fw = mobSprite.width / 3;
+                        const fh = mobSprite.height / 4;
+                        const sx = (m.moveFrame || 0) * fw;
+                        const sy = (m.dir || 0) * fh;
+                        ctx.drawImage(mobSprite, sx, sy, fw, fh, drawX - offset, drawY - offset, renderSize, renderSize);
+                    } else {
+                        ctx.drawImage(mobSprite, drawX - offset, drawY - offset, renderSize, renderSize);
+                    }
                 } else {
                     // Fallback just in case
                     ctx.font = isBoss ? "40px Arial" : "28px Arial";
@@ -247,29 +396,96 @@
                 op.renderX += (op.x - op.renderX) * 0.2;
                 op.renderY += (op.y - op.renderY) * 0.2;
                 if (op.warmode) { ctx.fillStyle = "rgba(239, 68, 68, 0.4)"; ctx.beginPath(); ctx.arc(op.renderX + 16, op.renderY + 16, 16, 0, Math.PI * 2); ctx.fill(); }
-                
-                const opSprite = getSprite(op.classType);
-                if (opSprite) {
-                    ctx.drawImage(opSprite, op.renderX - 8, op.renderY - 16, 48, 48);
-                } else {
-                    let emoji = op.classType === "warrior" ? "⚔️" : op.classType === "mage" ? "🧙" : op.classType === "ranger" ? "🏹" : "👼";
-                    ctx.font = "24px Arial"; ctx.fillText(emoji, op.renderX + 4, op.renderY + 24);
+                // White skull: drawn above the head so it never hides the
+                // sprite, and pulsing so it reads at a glance in a crowd.
+                if (op.skulled) {
+                    const pulse = 0.75 + 0.25 * Math.sin(Date.now() / 260);
+                    ctx.save();
+                    ctx.globalAlpha = pulse;
+                    ctx.fillStyle = "#f5f5f5";
+                    ctx.strokeStyle = "#7f1d1d";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(op.renderX + 16, op.renderY - 2, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                    // eye sockets
+                    ctx.fillStyle = "#7f1d1d";
+                    ctx.beginPath();
+                    ctx.arc(op.renderX + 13.5, op.renderY - 2.5, 1.6, 0, Math.PI * 2);
+                    ctx.arc(op.renderX + 18.5, op.renderY - 2.5, 1.6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fill();
+                    ctx.restore();
                 }
                 
+                let yOffset = 0;
+                if (op.isMounted) {
+                    yOffset = -10;
+                    ctx.font = "28px Arial";
+                    ctx.fillText("🐎", op.renderX, op.renderY + 28);
+                }
+
+                const opSprite = getSprite(op.classType);
+                if (opSprite) {
+                    if (true) { // All player classes are 3x4 spritesheets
+                        const fw = opSprite.width / 3;
+                        const fh = opSprite.height / 4;
+                        const sx = (op.moveFrame || 0) * fw;
+                        const sy = (op.dir || 0) * fh;
+                        ctx.drawImage(opSprite, sx, sy, fw, fh, op.renderX - 8, op.renderY - 16 + yOffset, 48, 48);
+                    } else {
+                        ctx.drawImage(opSprite, op.renderX - 8, op.renderY - 16 + yOffset, 48, 48);
+                    }
+                } else {
+                    let emoji = op.classType === "warrior" ? "⚔️" : op.classType === "mage" ? "🧙" : op.classType === "ranger" ? "🏹" : "👼";
+                    ctx.font = "24px Arial"; ctx.fillText(emoji, op.renderX + 4, op.renderY + 24 + yOffset);
+                }
+                drawEquipment(ctx, op.equipment, op.renderX, op.renderY);
+                
                 ctx.fillStyle = "white"; ctx.font = "bold 11px 'Inter'"; ctx.fillText(op.name, op.renderX - 5, op.renderY - 8);
+                if (op.guild) {
+                    ctx.fillStyle = "#38bdf8"; ctx.font = "10px 'Inter'"; ctx.fillText(`<${op.guild}>`, op.renderX - 5, op.renderY + 44);
+                }
+                if (op.skulled) {
+                    ctx.font = "12px Arial"; ctx.fillText("💀", op.renderX + 22, op.renderY - 8);
+                }
                 if (currentTargetId === id) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(op.renderX, op.renderY, 32, 32); ctx.lineWidth = 1; }
             }
 
             if (player.warmode) { ctx.fillStyle = "rgba(239, 68, 68, 0.4)"; ctx.beginPath(); ctx.arc(player.x + 16, player.y + 16, 16, 0, Math.PI * 2); ctx.fill(); }
+            
+            let myYOffset = 0;
+            if (player.isMounted) {
+                myYOffset = -10;
+                ctx.font = "28px Arial";
+                ctx.fillText("🐎", player.x, player.y + 28);
+            }
+
             const mySprite = getSprite(player.classType);
             if (mySprite) {
-                ctx.drawImage(mySprite, player.x - 8, player.y - 16, 48, 48);
+                if (true) { // All player classes are 3x4 spritesheets
+                    const fw = mySprite.width / 3;
+                    const fh = mySprite.height / 4;
+                    const sx = (player.moveFrame || 0) * fw;
+                    const sy = (player.dir || 0) * fh;
+                    ctx.drawImage(mySprite, sx, sy, fw, fh, player.x - 8, player.y - 16 + myYOffset, 48, 48);
+                } else {
+                    ctx.drawImage(mySprite, player.x - 8, player.y - 16 + myYOffset, 48, 48);
+                }
             } else {
                 let myEmoji = player.classType === "warrior" ? "⚔️" : player.classType === "mage" ? "🧙" : player.classType === "ranger" ? "🏹" : "👼";
-                ctx.font = "24px Arial"; ctx.fillText(myEmoji, player.x + 4, player.y + 24);
+                ctx.font = "24px Arial"; ctx.fillText(myEmoji, player.x + 4, player.y + 24 + myYOffset);
             }
+            drawEquipment(ctx, player.equipment, player.x, player.y);
             
             ctx.fillStyle = "#fbbf24"; ctx.font = "bold 12px 'Inter'"; ctx.fillText(myName, player.x - 5, player.y - 8);
+            if (player.guild) {
+                ctx.fillStyle = "#38bdf8"; ctx.font = "10px 'Inter'"; ctx.fillText(`<${player.guild}>`, player.x - 5, player.y + 44);
+            }
+            if (player.skulled) {
+                ctx.font = "14px Arial"; ctx.fillText("💀", player.x + 24, player.y - 8);
+            }
             if (currentTargetId === myId) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(player.x, player.y, 32, 32); ctx.lineWidth = 1; }
 
             ctx.restore();
@@ -279,6 +495,22 @@
                 gradient.addColorStop(0, "rgba(0,0,0,0)");
                 gradient.addColorStop(1, "rgba(0,0,20,0.85)");
                 ctx.fillStyle = gradient; ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x - cameraX, p.y - cameraY, p.size || 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+                
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += (p.gravity !== undefined ? p.gravity : 0.2); // gravity
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
             }
 
             for (let i = fcts.length - 1; i >= 0; i--) {
@@ -302,7 +534,38 @@
                 f.life -= 0.015; if (f.life <= 0) fcts.splice(i, 1);
             }
 
+            // Day/Night Cycle (5 minute cycle)
+            const cycleLength = 5 * 60 * 1000; 
+            const time = Date.now() % cycleLength;
+            const cycle = time / cycleLength; 
+            let darkness = 0;
+            if (cycle > 0.4 && cycle <= 0.6) darkness = (cycle - 0.4) * 2;
+            else if (cycle > 0.6 && cycle <= 0.8) darkness = 0.4;
+            else if (cycle > 0.8) darkness = Math.max(0, 0.4 - (cycle - 0.8) * 2);
+            
+            if (darkness > 0) {
+                ctx.fillStyle = `rgba(10, 10, 25, ${darkness})`;
+                ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+            }
+
             drawMinimap();
+
+            if (currentTargetId && mobs[currentTargetId] && mobs[currentTargetId].isBoss) {
+                const boss = mobs[currentTargetId];
+                const pct = Math.max(0, boss.hp / boss.maxHp);
+                
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.fillRect(SCREEN_W / 2 - 200, 20, 400, 30);
+                
+                ctx.fillStyle = "#991b1b"; // Deep red fill
+                ctx.fillRect(SCREEN_W / 2 - 198, 22, 396 * pct, 26);
+                
+                ctx.fillStyle = "white";
+                ctx.font = "bold 16px 'Inter', sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(boss.name + " (" + Math.ceil(pct*100) + "%)", SCREEN_W / 2, 40);
+                ctx.textAlign = "left";
+            }
             
             requestAnimationFrame(draw);
         }
@@ -326,10 +589,25 @@
             };
         }
 
+        function drawEquipment(ctx, eq, x, y) {
+            // Disabled: The base character sprites already have weapons and shields drawn on them.
+        }
+
         function drawMinimap() {
             if (!minimapCtx) return;
             const c = minimapCtx;
             const R = MINIMAP_SIZE / 2;
+
+            const zi = document.getElementById("zone-indicator");
+            if (zi && player) {
+                if (player.x >= 0 && player.x <= 640 && player.y >= 0 && player.y <= 640) {
+                    zi.innerText = "🛡️ Safe Zone";
+                    zi.style.color = "#4ade80";
+                } else {
+                    zi.innerText = "⚔️ PvP Zone";
+                    zi.style.color = "#f87171";
+                }
+            }
 
             c.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
             c.save();
@@ -365,9 +643,13 @@
                 if (Math.abs(m.x - player.x) > MINIMAP_RADIUS || Math.abs(m.y - player.y) > MINIMAP_RADIUS) continue;
                 const p = worldToMini(m.x, m.y);
                 c.fillStyle = m.isBoss ? "#f87171" : (m.isElite ? "#fb923c" : "#ef4444");
-                c.beginPath();
-                c.arc(p.x, p.y, m.isBoss ? 4 : 2, 0, Math.PI * 2);
-                c.fill();
+                if (m.isBoss) {
+                    c.font = "14px Arial"; c.fillText("💀", p.x - 7, p.y + 5);
+                } else {
+                    c.beginPath();
+                    c.arc(p.x, p.y, 2, 0, Math.PI * 2);
+                    c.fill();
+                }
             }
 
             // NPCs.
@@ -384,7 +666,7 @@
                 const op = otherPlayers[id];
                 if (Math.abs(op.x - player.x) > MINIMAP_RADIUS || Math.abs(op.y - player.y) > MINIMAP_RADIUS) continue;
                 const p = worldToMini(op.x, op.y);
-                c.fillStyle = op.warmode ? "#f87171" : "#4ade80";
+                c.fillStyle = (op.guild && player.guild && op.guild === player.guild) ? "#fb923c" : (op.warmode ? "#f87171" : "#4ade80");
                 c.beginPath();
                 c.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
                 c.fill();
@@ -406,7 +688,14 @@
             c.font = "bold 9px Inter, sans-serif";
             c.textAlign = "center";
             c.fillText("N", R, 11);
+            
+            c.fillStyle = "rgba(255,255,255,0.8)";
+            c.fillText(window.currentZ < 0 ? `Z: ${window.currentZ}` : `Surface`, R, MINIMAP_SIZE - 4);
+            
             c.textAlign = "left";
         }
 
         draw();
+        
+        window.CLIENT_READY = true;
+        if (window.processPacketQueue) window.processPacketQueue();

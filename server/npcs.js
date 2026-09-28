@@ -7,6 +7,7 @@ npcs.set('n_1', {
 });
 npcs.set('n_merchant', { x: 384, y: 320, name: 'Merchant Bob', quests_offered: [] });
 npcs.set('n_trainer', { x: 256, y: 384, name: 'Class Trainer Aria', quests_offered: [] });
+npcs.set('n_banker', { x: 448, y: 320, name: 'Banker Vault', quests_offered: [] });
 // King Arthur sits in the starting city and drives the multi-step quest chain.
 npcs.set('n_king_arthur', {
     x: 288, y: 448, name: 'King Arthur',

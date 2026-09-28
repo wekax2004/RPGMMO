@@ -151,39 +151,79 @@ test('getAccountByUsername returns null for an unknown user', async () => {
     assert.strictEqual(await DB.getAccountByUsername('ghost_user_xyz'), null);
 });
 
-test('updateCharacters persists the new list', async () => {
+test('addCharacterToAccount persists the new character', async () => {
     await DB.insertAccount({
         accountId: 'acct_upd', username: 'upduser', passwordHash: 'h', characters: ['one'], createdAt: 1
     });
-    await DB.updateCharacters('acct_upd', ['one', 'two']);
+    await DB.addCharacterToAccount('acct_upd', 'two');
     const account = await DB.getAccountByUsername('upduser');
     assert.deepStrictEqual(account.characters, ['one', 'two']);
 });
 
-test('a malformed characters_json column degrades to an empty list', async () => {
-    await DB.insertAccount({
-        accountId: 'acct_bad', username: 'badjson', passwordHash: 'h', characters: ['x'], createdAt: 1
-    });
-    // Corrupt the column directly, the way a bad migration or a hand edit
-    // would. The reader must not throw on it. sqlite3 lives in server/node_modules,
-    // so resolve it from there rather than the repo root.
+// Corrupts the characters_json column for one account, the way a bad
+// migration or a hand edit would. sqlite3 lives in server/node_modules, so
+// resolve it from there rather than the repo root.
+async function corruptCharactersJson(username) {
     const sqlite3 = require(require('path').join(__dirname, '..', '..', 'server', 'node_modules', 'sqlite3'));
     await new Promise((resolve, reject) => {
         const raw = new sqlite3.Database(DB.file, error => {
             if (error) return reject(error);
             raw.run(
                 "UPDATE accounts SET characters_json = '{not json' WHERE username = ?",
-                ['badjson'],
+                [username],
                 runError => {
                     raw.close(() => (runError ? reject(runError) : resolve()));
                 }
             );
         });
     });
+}
 
-    const account = await DB.getAccountByUsername('badjson');
-    assert.ok(account, 'account should still be readable');
-    assert.deepStrictEqual(account.characters, [], 'bad JSON becomes an empty list');
+test('a malformed characters_json column throws rather than reading as empty', async () => {
+    await DB.insertAccount({
+        accountId: 'acct_bad', username: 'badjson', passwordHash: 'h', characters: ['x'], createdAt: 1
+    });
+    await corruptCharactersJson('badjson');
+
+    // The reader must NOT degrade to an empty list here. addCharacterToAccount
+    // is a read-modify-write: it decodes this column, pushes one name, and
+    // writes the whole array back. Returning [] would make that write
+    // permanent data loss for every other character on the account. Failing
+    // loudly turns corruption into a refused write instead.
+    await assert.rejects(
+        () => DB.getAccountByUsername('badjson'),
+        /Corrupt characters_json/,
+        'reading a corrupt roster must reject, not resolve to an empty list'
+    );
+});
+
+test('a corrupt roster makes addCharacterToAccount refuse rather than wipe the account', async () => {
+    await DB.insertAccount({
+        accountId: 'acct_wipe', username: 'wipeme', passwordHash: 'h',
+        characters: ['KeepMe', 'KeepMeToo'], createdAt: 1
+    });
+    await corruptCharactersJson('wipeme');
+
+    // The write must be refused, not silently applied to an empty roster.
+    await assert.rejects(() => DB.addCharacterToAccount('acct_wipe', 'NewChar'));
+
+    // Repair the column and confirm the original roster was not erased.
+    const sqlite3 = require(require('path').join(__dirname, '..', '..', 'server', 'node_modules', 'sqlite3'));
+    await new Promise((resolve, reject) => {
+        const raw = new sqlite3.Database(DB.file, error => {
+            if (error) return reject(error);
+            raw.run(
+                "UPDATE accounts SET characters_json = ? WHERE username = ?",
+                [JSON.stringify(['KeepMe', 'KeepMeToo']), 'wipeme'],
+                runError => raw.close(() => (runError ? reject(runError) : resolve()))
+            );
+        });
+    });
+    const account = await DB.getAccountByUsername('wipeme');
+    assert.deepStrictEqual(
+        account.characters, ['KeepMe', 'KeepMeToo'],
+        'the refused write must leave the existing roster intact'
+    );
 });
 
 test('flush waits for writes queued before it was called', async () => {

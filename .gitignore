@@ -6,3 +6,16 @@ server/data/
 .env.*
 .DS_Store
 .agents/
+
+# Upstream sprite sources, not game assets. These are third-party checkouts
+# kept alongside the project for reference:
+#   opentibia_sprite_pack/ 48 MB, contains its own .git
+#   tibia_sprites_repo/     7 MB, contains its own .git
+#   tibia_sprites_zip/     13 MB, 9225 files
+# The first two carry a nested .git, so `git add` records them as gitlinks --
+# a reference to a commit that does not exist in this repository. That is a
+# broken submodule, not a backup, and it cannot be cloned usefully.
+# The processed sprites the client actually loads live in client/assets/.
+opentibia_sprite_pack/
+tibia_sprites_repo/
+tibia_sprites_zip/
