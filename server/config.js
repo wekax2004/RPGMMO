@@ -26,6 +26,44 @@ module.exports = {
     Z_MAX: 0,
 
     // --- Z-levels (Stage 2: traversal and the first underground floor) ---
+    // The floors below the surface, shallowest first. A table rather than a
+    // single hard-coded dungeon, because one special case does not demonstrate
+    // that the traversal, roster, bounds and respawn machinery is general -- it
+    // only shows it works once. Each row is self-contained: shape, difficulty,
+    // population, and how it connects to the floor above.
+    //
+    // `entrance` is where a player descending from the floor above arrives, in
+    // world pixels on THIS floor. It is stated rather than derived because the
+    // floors are not vertically aligned: the surface ladder is in the city at
+    // (288,288) and the crypt is at (1024,1024), so arrival cannot default to
+    // the tile that was stepped on.
+    Z_FLOORS: [
+        {
+            z: -1,
+            name: 'The Bone Crypt',
+            originX: 1024, originY: 1024,
+            tilesW: 14, tilesH: 14, pillars: 6,
+            mobCount: 9, tier: 2.5, eliteChance: 0.25,
+            mobTypes: ['skeleton', 'spider', 'minotaur', 'bandit'],
+            chestCount: 3,
+            // How this floor is entered from above, and the tile a climb from
+            // below arrives on. The surface ladder leads here.
+            descendsVia: 'ladder'
+        },
+        {
+            z: -2,
+            name: 'The Molten Depths',
+            originX: 2048, originY: 1920,
+            tilesW: 20, tilesH: 20, pillars: 12,
+            mobCount: 14, tier: 4, eliteChance: 0.4,
+            mobTypes: ['minotaur', 'skeleton', 'bear'],
+            chestCount: 2,
+            // The deepest floor has nowhere below it, so the only way on is the
+            // ladder from the crypt above and the only way out is back up it.
+            descendsVia: null
+        }
+    ],
+
     // The dungeon is a deliberately small generated cave, not hand-authored
     // content. It exists to prove the traversal loop end to end.
     Z_DUNGEON: -1,

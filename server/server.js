@@ -861,50 +861,59 @@ scheduleServerInterval(() => { if (chests.size < CFG.MAX_CHESTS) spawnChest(broa
 // put real entities on the far side of a floor boundary, because that is what
 // makes the dist3D work meaningful: an empty dungeon cannot demonstrate that a
 // surface player is safe from a mob one floor below.
-function populateDungeon() {
-    if (!MAP.hasFloor(CFG.Z_DUNGEON)) return 0;
-    const spawned = spawnFloorPack(broadcast, {
-        z: CFG.Z_DUNGEON,
-        size: CFG.DUNGEON_MOB_COUNT,
-        tier: CFG.DUNGEON_MOB_TIER,
-        eliteChance: CFG.DUNGEON_ELITE_CHANCE,
-        types: CFG.DUNGEON_MOB_TYPES
+// Fills every floor in the config table. Driven by the table rather than by a
+// single hard-coded dungeon so a new floor is one config row, not a new code
+// path -- and so the respawn below tops up all of them.
+function populateFloor(spec, size) {
+    if (!MAP.hasFloor(spec.z)) return 0;
+    // The spawner is handed a floor-scoped broadcast, not the global one. At
+    // boot nobody is connected so it makes no difference, but the respawn tick
+    // runs with players online, and a global announce told every surface client
+    // about a mob materialising in a dungeon they cannot see -- three of them,
+    // in one live run.
+    const spawned = spawnFloorPack((dataObj) => broadcastToFloor(spec.z, dataObj), {
+        z: spec.z,
+        size: size === undefined ? spec.mobCount : size,
+        tier: spec.tier,
+        eliteChance: spec.eliteChance,
+        types: spec.mobTypes
     });
-    for (let i = 0; i < CFG.DUNGEON_CHEST_COUNT; i++) {
-        spawnChest(broadcast, CFG.Z_DUNGEON, { quiet: true });
-    }
     return spawned.length;
 }
+function populateDungeon() {
+    return CFG.Z_FLOORS.reduce((n, spec) => n + populateFloor(spec), 0);
+}
 populateDungeon();
+for (const spec of CFG.Z_FLOORS) {
+    const wanted = spec.chestCount || 0;
+    // Scoped like the mobs: at boot nobody is listening, but the same call
+    // happens from the respawn tick with players online, and a global chest
+    // announce draws a treasure chest on the surface for a dungeon one.
+    for (let i = 0; i < wanted; i++) spawnChest((o) => broadcastToFloor(spec.z, o), spec.z, { quiet: true });
+}
 
-// Top the floor back up rather than leaving it to empty permanently. Without
-// this, a player who clears the dungeon once finds it bare on every return,
-// and the only reason to go back is gone. The count is checked rather than
-// blindly appending, so a respawn tick cannot inflate the population.
+// Top each floor back up rather than leaving it to empty permanently. Without
+// this, a player who clears a floor once finds it bare on every return, and the
+// only reason to go back is gone. The count is checked rather than blindly
+// appending, so a respawn tick cannot inflate the population.
 scheduleServerInterval(() => {
-    if (!MAP.hasFloor(CFG.Z_DUNGEON)) return;
-    const missing = CFG.DUNGEON_MOB_COUNT - countMobsOn(CFG.Z_DUNGEON);
-    if (missing > 0) {
-        spawnFloorPack(broadcast, {
-            z: CFG.Z_DUNGEON,
-            size: missing,
-            tier: CFG.DUNGEON_MOB_TIER,
-            eliteChance: CFG.DUNGEON_ELITE_CHANCE,
-            types: CFG.DUNGEON_MOB_TYPES
-        });
-    }
-    let dungeonChests = 0;
-    for (const c of chests.values()) {
-        if (MAP.normalizeZ(c.z) === CFG.Z_DUNGEON) dungeonChests++;
-    }
-    if (dungeonChests < CFG.DUNGEON_CHEST_COUNT) {
-        spawnChest(broadcast, CFG.Z_DUNGEON, { quiet: true });
+    for (const spec of CFG.Z_FLOORS) {
+        if (!MAP.hasFloor(spec.z)) continue;
+        const missing = spec.mobCount - countMobsOn(spec.z);
+        if (missing > 0) populateFloor(spec, missing);
+
+        let held = 0;
+        for (const c of chests.values()) {
+            if (MAP.normalizeZ(c.z) === MAP.normalizeZ(spec.z)) held++;
+        }
+        const wantedChests = spec.chestCount || 0;
+        if (held < wantedChests) spawnChest((o) => broadcastToFloor(spec.z, o), spec.z, { quiet: true });
     }
 }, CFG.DUNGEON_RESPAWN_INTERVAL);
 
 // Spawn all bosses
 // Silent on purpose: a restart would otherwise announce every boss at once.
-Object.keys(BOSS_TYPES).forEach(type => spawnBoss(type, broadcast, { announce: false }));
+Object.keys(BOSS_TYPES).forEach(type => spawnBoss(type, broadcast, { announce: false, broadcastToFloor }));
 
 function syncTrade(tradeId, action = 'trade_sync') {
     const trade = TRADE.activeTrades.get(tradeId);

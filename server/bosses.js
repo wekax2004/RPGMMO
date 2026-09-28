@@ -72,6 +72,18 @@ const BOSS_TYPES = {
 };
 
 function spawnBoss(type, broadcast, options = {}) {
+    // Injected by the caller so a boss can be announced to its own floor only.
+    // Optional, so an older call site keeps working.
+    //
+    // The fallback takes BOTH arguments. A one-parameter fallback looks
+    // equivalent and is not: callers pass (floor, packet), so it bound dataObj
+    // to the floor index and broadcast the number 0 in place of the packet.
+    // That is precisely the class of mistake this whole refactor is about -- a
+    // floor index where a packet was expected -- and it fails silently, because
+    // `broadcast` accepts a number without complaint.
+    const broadcastToFloor = typeof options.broadcastToFloor === 'function'
+        ? options.broadcastToFloor
+        : (floor, dataObj) => broadcast(dataObj);
     const def = BOSS_TYPES[type];
     if (!def) return null;
 
@@ -116,15 +128,21 @@ function spawnBoss(type, broadcast, options = {}) {
         else if (type === "skeleton_king") zone = "cursed graveyard";
         broadcast({ action: 'log', message: `⚠️ 💀 A terrible roar echoes... The ${def.name} has spawned in the ${zone}! 💀 ⚠️` });
 
-        broadcast({ 
-            action: 'mob_update', 
-            id: boss.id, 
-            type: boss.type, 
-            name: boss.name, 
-            x: boss.x, 
-            y: boss.y, 
-            hp: boss.hp, 
-            maxHp: boss.maxHp, 
+        // Floor-scoped, and it carries the floor. Announced globally, a boss
+        // appearing underground was told to every client with no way to say
+        // which world the coordinates belonged to -- which is also what made
+        // "did a dungeon mob leak?" unanswerable in a live run, since a
+        // legitimate entry with no floor looked exactly like a leak.
+        broadcastToFloor(floorZ, {
+            action: 'mob_update',
+            id: boss.id,
+            type: boss.type,
+            name: boss.name,
+            x: boss.x,
+            y: boss.y,
+            z: floorZ,
+            hp: boss.hp,
+            maxHp: boss.maxHp,
             alive: true,
             isBoss: true,
             phase: boss.phase
@@ -167,17 +185,20 @@ function spawnAdd(boss, type, mobs, broadcast) {
         const name = type.charAt(0).toUpperCase() + type.slice(1);
         const mob = {
             id, type, name, x, y,
+            // A minion shares its summoner boss's floor, so it is announced to
+            // the same one rather than to everyone.
+            z: MAP.normalizeZ(boss.z),
             hp: stats.hp, maxHp: stats.hp,
             xpReward: stats.xp, isElite: false, lastMoveTime: 0, lastAttackTime: 0
         };
         mobs.set(id, mob);
-        
+
         if (broadcast) {
-            broadcast({ 
-                action: 'mob_update', 
-                id, type, name, x, y, 
-                hp: stats.hp, maxHp: stats.hp, 
-                alive: true, isElite: false 
+            broadcastToFloor(mob.z, {
+                action: 'mob_update',
+                id, type, name, x, y, z: mob.z,
+                hp: stats.hp, maxHp: stats.hp,
+                alive: true, isElite: false
             });
         }
     }

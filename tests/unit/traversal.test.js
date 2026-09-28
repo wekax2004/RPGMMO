@@ -94,18 +94,32 @@ test('standing on the ladder descends to the dungeon', () => {
     assert.ok(MAP.hasFloor(t.to), 'the destination floor must exist');
 });
 
-test('the way out of the dungeon is one-way up', () => {
-    const dungeon = MAP.getFloor(CFG.Z_DUNGEON);
-    const entries = [...dungeon.transitions.values()];
-    assert.strictEqual(entries.length, 1, 'the test floor has exactly one exit');
-    const exit = entries[0];
-    assert.strictEqual(exit.type, MAP.TILE_TYPES.STAIRS_UP, 'the exit is stairs, not a ladder');
-    assert.strictEqual(MAP.normalizeZ(exit.to), CFG.Z_SURFACE, 'stairs_up must lead to the surface');
-    // One-way is structural, not a direction check: no transition is registered
-    // on the surface at the stairs' own coordinates, so there is nothing to take
-    // back down.
-    assert.strictEqual(MAP.getTransition(CFG.Z_SURFACE, exit.x, exit.y), null,
-        'a stairs_up tile must not also offer a descent');
+test('the way out of each floor is one-way up', () => {
+    // Every underground floor offers a way back to the one above, and none of
+    // them offers a way back DOWN from that same tile. One-way is structural
+    // rather than a direction check: there is simply no transition registered
+    // on the floor above at the stairs' coordinates, so there is nothing to
+    // take. A two-way tile there would let a player oscillate between floors by
+    // standing still.
+    const sorted = CFG.Z_FLOORS.slice().sort((a, b) => b.z - a.z);
+    for (let i = 0; i < sorted.length; i++) {
+        const spec = sorted[i];
+        const above = i === 0 ? CFG.Z_SURFACE : sorted[i - 1].z;
+        const entries = [...MAP.getFloor(spec.z).transitions.values()];
+        const ups = entries.filter(t => MAP.normalizeZ(t.to) === above);
+        assert.ok(ups.length >= 1, `${spec.name} must have a way back up to z=${above}`);
+        for (const up of ups) {
+            assert.strictEqual(up.type, MAP.TILE_TYPES.STAIRS_UP,
+                `${spec.name}'s exit is stairs_up, not a ladder`);
+            assert.strictEqual(MAP.getTransition(above, up.x, up.y), null,
+                `${spec.name}: a stairs_up tile must not also offer a descent from z=${above}`);
+        }
+    }
+    // The deepest floor has nothing below it, so it must not offer a descent.
+    const deepest = sorted[sorted.length - 1];
+    const deepestEntries = [...MAP.getFloor(deepest.z).transitions.values()];
+    assert.ok(!deepestEntries.some(t => MAP.normalizeZ(t.to) < deepest.z),
+        `${deepest.name} is the deepest floor and must not lead further down`);
 });
 
 test('the traversal route is a closed loop the player can actually complete', () => {
@@ -482,6 +496,99 @@ test('a dropped item records the floor it was dropped on', () => {
     const pickup = src.slice(src.indexOf("action === 'pickup_item'"), src.indexOf("action === 'pickup_item'") + 900);
     assert.ok(/dist3D\(player\.x, player\.y, player\.z, entry\.x, entry\.y, entry\.z\)/.test(pickup),
         'pickup must compare floors as well as distance');
+});
+
+test('the whole Z-level chain is walkable from the city, end to end', () => {
+    // A single hard-coded dungeon shows the machinery works once. A chain of
+    // three floors shows it is general: arrival, one-way exits, per-floor
+    // terrain and bounds all have to hold at every link, and a floor whose exit
+    // cannot be walked to from where the player arrives is a soft-lock.
+    //
+    // The flood exempts traversal tiles from the obstacle set, exactly as the
+    // client does -- they are in obstacleData so they can be drawn, but they are
+    // walked onto. An earlier version of this check treated them as solid and
+    // reported that no floor had any reachable transition, which was a bug in
+    // the check and looked exactly like a broken world.
+    const { execFileSync } = require('child_process');
+    const probe = path.join(__dirname, '..', '..', 'tools', 'zlevel_chain_probe.js');
+    let out = '';
+    let failed = false;
+    try {
+        out = execFileSync(process.execPath, [probe], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+        out = (e.stdout || '') + (e.stderr || '');
+        failed = true;
+    }
+    assert.ok(out.includes('CHAIN IS WALKABLE END TO END'),
+        'the Z-level chain probe found a problem:\n' + out);
+    assert.strictEqual(failed, false, 'the chain probe should exit 0 when the world is walkable');
+});
+
+test('every configured floor is generated, populated and distinct', () => {
+    // The table is meant to be data, not decoration: a row that generated no
+    // floor, or two floors at the same depth, would be silently ignored.
+    assert.ok(Array.isArray(CFG.Z_FLOORS) && CFG.Z_FLOORS.length >= 2,
+        'the world should have more than one underground floor to prove generality');
+    const depths = new Set();
+    for (const spec of CFG.Z_FLOORS) {
+        assert.ok(MAP.hasFloor(spec.z), `floor z=${spec.z} (${spec.name}) must be generated`);
+        assert.ok(spec.tilesW > 4 && spec.tilesH > 4, `${spec.name} must be big enough to walk in`);
+        assert.ok(spec.pillars >= 0, `${spec.name} must declare its pillar count`);
+        assert.ok(spec.mobCount > 0, `${spec.name} must declare a population`);
+        assert.ok(spec.tier >= 1, `${spec.name} must not be easier than the surface`);
+        assert.ok(Array.isArray(spec.mobTypes) && spec.mobTypes.length, `${spec.name} needs a roster`);
+        assert.ok(!depths.has(spec.z), `two floors share depth z=${spec.z}`);
+        depths.add(spec.z);
+        assert.ok(spec.z < CFG.Z_SURFACE && spec.z >= CFG.Z_MIN,
+            `${spec.name} at z=${spec.z} is outside the configured range`);
+    }
+    // Deeper means harder, or the second floor is a worse first floor.
+    const sorted = CFG.Z_FLOORS.slice().sort((a, b) => b.z - a.z);
+    for (let i = 1; i < sorted.length; i++) {
+        assert.ok(sorted[i].tier >= sorted[i - 1].tier,
+            `${sorted[i].name} (z=${sorted[i].z}) should not be easier than ${sorted[i - 1].name}`);
+    }
+    // The flat keys the older tooling and tests read must still describe the
+    // first floor, or two sources of truth drift apart.
+    const first = CFG.Z_FLOORS.find(f => f.z === CFG.Z_DUNGEON);
+    assert.ok(first, 'Z_DUNGEON must name a row in the table');
+    assert.strictEqual(CFG.DUNGEON_ORIGIN_X, first.originX);
+    assert.strictEqual(CFG.DUNGEON_TILES_W, first.tilesW);
+    assert.strictEqual(CFG.DUNGEON_PILLARS, first.pillars);
+    assert.strictEqual(CFG.DUNGEON_MOB_COUNT, first.mobCount);
+    assert.strictEqual(CFG.DUNGEON_MOB_TIER, first.tier);
+    assert.deepStrictEqual(CFG.DUNGEON_MOB_TYPES, first.mobTypes);
+});
+
+test('a boss spawn is announced to its own floor, with the floor stated', () => {
+    // Two separate mistakes live here and both fail silently.
+    //
+    // The announcement was global and carried no z, so a boss appearing
+    // underground was told to every client with no way to say which world the
+    // coordinates belonged to.
+    //
+    // Then the fallback for an un-injected broadcaster was written as
+    // (dataObj) => broadcast(dataObj). Callers pass (floor, packet), so it bound
+    // dataObj to the floor index and broadcast the number 0 in place of the
+    // packet. `broadcast` accepts a number without complaint, so the only
+    // symptom was a boss that never appeared, and only on the path where the
+    // broadcaster was not injected.
+    const BOSSES = require(path.join(SERVER_DIR, 'bosses'));
+    const sent = [];
+    const id = BOSSES.spawnBoss('ice_dragon', p => sent.push(p), { announce: false });
+    assert.ok(id, 'the boss must spawn');
+
+    const update = sent.find(p => p && p.action === 'mob_update');
+    assert.ok(update, 'a boss spawn must still announce itself with the alert suppressed');
+    assert.strictEqual(update.isBoss, true);
+    assert.ok(Number.isSafeInteger(update.z), `mob_update must state its floor, got ${update.z}`);
+    assert.strictEqual(update.z, CFG.Z_SURFACE, 'an unconfigured boss belongs to the surface');
+    // Every broadcast must be a packet object. A bare number means an argument
+    // was bound to the wrong parameter.
+    for (const p of sent) {
+        assert.ok(p && typeof p === 'object' && typeof p.action === 'string',
+            `every broadcast must be a packet object, got ${JSON.stringify(p)}`);
+    }
 });
 
 test('a traversal tile cannot be placed pointing at a floor that does not exist', () => {

@@ -463,22 +463,72 @@ async function main() {
                 b.pos = { x: 320, y: 320, z: CFG.Z_SURFACE };
             }
 
-            // 8. one-way back up
-            const exit = [...MAP.getFloor(CFG.Z_DUNGEON).transitions.values()][0];
-            if (a.died) {
-                // A respawn mid-test is a real outcome, not a harness fault, and
-                // it invalidates every position below. Report it plainly instead
-                // of letting the next assertion fail for the wrong reason.
-                check('the player survived long enough to climb back out', false,
-                    `slain in the dungeon (hp floor ${CFG.Z_DUNGEON}); server respawned to z=${a.currentZ}, ` +
-                    `client now at ${a.pos.x},${a.pos.y}. Reduce the stand-still window or raise DUNGEON_MOB_TIER headroom.`);
+            // 8b. a second descent, to prove the chain is not a one-off
+            const deeper = CFG.Z_FLOORS.map(f => f.z).sort((x, y) => x - y)[0];
+            if (deeper < a.currentZ) {
+                const shaft = [...MAP.getFloor(a.currentZ).transitions.values()]
+                    .find(t => MAP.normalizeZ(t.to) === deeper);
+                check('the crypt offers a way further down', !!shaft,
+                    shaft ? `${shaft.type} at ${shaft.x},${shaft.y}` : 'no descent found');
+                if (shaft) {
+                    const atShaft = await walkTo(a, shaft.x, shaft.y);
+                    check('the player can reach the shaft',
+                        atShaft === 'changed-floor' || atShaft === 'arrived',
+                        `walk=${atShaft} at ${a.pos.x},${a.pos.y}, wanted ${shaft.x},${shaft.y}`);
+                    await sleep(800);
+                    check('walking onto the shaft descended a second floor', a.currentZ === deeper,
+                        `currentZ=${a.currentZ}, wanted ${deeper}`);
+                    if (a.currentZ === deeper) {
+                        check('the deepest floor sent its own terrain',
+                            (a.terrain || []).length > 0 && !!a.bounds && a.bounds.minX > 0,
+                            `${(a.terrain || []).length} tiles, bounds=${JSON.stringify(a.bounds)}`);
+                        const deepMobs = [...a.mobs.values()].filter(m => m.z === deeper);
+                        check('the deepest floor is populated too', deepMobs.length > 0,
+                            `${deepMobs.length} mobs on z=${deeper}`);
+                        const deepLeak = [...b.mobs.values()].filter(m => m.z !== CFG.Z_SURFACE);
+                        check('nothing from the deepest floor reached the surface client',
+                            deepLeak.length === 0,
+                            deepLeak.length
+                                ? `${deepLeak.length} at floors ${[...new Set(deepLeak.map(m => m.z))].join(',')}: ` +
+                                  deepLeak.slice(0, 3).map(m => `${m.type}@${m.x},${m.y}`).join(' ')
+                                : 'clean');
+                    }
+                }
             }
-            const atExit = await walkTo(a, exit.x, exit.y);
-            check('the player can reach the stairs inside the cave',
-                atExit === 'arrived' || atExit === 'changed-floor',
-                `walk=${atExit} at ${a.pos.x},${a.pos.y}, wanted ${exit.x},${exit.y}`);
-            await sleep(800);
-            check('climbing the stairs returned the player to the surface', a.currentZ === CFG.Z_SURFACE,
+
+            // 8. climb back out, retracing the whole chain.
+            //
+            // The player may be on the deepest floor by now, so the way out is
+            // found from wherever they actually are rather than from a floor
+            // assumed in advance. Retracing link by link is the stronger check
+            // anyway: it proves the chain is reversible, not merely that stairs
+            // exist.
+            if (a.died) {
+                check('the player survived long enough to climb back out', false,
+                    `slain underground; respawned to z=${a.currentZ} at ${a.pos.x},${a.pos.y}`);
+            }
+            while (!a.died && a.currentZ < CFG.Z_SURFACE) {
+                const here = MAP.getFloor(a.currentZ);
+                if (!here) break;
+                const up = [...here.transitions.values()]
+                    .find(t => MAP.normalizeZ(t.to) > a.currentZ);
+                if (!up) {
+                    check(`floor z=${a.currentZ} offers a way up`, false, 'no exit found');
+                    break;
+                }
+                const fromZ = a.currentZ;
+                const atUp = await walkTo(a, up.x, up.y);
+                if (atUp !== 'arrived' && atUp !== 'changed-floor') {
+                    check(`reached the stairs on z=${fromZ}`, false,
+                        `walk=${atUp} at ${a.pos.x},${a.pos.y}, wanted ${up.x},${up.y}`);
+                    break;
+                }
+                await sleep(700);
+                check(`climbed from z=${fromZ} to z=${MAP.normalizeZ(up.to)}`,
+                    a.currentZ === MAP.normalizeZ(up.to), `currentZ=${a.currentZ}`);
+            }
+
+            check('climbing the chain returned the player to the surface', a.currentZ === CFG.Z_SURFACE,
                 `currentZ=${a.currentZ}`);
             check('climbing out landed back on the surface ladder',
                 a.pos.x === CFG.LADDER_X && a.pos.y === CFG.LADDER_Y, `pos=${a.pos.x},${a.pos.y}`);

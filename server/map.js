@@ -390,15 +390,15 @@ function reachableTiles(floor, fromX, fromY) {
     return seen;
 }
 
-function generateDungeonFloor() {
-    const z = CFG.Z_DUNGEON;
+function generateDungeonFloor(spec) {
+    const z = normalizeZ(spec.z);
     const obs = new Set();
     const data = [];
 
-    const ox = CFG.DUNGEON_ORIGIN_X;
-    const oy = CFG.DUNGEON_ORIGIN_Y;
-    const w = CFG.DUNGEON_TILES_W;
-    const h = CFG.DUNGEON_TILES_H;
+    const ox = spec.originX;
+    const oy = spec.originY;
+    const w = spec.tilesW;
+    const h = spec.tilesH;
     const step = CFG.TILE_SIZE;
 
     // Bedrock: everything outside the cave footprint is solid.
@@ -453,7 +453,7 @@ function generateDungeonFloor() {
     // unescapable -- a player who descended could never climb back, with no way
     // back short of an admin. Checking after each placement makes connectivity
     // a property of the generator rather than a hope about the random draw.
-    for (let i = 0; i < CFG.DUNGEON_PILLARS; i++) {
+    for (let i = 0; i < spec.pillars; i++) {
         const tx = 2 + Math.floor(Math.random() * Math.max(1, w - 4));
         const ty = 2 + Math.floor(Math.random() * Math.max(1, h - 4));
         const x = ox + tx * step;
@@ -484,51 +484,87 @@ function generateDungeonFloor() {
     return floor;
 }
 
-// Connects the surface to the dungeon with a two-way ladder at a fixed, known
-// spot inside the safe zone, plus a one-way stairs_up on the dungeon floor so
-// the asymmetry between ladder and stairs is exercised rather than assumed.
+// Chains the whole world together: a ladder in the city down to the first
+// floor, a ladder in each floor down to the next, and stairs at the far end of
+// each floor back up to the one above.
+//
+// Walking the table rather than hard-coding a single dungeon is the point. One
+// special case shows the machinery works once; a chain of three shows it is
+// general -- arrival, one-way exits, per-floor terrain, bounds and the roster
+// all have to work at every link.
+//
+// Each floor contributes two tiles: one that descends to the floor below (or to
+// the surface for the first), and one that climbs back to the floor above. The
+// climb is deliberately one-way, so the player has to walk the floor rather
+// than stand on a tile and oscillate.
 function placeTraversalTiles() {
     const placed = [];
     const step = CFG.TILE_SIZE;
-    // Inside the cave, one tile in from the wall, so arrival is inside the room
-    // rather than in the solid border.
-    const caveEntrance = {
-        x: CFG.DUNGEON_ORIGIN_X + step,
-        y: CFG.DUNGEON_ORIGIN_Y + step
-    };
-    // The centre of the dungeon, where the way back up sits.
-    const caveCentre = {
-        x: CFG.DUNGEON_ORIGIN_X + Math.floor(CFG.DUNGEON_TILES_W / 2) * step,
-        y: CFG.DUNGEON_ORIGIN_Y + Math.floor(CFG.DUNGEON_TILES_H / 2) * step
-    };
+    const floors = CFG.Z_FLOORS.slice().sort((a, b) => b.z - a.z);   // shallowest first
 
-    // Surface -> dungeon. A ladder: walkable both ways, so the same tile is
-    // also how the player comes back up, and it lands inside the cave.
-    const down = placeTransition(
-        CFG.Z_SURFACE, CFG.LADDER_X, CFG.LADDER_Y,
-        TILE_TYPES.LADDER, CFG.Z_DUNGEON, caveEntrance
-    );
-    if (down) placed.push({ from: CFG.Z_SURFACE, ...down });
+    // The tile a floor is entered on, and the tile its exit sits on. Both are
+    // inside the room: one tile in from the wall, and the centre respectively.
+    const insideOf = (spec) => ({ x: spec.originX + step, y: spec.originY + step });
+    const centreOf = (spec) => ({
+        x: spec.originX + Math.floor(spec.tilesW / 2) * step,
+        y: spec.originY + Math.floor(spec.tilesH / 2) * step
+    });
 
-    // Dungeon -> surface, one way up only, at the middle of the cave.
-    const up = placeTransition(
-        CFG.Z_DUNGEON, caveCentre.x, caveCentre.y,
-        TILE_TYPES.STAIRS_UP, CFG.Z_SURFACE,
-        // Climbing out puts the player back on the surface ladder, so the two
-        // ends form a loop rather than dumping them at the map origin.
-        { x: CFG.LADDER_X, y: CFG.LADDER_Y }
-    );
-    if (up) placed.push({ from: CFG.Z_DUNGEON, ...up });
+    // The surface: a ladder in the city, where a new player is guaranteed to
+    // walk. A traversal mechanic nobody finds is the same as no mechanic.
+    const first = floors[0];
+    if (first) {
+        const into = insideOf(first);
+        const down = placeTransition(
+            CFG.Z_SURFACE, CFG.LADDER_X, CFG.LADDER_Y,
+            TILE_TYPES.LADDER, first.z, into
+        );
+        if (down) placed.push({ from: CFG.Z_SURFACE, ...down });
+
+        // Climbing out of the first floor returns to the city ladder, so the
+        // ends form a loop rather than dumping the player at the map origin.
+        const up = placeTransition(
+            first.z, centreOf(first).x, centreOf(first).y,
+            TILE_TYPES.STAIRS_UP, CFG.Z_SURFACE,
+            { x: CFG.LADDER_X, y: CFG.LADDER_Y }
+        );
+        if (up) placed.push({ from: first.z, ...up });
+    }
+
+    // Each remaining floor hangs off the one above it.
+    for (let i = 0; i < floors.length - 1; i++) {
+        const here = floors[i];
+        const below = floors[i + 1];
+        // Down: a ladder near this floor's entrance, landing inside the next.
+        const shaft = {
+            x: here.originX + 2 * step,
+            y: here.originY + 2 * step
+        };
+        const deeper = placeTransition(
+            here.z, shaft.x, shaft.y,
+            TILE_TYPES.LADDER, below.z, insideOf(below)
+        );
+        if (deeper) placed.push({ from: here.z, ...deeper });
+
+        // Up: one-way stairs at this floor's centre, arriving on the floor
+        // above at its own shaft -- so climbing the shaft from below puts you
+        // back on the ladder you came down, rather than teleporting.
+        const climb = placeTransition(
+            below.z, centreOf(below).x, centreOf(below).y,
+            TILE_TYPES.STAIRS_UP, here.z, shaft
+        );
+        if (climb) placed.push({ from: below.z, ...climb });
+    }
 
     return placed;
 }
 
 generateMap();
 registerFloor(CFG.Z_SURFACE, { obstacles, obstacleData, waterTiles });
-if (CFG.Z_DUNGEON !== CFG.Z_SURFACE) {
-    generateDungeonFloor();
-    placeTraversalTiles();
+for (const spec of CFG.Z_FLOORS) {
+    if (normalizeZ(spec.z) !== CFG.Z_SURFACE) generateDungeonFloor(spec);
 }
+placeTraversalTiles();
 
 module.exports = {
     isWalkable, isWater, hasWaterNear, getZone, getFloor, hasFloor, getFloorTerrain,
