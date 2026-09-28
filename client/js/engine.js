@@ -51,6 +51,11 @@
         
         let obstacles = [];
         let obstacleSet = new Set();
+        // Obstacle types that are drawn but still walkable. Must stay in sync
+        // with the server's transition table in server/map.js -- if the server
+        // places a tile type that is walkable and the client treats it as solid,
+        // the traversal can be triggered but never reached.
+        const WALKABLE_OBSTACLE_TYPES = new Set(["ladder", "stairs_up", "stairs_down"]);
         let fcts = [];
         let particles = [];
         let currentTargetId = null;
@@ -220,7 +225,18 @@
                 if (data.height) MAP_H = data.height;
                 if (data.safeZone) SAFE_ZONE = data.safeZone;
                 obstacleSet.clear();
-                obstacles.forEach(o => obstacleSet.add(o.x + "," + o.y));
+                // Ladders and stairs are sent in `obstacles` because the terrain
+                // renderer draws them from that same array, but they are walked
+                // ONTO, not around -- standing on a ladder is what triggers the
+                // descent. Feeding them into obstacleSet would make them block
+                // movement exactly like a wall, so the player could never reach
+                // one and the floor below would be unreachable.
+                // WATER_TILE_TYPES stay blocked: water is a genuine obstacle and
+                // fishing happens from an adjacent walkable tile.
+                obstacles.forEach(o => {
+                    if (WALKABLE_OBSTACLE_TYPES.has(o.type)) return;
+                    obstacleSet.add(o.x + "," + o.y);
+                });
             }
             else if (data.action === "time_sync") { isDay = data.isDay; }
             else if (data.action === "fct") {

@@ -136,11 +136,13 @@ const RECIPES = {
     }
 };
 
-// The workbench sits in the starting city next to King Arthur.
+// The workbench sits in the starting city next to King Arthur. Its floor is
+// stated so the "am I near the bench" check can be floor-aware, same as NPCs.
 const WORKBENCH = {
     id: 'n_workbench',
     name: 'Workbench',
-    x: 352, y: 448
+    x: 352, y: 448,
+    z: require('./config').Z_SURFACE
 };
 
 function ownRecipe(recipeId, player) {

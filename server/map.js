@@ -18,16 +18,140 @@ function hasFloor(z) {
     return floors.has(normalizeZ(z));
 }
 
+// Removes a floor from the registry. Exists for test hygiene: the map module is
+// a process-wide singleton, so a test that registers a synthetic floor has to
+// be able to take it out again. Leaving a floor behind makes every later
+// "this floor does not exist" assertion depend on test execution order.
+function unregisterFloor(z) {
+    return floors.delete(normalizeZ(z));
+}
+
+// A floor index inside the configured range that nothing has registered. Used
+// to exercise the "not generated" path without hardcoding a specific depth,
+// which goes stale the moment a real floor is added at that depth.
+function anUnregisteredFloor() {
+    for (let z = CFG.Z_MIN; z <= CFG.Z_MAX; z++) {
+        if (!floors.has(z)) return z;
+    }
+    return null;
+}
+
 function registerFloor(z, data) {
     const src = data && typeof data === 'object' ? data : {};
     const floor = {
         z: normalizeZ(z),
         obstacles: src.obstacles instanceof Set ? src.obstacles : new Set(),
         obstacleData: Array.isArray(src.obstacleData) ? src.obstacleData : [],
-        waterTiles: src.waterTiles instanceof Set ? src.waterTiles : new Set()
+        waterTiles: src.waterTiles instanceof Set ? src.waterTiles : new Set(),
+        // Tile -> destination floor. Keyed "x,y" like every other tile index.
+        transitions: new Map()
     };
     floors.set(floor.z, floor);
     return floor;
+}
+
+// --- Traversal --------------------------------------------------------------
+// A traversal tile is WALKED ONTO, which is what makes it different from every
+// other obstacle. It is deliberately absent from floor.obstacles: if it were
+// added there, isWalkable() would reject the step onto it and the descent
+// could never be triggered. It is still listed in obstacleData, because the
+// terrain renderer draws from that array -- a drawn-but-walkable tile.
+//
+// The client's WALKABLE_OBSTACLE_TYPES in engine.js mirrors the TILE_TYPES below.
+// If a type is walkable server-side and treated as solid client-side, the ladder
+// is drawn but unreachable, and the floor below is unreachable with it.
+const TILE_TYPES = {
+    LADDER: 'ladder',                 // both directions
+    STAIRS_UP: 'stairs_up',           // upward only
+    STAIRS_DOWN: 'stairs_down'        // downward only
+};
+
+const TRANSITION_DIRECTIONS = {
+    [TILE_TYPES.LADDER]: { up: true, down: true },
+    [TILE_TYPES.STAIRS_UP]: { up: true, down: false },
+    [TILE_TYPES.STAIRS_DOWN]: { up: false, down: true }
+};
+
+// Places a traversal tile. The destination must be a floor that actually
+// exists, so a ladder can never be placed pointing at empty space -- that would
+// be a tile the player can stand on with nothing to do and no feedback
+// explaining why.
+//
+// `arrive` is where the player ends up on the destination floor. It defaults to
+// the tile's own coordinates, which is only correct when the two floors line up
+// at the same world position. A surface ladder at (288,288) leading to a cave
+// at (1024,1024) would otherwise drop the player in open ground beside the
+// cave wall, so the arrival has to be stated explicitly.
+function placeTransition(z, x, y, type, targetZ, arrive) {
+    const floor = getFloor(z);
+    if (!floor) return null;
+    const dirs = TRANSITION_DIRECTIONS[type];
+    if (!dirs) return null;
+    const dest = normalizeZ(targetZ);
+    if (!hasFloor(dest)) return null;
+    if (dest === floor.z) return null;
+
+    const entry = (arrive && Number.isSafeInteger(arrive.x) && Number.isSafeInteger(arrive.y))
+        ? { x: arrive.x, y: arrive.y }
+        : { x, y };
+
+    floor.transitions.set(`${x},${y}`, { x, y, type, to: dest, arrive: entry });
+    // Drawn, but never added to floor.obstacles -- see the note above.
+    // A transition can overwrite a previously drawn tile at the same spot, and
+    // the terrain renderer keys on position, so drop the stale record rather
+    // than leaving two entries for one tile.
+    for (let i = floor.obstacleData.length - 1; i >= 0; i--) {
+        if (floor.obstacleData[i].x === x && floor.obstacleData[i].y === y) {
+            floor.obstacleData.splice(i, 1);
+        }
+    }
+    floor.obstacleData.push({ x, y, type });
+    return floor.transitions.get(`${x},${y}`);
+}
+
+// Where does standing on this tile lead?
+//
+// The transition's `to` is authoritative and there is no direction argument.
+// An earlier revision took a `delta` and checked it against the tile type,
+// which inverted: a ladder is legal in both directions, so asking to climb
+// from the surface ladder returned the transition to the dungeon below. The
+// player would have gone down while climbing.
+//
+// One-way tiles need no direction check either. stairs_up exists only on the
+// floor it departs, so standing on it always ascends; there is simply no
+// descending transition at that spot to take.
+function getTransition(z, x, y) {
+    const floor = getFloor(z);
+    if (!floor) return null;
+    return floor.transitions.get(`${x},${y}`) || null;
+}
+
+function hasTransition(z, x, y) {
+    const floor = getFloor(z);
+    return floor ? floor.transitions.has(`${x},${y}`) : false;
+}
+
+// The nearest walkable arrival point on `toZ` for a player arriving from
+// (fromX, fromY). A ladder can land on a tile that is solid on the far side --
+// a cave mouth walled off by its own generator -- and dropping the player into
+// rock would trap them with no way out, which is unrecoverable without an
+// admin. Search outward in rings so arrival is always possible.
+function findArrivalPoint(toZ, fromX, fromY) {
+    const step = CFG.TILE_SIZE;
+    const originX = Math.floor(fromX / step) * step;
+    const originY = Math.floor(fromY / step) * step;
+    for (let ring = 0; ring <= 6; ring++) {
+        for (let dx = -ring; dx <= ring; dx++) {
+            for (let dy = -ring; dy <= ring; dy++) {
+                // Only the shell of each ring, then the centre on the last pass.
+                if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+                const x = originX + dx * step;
+                const y = originY + dy * step;
+                if (isWalkable(x, y, toZ)) return { x, y };
+            }
+        }
+    }
+    return null;
 }
 
 // Clamps an incoming z to a legal floor index. Guards three things: a save
@@ -152,21 +276,167 @@ function hasWaterNear(x, y, range, z = CFG.Z_SURFACE) {
     return found;
 }
 
-// The full terrain description of one floor, for the map_data packet. Stage 0
-// returns null for any floor but the surface, so a client asking for a
-// dungeon gets nothing rather than the surface's tiles relabelled.
+// The full terrain description of one floor, for the map_data packet. Returns
+// null for a floor that was never generated, so a client asking for a dungeon
+// gets nothing rather than the surface's tiles relabelled.
 function getFloorTerrain(z) {
     const floor = getFloor(z);
     if (!floor) return null;
-    return { z: floor.z, obstacleData: floor.obstacleData, waterTiles: floor.waterTiles };
+    return {
+        z: floor.z,
+        obstacleData: floor.obstacleData,
+        waterTiles: floor.waterTiles,
+        // Declared so the client can render a hint, and so a client that
+        // mistypes a tile learns the floor is traversable rather than solid.
+        transitions: [...floor.transitions.values()].map(t => ({ x: t.x, y: t.y, to: t.to, type: t.type, arrive: t.arrive }))
+    };
+}
+
+// --- Stage 2: the first underground floor ----------------------------------
+// A small, deliberately boring cave. Its job is to prove the whole traversal
+// loop -- walk onto a ladder, cross a floor boundary, resync, climb back --
+// not to be content. The surface layout is untouched, so a surface player
+// cannot tell this exists until they step on a ladder.
+//
+// Walls are a solid block with a hollow interior, generated in a bounded region
+// well clear of the safe zone. The ladder is placed on a walkable surface tile
+// inside the safe zone so it is discoverable, and its partner is placed on the
+// dungeon floor at the matching world coordinate, which keeps the arrival
+// search trivial and the mapping legible.
+// Flood fill of the standable tiles reachable from (fromX, fromY) on one floor,
+// in world pixels. Used to guarantee the dungeon is escapable: the player
+// descends on a one-way ladder, so a cave whose exit cannot be reached is a
+// soft-lock, not a difficulty spike.
+function reachableTiles(floor, fromX, fromY) {
+    const seen = new Set([`${fromX},${fromY}`]);
+    const queue = [[fromX, fromY]];
+    const step = CFG.TILE_SIZE;
+    while (queue.length) {
+        const [x, y] = queue.pop();
+        for (const [dx, dy] of [[step, 0], [-step, 0], [0, step], [0, -step]]) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= CFG.MAP_WIDTH || ny >= CFG.MAP_HEIGHT) continue;
+            const key = `${nx},${ny}`;
+            if (floor.obstacles.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            queue.push([nx, ny]);
+        }
+    }
+    return seen;
+}
+
+function generateDungeonFloor() {
+    const z = CFG.Z_DUNGEON;
+    const obs = new Set();
+    const data = [];
+
+    const ox = CFG.DUNGEON_ORIGIN_X;
+    const oy = CFG.DUNGEON_ORIGIN_Y;
+    const w = CFG.DUNGEON_TILES_W;
+    const h = CFG.DUNGEON_TILES_H;
+    const step = CFG.TILE_SIZE;
+
+    for (let tx = 0; tx < w; tx++) {
+        for (let ty = 0; ty < h; ty++) {
+            // Hollow interior: the border only, so the cave is a walled room
+            // with a walkable floor.
+            const onBorder = tx === 0 || ty === 0 || tx === w - 1 || ty === h - 1;
+            if (!onBorder) continue;
+            const x = ox + tx * step;
+            const y = oy + ty * step;
+            obs.add(`${x},${y}`);
+            data.push({ x, y, type: 'cave_wall' });
+        }
+    }
+
+    // The two tiles that must stay clear: where the player arrives, and where
+    // they leave from.
+    const entranceX = ox + step, entranceY = oy + step;
+    const exitX = ox + Math.floor(w / 2) * step;
+    const exitY = oy + Math.floor(h / 2) * step;
+    const reserved = new Set([`${entranceX},${entranceY}`, `${exitX},${exitY}`]);
+
+    // Interior pillars, each one accepted only if the exit is still reachable
+    // afterwards.
+    //
+    // Placing them unconditionally seeded two separate soft-locks. A pillar
+    // could land on the stairs themselves, making the exit tile solid; and a
+    // ring of pillars could isolate the stairs from the arrival point without
+    // touching either. Measured over 5000 generations, 5.12% of caves were
+    // unescapable -- a player who descended could never climb back, with no way
+    // back short of an admin. Checking after each placement makes connectivity
+    // a property of the generator rather than a hope about the random draw.
+    for (let i = 0; i < CFG.DUNGEON_PILLARS; i++) {
+        const tx = 2 + Math.floor(Math.random() * Math.max(1, w - 4));
+        const ty = 2 + Math.floor(Math.random() * Math.max(1, h - 4));
+        const x = ox + tx * step;
+        const y = oy + ty * step;
+        const key = `${x},${y}`;
+        if (obs.has(key) || reserved.has(key)) continue;
+
+        obs.add(key);
+        const probe = { obstacles: obs };
+        if (!reachableTiles(probe, entranceX, entranceY).has(`${exitX},${exitY}`)) {
+            obs.delete(key);   // this pillar would seal the cave; skip it
+            continue;
+        }
+        data.push({ x, y, type: 'cave_pillar' });
+    }
+
+    registerFloor(z, { obstacles: obs, obstacleData: data, waterTiles: new Set() });
+    return getFloor(z);
+}
+
+// Connects the surface to the dungeon with a two-way ladder at a fixed, known
+// spot inside the safe zone, plus a one-way stairs_up on the dungeon floor so
+// the asymmetry between ladder and stairs is exercised rather than assumed.
+function placeTraversalTiles() {
+    const placed = [];
+    const step = CFG.TILE_SIZE;
+    // Inside the cave, one tile in from the wall, so arrival is inside the room
+    // rather than in the solid border.
+    const caveEntrance = {
+        x: CFG.DUNGEON_ORIGIN_X + step,
+        y: CFG.DUNGEON_ORIGIN_Y + step
+    };
+    // The centre of the dungeon, where the way back up sits.
+    const caveCentre = {
+        x: CFG.DUNGEON_ORIGIN_X + Math.floor(CFG.DUNGEON_TILES_W / 2) * step,
+        y: CFG.DUNGEON_ORIGIN_Y + Math.floor(CFG.DUNGEON_TILES_H / 2) * step
+    };
+
+    // Surface -> dungeon. A ladder: walkable both ways, so the same tile is
+    // also how the player comes back up, and it lands inside the cave.
+    const down = placeTransition(
+        CFG.Z_SURFACE, CFG.LADDER_X, CFG.LADDER_Y,
+        TILE_TYPES.LADDER, CFG.Z_DUNGEON, caveEntrance
+    );
+    if (down) placed.push({ from: CFG.Z_SURFACE, ...down });
+
+    // Dungeon -> surface, one way up only, at the middle of the cave.
+    const up = placeTransition(
+        CFG.Z_DUNGEON, caveCentre.x, caveCentre.y,
+        TILE_TYPES.STAIRS_UP, CFG.Z_SURFACE,
+        // Climbing out puts the player back on the surface ladder, so the two
+        // ends form a loop rather than dumping them at the map origin.
+        { x: CFG.LADDER_X, y: CFG.LADDER_Y }
+    );
+    if (up) placed.push({ from: CFG.Z_DUNGEON, ...up });
+
+    return placed;
 }
 
 generateMap();
 registerFloor(CFG.Z_SURFACE, { obstacles, obstacleData, waterTiles });
+if (CFG.Z_DUNGEON !== CFG.Z_SURFACE) {
+    generateDungeonFloor();
+    placeTraversalTiles();
+}
 
 module.exports = {
     isWalkable, isWater, hasWaterNear, getZone, getFloor, hasFloor, getFloorTerrain,
-    normalizeZ, registerFloor,
+    normalizeZ, registerFloor, unregisterFloor, anUnregisteredFloor, findArrivalPoint,
+    placeTransition, getTransition, hasTransition, TILE_TYPES,
     // Kept as the surface's terrain: the map_data payload the client already
     // parses is unchanged, and no existing consumer has to learn about floors.
     obstacleData, waterTiles

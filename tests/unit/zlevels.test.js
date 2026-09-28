@@ -85,28 +85,35 @@ test('omitting z preserves the previous 2D behaviour exactly', () => {
 
 test('a floor with no generated terrain is nowhere to stand', () => {
     // The important negative case. If an unbuilt floor fell through to the
-    // surface's obstacle set, a player on z=-1 would be allowed to stand on a
-    // tile that only exists above them.
+    // surface's obstacle set, a player on an unbuilt floor would be allowed to
+    // stand on a tile that only exists above them.
+    //
+    // The depth is discovered rather than hardcoded. An earlier revision
+    // asserted hasFloor(-1) === false, which was true when the surface was the
+    // only floor and stopped being true the moment the dungeon was generated --
+    // the test then failed for a reason that had nothing to do with the code it
+    // was guarding.
     assert.strictEqual(MAP.hasFloor(CFG.Z_SURFACE), true, 'the surface is built');
-    for (let z = CFG.Z_MIN; z < CFG.Z_SURFACE; z++) {
-        assert.strictEqual(MAP.hasFloor(z), false, `floor ${z} is not generated yet`);
-        assert.strictEqual(MAP.isWalkable(320, 320, z), false,
-            `unbuilt floor ${z} must not be walkable`);
-        assert.strictEqual(MAP.getFloorTerrain(z), null,
-            `unbuilt floor ${z} must not describe terrain`);
-        assert.strictEqual(MAP.hasWaterNear(320, 320, 128, z), 0,
-            `unbuilt floor ${z} must offer no water`);
-    }
+    const z = MAP.anUnregisteredFloor();
+    assert.ok(z !== null, 'a generated world must leave some floor index unbuilt, or the range is full');
+    assert.strictEqual(MAP.isWalkable(320, 320, z), false,
+        `unbuilt floor ${z} must not be walkable`);
+    assert.strictEqual(MAP.getFloorTerrain(z), null,
+        `unbuilt floor ${z} must not describe terrain`);
+    assert.strictEqual(MAP.hasWaterNear(320, 320, 128, z), 0,
+        `unbuilt floor ${z} must offer no water`);
 });
 
 test('water is scoped to one floor', () => {
-    // Water on the surface must not make a dungeon floor fishable. With only
-    // the surface generated this is currently vacuous, so the assertion is that
-    // the surface's own answer is unchanged and other floors answer zero.
+    // Water on the surface must not make another floor fishable. The surface's
+    // own answer has to be unchanged by the z parameter.
     const surface = MAP.hasWaterNear(320, 320, 128, CFG.Z_SURFACE);
     assert.strictEqual(surface, MAP.hasWaterNear(320, 320, 128), 'default floor is the surface');
-    assert.strictEqual(MAP.hasWaterNear(320, 320, 128, CFG.Z_MIN), 0,
-        'an unbuilt floor has no water to fish');
+    const z = MAP.anUnregisteredFloor();
+    if (z !== null) {
+        assert.strictEqual(MAP.hasWaterNear(320, 320, 128, z), 0,
+            'an unbuilt floor has no water to fish');
+    }
 });
 
 test('a registered floor becomes walkable and is isolated from the surface', () => {
@@ -131,8 +138,11 @@ test('a registered floor becomes walkable and is isolated from the surface', () 
     } finally {
         // Leave the module as found; the map is a process-wide singleton and a
         // leftover synthetic floor would leak into every later test in the run.
-        MAP.registerFloor(Z, { obstacles: new Set(), obstacleData: [], waterTiles: new Set() });
+        // Registering an empty floor instead of removing it leaves hasFloor()
+        // true, which is what made an unrelated assertion depend on run order.
+        MAP.unregisterFloor(Z);
     }
+    assert.strictEqual(MAP.hasFloor(Z), false, 'the synthetic floor must be gone again');
 });
 
 test('spawnMobAt takes z as a trailing argument, not an inserted third', () => {
@@ -322,15 +332,70 @@ test('the login roster is filtered to the player own floor', () => {
     // Sends mobs, bosses, chests, corpses and nodes. Unsfiltered, a client would
     // be handed entities whose coordinates mean nothing on its own floor, with
     // no way to tell the difference.
+    //
+    // This reads syncFloorRoster, not the login handler. Both login and every
+    // traversal call it, and an earlier revision searched the login block --
+    // which stopped matching the moment the body was extracted, turning a real
+    // assertion into a false failure.
     const src = fs.readFileSync(SERVER_JS, 'utf8');
-    const roster = src.slice(src.indexOf('players.set(playerId, {'), src.indexOf("action: 'map_data'") + 400);
+    const start = src.indexOf('function syncFloorRoster');
+    assert.ok(start !== -1, 'syncFloorRoster must exist');
+    const roster = src.slice(start, src.indexOf('function performTraversal', start));
     for (const kind of ['mob_update', 'chest_update', 'corpse_spawn', 'node_sync']) {
         const at = roster.indexOf(`action: '${kind}'`);
-        assert.ok(at !== -1, `the login roster must send ${kind}`);
+        assert.ok(at !== -1, `the roster must send ${kind}`);
         const line = roster.slice(roster.lastIndexOf('if (', at), at);
         assert.ok(/MAP\.normalizeZ\(\w+\.z\)\s*===\s*pz/.test(line),
             `${kind} must be filtered to the player's floor`);
     }
+    // map_data must lead, or the client applies the new terrain after filling
+    // its caches with the previous floor's contents and never clears them.
+    assert.ok(roster.indexOf("action: 'map_data'") < roster.indexOf("action: 'mob_update'"),
+        'map_data must be sent before the entity roster so the client can flush first');
+});
+
+test('every traversal re-syncs the floor roster', () => {
+    // A client that descends without a new map_data keeps the old floor's
+    // terrain and its old entity caches, so the player walks on the surface
+    // while the server thinks they are underground.
+    const src = fs.readFileSync(SERVER_JS, 'utf8');
+    const start = src.indexOf('function performTraversal');
+    assert.ok(start !== -1, 'performTraversal must exist');
+    const body = src.slice(start, src.indexOf('function sendTo', start));
+    assert.ok(/syncFloorRoster\(player\)/.test(body),
+        'a traversal must re-sync the roster for the destination floor');
+    assert.ok(/force_position/.test(body), 'a traversal must tell the client the new position');
+    // Leaving the old floor before arriving stops a ghost standing on the
+    // ladder in the surface view until the next players_sync tick.
+    const leaveAt = body.indexOf("action: 'player_left'");
+    const arriveAt = body.indexOf('syncFloorRoster(player)');
+    assert.ok(leaveAt !== -1 && arriveAt !== -1, 'both sides of the move must be handled');
+    assert.ok(leaveAt < arriveAt, 'the old floor must be told before the new one is populated');
+});
+
+test('the floor roster sends everything the login sequence used to send', () => {
+    // syncFloorRoster replaced an inline block at login, and one call was left
+    // behind in the extraction: sendSkillPanel. The player logged in with a
+    // blank skill panel, which tests/skills_live_verify.js caught and no unit
+    // test would have. This asserts the login sequence is complete, so the next
+    // extraction cannot quietly drop something.
+    const src = fs.readFileSync(SERVER_JS, 'utf8');
+    const login = src.slice(src.indexOf('players.set(playerId, {'), src.indexOf("action: 'auction_sync'"));
+    const start = src.indexOf('function syncFloorRoster');
+    const roster = src.slice(start, src.indexOf('function performTraversal', start));
+    // Every roster-producing call the login path depends on must now be inside
+    // the shared function, which is what both login and traversal invoke.
+    for (const call of ['sendSkillPanel(player)', 'syncNpcs(player)', "action: 'map_data'",
+        "action: 'ground_sync'", "action: 'mob_update'", "action: 'chest_update'",
+        "action: 'corpse_spawn'", "action: 'node_sync'"]) {
+        assert.ok(roster.includes(call), `syncFloorRoster must still send ${call}`);
+    }
+    assert.ok(login.includes('syncFloorRoster(player)'),
+        'login must go through syncFloorRoster rather than its own copy');
+    // Nothing may send the skill panel from the login path any more, or a
+    // descent would be the only time the player sees one.
+    assert.ok(!/sendSkillPanel/.test(login.slice(login.indexOf('syncFloorRoster(player)'))),
+        'the skill panel must not be sent twice on login');
 });
 
 test('ground_sync and map_data are floor-scoped', () => {

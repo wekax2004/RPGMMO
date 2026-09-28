@@ -29,7 +29,9 @@
             wood: "wood_sprite.jpg",
             leather: "leather_sprite.jpg",
             mushroom: "mushroom_sprite.jpg",
-            bone: "bone_sprite.jpg"
+            bone: "bone_sprite.jpg",
+            ladder: "ladder_sprite.jpg",
+            stairs_up: "stairs_up_sprite.jpg"
         };
         const loadedSprites = {};
         Object.keys(SPRITE_FILES).forEach(key => {
@@ -163,6 +165,21 @@
                     else { ctx.fillStyle = "rgba(40, 150, 120, 0.7)"; ctx.fillRect(obs.x, obs.y, 32, 32); }
                 }
                 else if (obs.type === "cactus") { ctx.fillStyle = "#2b6b25"; ctx.fillRect(obs.x + 8, obs.y + 4, 16, 24); }
+                else if (obs.type === "ladder") {
+                    const ladderImg = getSprite("ladder");
+                    if (ladderImg) { ctx.drawImage(ladderImg, obs.x, obs.y, 32, 32); }
+                    else { ctx.fillStyle = "#333"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                }
+                else if (obs.type === "stairs_up" || obs.type === "stairs_down") {
+                    // Both stairs render from the same sheet; the facing is a
+                    // detail the sprite does not carry. Handled together because
+                    // the server can place either, and an unhandled type falls
+                    // through to the default green obstacle fill -- which would
+                    // draw a walkable tile as a solid one.
+                    const stairsImg = getSprite("stairs_up");
+                    if (stairsImg) { ctx.drawImage(stairsImg, obs.x, obs.y, 32, 32); }
+                    else { ctx.fillStyle = "#888"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                }
                 else if (obs.type === "gravestone") { ctx.fillStyle = "#555"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 12, 10, 0, Math.PI, true); ctx.fillRect(obs.x + 6, obs.y + 12, 20, 16); ctx.fill(); }
             });
 

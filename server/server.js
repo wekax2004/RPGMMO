@@ -225,6 +225,96 @@ function broadcastToFloor(z, dataObj) {
         }
     });
 }
+// Everything a client needs to draw one floor: the terrain, and every entity
+// standing on it. Used by login and again by every traversal, so a client that
+// descends and one that connects both end up in the same state.
+//
+// map_data comes FIRST and carries the floor index. The client compares it to
+// its current z and, on a change, drops its otherPlayers / mobs / corpses /
+// ground items before applying the new terrain. Sending the roster before
+// map_data would let it populate those caches with the old floor's contents
+// and then never clear them.
+function syncFloorRoster(player) {
+    const pz = MAP.normalizeZ(player.z);
+    const floorTerrain = MAP.getFloorTerrain(pz) || { z: CFG.Z_SURFACE, obstacleData: [] };
+    sendTo(player, {
+        action: 'map_data', z: floorTerrain.z,
+        obstacles: floorTerrain.obstacleData, transitions: floorTerrain.transitions || [],
+        width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE
+    });
+
+    mobs.forEach((mob, id) => { if (MAP.normalizeZ(mob.z) === pz) sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, z: pz, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite }); });
+    bosses.forEach((boss, id) => { if (MAP.normalizeZ(boss.z) === pz) sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, z: pz, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true, phase: boss.phase }); });
+    chests.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'chest_update', id, x: c.x, y: c.y, z: pz, active: true }); });
+    corpses.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'corpse_spawn', corpse: c }); });
+    Q.gatheringNodes.forEach((node, id) => {
+        if (node.active && MAP.normalizeZ(node.z) === pz) {
+            sendTo(player, { action: 'node_sync', id, name: node.name, x: node.x, y: node.y, z: pz, color: node.color, symbol: node.symbol });
+        }
+    });
+    // A client must learn about anything already on the ground, not only about
+    // future drops. Filtered to this floor, so a drop on another level is not
+    // drawn on this one.
+    sendTo(player, { action: 'ground_sync', items: groundItemPayload(pz) });
+    syncNpcs(player);
+    // The skill panel is not floor-scoped -- a character's skills travel with
+    // them -- but it is sent here so a player who descends does not come back
+    // up to a blank panel. Dropping this call during the extraction of the
+    // roster into this function is what tests/skills_live_verify.js caught.
+    sendSkillPanel(player);
+}
+
+// Moves a player between floors. Called only from the movement handler, after
+// a step onto a traversal tile has been accepted.
+//
+// The order matters. Leaving before arriving means the old floor drops the
+// player from its ownPlayers cache immediately, rather than holding a ghost at
+// the ladder's coordinates until the next players_sync tick -- which on a
+// surface player looking at the ladder would be a body standing on a hole.
+function performTraversal(player, transition) {
+    const fromZ = MAP.normalizeZ(player.z);
+    const toZ = MAP.normalizeZ(transition.to);
+    if (fromZ === toZ) return false;
+
+    // Trade requires both players on one floor. Descending mid-trade would
+    // otherwise let the offer sit open across a floor boundary, where the two
+    // sides are in separate rosters and cannot see or reach each other.
+    abortSeparatedTrade(player.id);
+
+    // Drop out of the old floor's view.
+    broadcastToFloor(fromZ, { action: 'player_left', id: player.id });
+
+    player.z = toZ;
+
+    // The stated arrival point is preferred; the ring search is a safety net
+    // for a floor whose generator happened to wall in the landing tile. Without
+    // it a player could be sealed inside geometry with no way back up, which is
+    // unrecoverable without an admin.
+    const wanted = transition.arrive || { x: player.x, y: player.y };
+    const landing = MAP.findArrivalPoint(toZ, wanted.x, wanted.y);
+    if (landing) { player.x = landing.x; player.y = landing.y; }
+
+    // Position first, then the floor's contents. The client trusts these.
+    sendTo(player, { action: 'force_position', x: player.x, y: player.y, z: toZ });
+    syncFloorRoster(player);
+
+    // Announce to the new floor, and to the new floor only.
+    broadcastToFloor(toZ, {
+        action: 'player_update', id: player.id, name: player.charName,
+        x: player.x, y: player.y, z: toZ, classType: player.classType,
+        equipment: player.equipment, guild: player.guild || null,
+        skulled: hasActiveSkull(player), isMounted: player.isMounted === true
+    });
+
+    sendTo(player, {
+        action: 'log',
+        message: toZ < fromZ
+            ? `⛏️ You descend to level ${toZ}.`
+            : `🪜 You climb back to the surface.`
+    });
+    return true;
+}
+
 function sendTo(player, dataObj) {
     if (player && player.ws && player.ws.readyState === WebSocket.OPEN && player.ws.bufferedAmount <= MAX_SOCKET_BUFFER_BYTES) {
         player.ws.send(JSON.stringify(dataObj));
@@ -272,7 +362,12 @@ function abortSeparatedTrade(playerId) {
     if (!trade) return false;
     const p1 = players.get(trade.player1Id);
     const p2 = players.get(trade.player2Id);
-    const separated = !p1 || !p2 || dist(p1.x, p1.y, p2.x, p2.y) > TRADE.TRADE_MAX_DISTANCE;
+    // Trade requires one shared floor, not just proximity. dist3D is Infinity
+    // across a boundary, so descending mid-trade tears it down exactly like
+    // walking out of range does -- which is the intent, since the two sides are
+    // no longer in the same room and cannot see each other.
+    const separated = !p1 || !p2 ||
+        dist3D(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z) > TRADE.TRADE_MAX_DISTANCE;
     if (!separated) return false;
     [trade.player1Id, trade.player2Id].forEach(id => {
         const participant = players.get(id);
@@ -389,6 +484,7 @@ const COMBAT = createCombat({
     mobs,
     isDay: () => isDay,
     dist,
+    dist3D,
     inSafeZone,
     broadcast,
     sendTo,
@@ -517,7 +613,7 @@ function resolveGroundTarget(player, data) {
     let best = null;
     let bestDist = Infinity;
     for (const g of groundItems.values()) {
-        const d = dist(player.x, player.y, g.x, g.y);
+        const d = dist3D(player.x, player.y, player.z, g.x, g.y, g.z);
         // The coordinate the client named must actually be the drop's tile,
         // otherwise a client could sweep every nearby item by guessing.
         if (g.x !== data.x || g.y !== data.y) continue;
@@ -1022,27 +1118,7 @@ wss.on('connection', (ws) => {
                 // the client has no way to tell the difference. Every entity
                 // normalises the same way, so a pre-Stage-0 save with no z at
                 // all still matches the surface.
-                const pz = MAP.normalizeZ(player.z);
-                mobs.forEach((mob, id) => { if (MAP.normalizeZ(mob.z) === pz) sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, z: pz, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite }); });
-                bosses.forEach((boss, id) => { if (MAP.normalizeZ(boss.z) === pz) sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, z: pz, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true, phase: boss.phase }); });
-                chests.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'chest_update', id, x: c.x, y: c.y, z: pz, active: true }); });
-                corpses.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'corpse_spawn', corpse: c }); });
-                // Populate the skill panel immediately so the HUD is correct
-                // before the player gathers or fights anything.
-                sendSkillPanel(player);
-                syncNpcs(player);
-                Q.gatheringNodes.forEach((node, id) => { if (node.active && MAP.normalizeZ(node.z) === pz) sendTo(player, { action: 'node_sync', id, name: node.name, x: node.x, y: node.y, z: pz, color: node.color, symbol: node.symbol }); });
-                // map_data describes one floor. Stage 0 only the surface has
-                // generated terrain, so this is that floor's obstacle set; the
-                // explicit z lets the client key its cached terrain by floor
-                // instead of assuming whatever arrived last is the ground
-                // under its feet.
-                const floorTerrain = MAP.getFloorTerrain(pz) || { z: CFG.Z_SURFACE, obstacleData: [] };
-                sendTo(player, { action: 'map_data', z: floorTerrain.z, obstacles: floorTerrain.obstacleData, width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE });
-                // A joining client must learn about anything already on the
-                // ground, not only about future drops. Filtered to this floor,
-                // so a drop on another level is not drawn on this one.
-                sendTo(player, { action: 'ground_sync', items: groundItemPayload(pz) });
+                syncFloorRoster(player);
                 // Anything an offline auction sale or expiry owed this character.
                 const owed = AUCTION.claimMailbox(player);
                 if (owed.gold > 0 || owed.items.length > 0) {
@@ -1069,7 +1145,11 @@ wss.on('connection', (ws) => {
                 // Current auction board, so the modal can open with data.
                 sendTo(player, { action: 'auction_sync', listings: AUCTION.listForClient() });
                 
-                broadcast({ action: 'player_update', id: playerId, name: charName, x: player.x, y: player.y, classType: player.classType, warmode: player.warmode });
+                // Announce the arrival to this floor only, and state the floor.
+                // A global broadcast tells clients on other floors about a player
+                // they cannot see, and an entry with no z leaves a client unable
+                // to tell which world the coordinates belong to.
+                broadcastToFloor(player.z, { action: 'player_update', id: playerId, name: charName, x: player.x, y: player.y, z: MAP.normalizeZ(player.z), classType: player.classType, warmode: player.warmode });
                 return;
             }
 
@@ -1250,7 +1330,7 @@ wss.on('connection', (ws) => {
                 const targetPlayer = findPlayerByName(data.targetName || data.targetPlayer);
                 if (!targetPlayer) {
                     sendProtocolError(player, 'Player not found.');
-                } else if (dist(player.x, player.y, targetPlayer.x, targetPlayer.y) > TRADE.TRADE_MAX_DISTANCE) {
+                } else if (dist3D(player.x, player.y, player.z, targetPlayer.x, targetPlayer.y, targetPlayer.z) > TRADE.TRADE_MAX_DISTANCE) {
                     sendProtocolError(player, 'Too far to trade.');
                 } else {
                     const result = TRADE.createTradeRequest(playerId, targetPlayer.id);
@@ -1283,7 +1363,7 @@ wss.on('connection', (ws) => {
                 } else {
                     const requester = players.get(result.trade.player1Id);
                     const target = players.get(result.trade.player2Id);
-                    if (!requester || !target || dist(requester.x, requester.y, target.x, target.y) > TRADE.TRADE_MAX_DISTANCE) {
+                    if (!requester || !target || dist3D(requester.x, requester.y, requester.z, target.x, target.y, target.z) > TRADE.TRADE_MAX_DISTANCE) {
                         TRADE.cancelTrade(result.tradeId);
                         sendProtocolError(player, 'Players are too far apart to trade.');
                     } else {
@@ -1418,7 +1498,11 @@ wss.on('connection', (ws) => {
                 let target = player;
                 if (data.targetPlayerId) {
                     target = players.get(data.targetPlayerId);
-                    if (!target || dist(player.x, player.y, target.x, target.y) > 192) {
+                    // Cross-floor healing is not a thing. dist3D returns Infinity
+                    // across a floor boundary, so this one comparison also stops
+                    // a player on the surface healing someone standing in the
+                    // dungeon at the same X/Y.
+                    if (!target || dist3D(player.x, player.y, player.z, target.x, target.y, target.z) > 192) {
                         sendProtocolError(player, 'Heal target is out of range.');
                         return;
                     }
@@ -1436,7 +1520,7 @@ wss.on('connection', (ws) => {
                 }
                 const questNpcId = data.npc_id;
                 const questNpc = typeof questNpcId === 'string' ? npcs.get(questNpcId) : null;
-                if (!questNpc || dist(player.x, player.y, questNpc.x, questNpc.y) > 96) {
+                if (!questNpc || dist3D(player.x, player.y, player.z, questNpc.x, questNpc.y, questNpc.z) > 96) {
                     sendProtocolError(player, 'You must be near the quest giver.');
                 } else if (Q.acceptQuest(player.quests, data.quest_id, questNpcId)) {
                     sendQuestJournal(player);
@@ -1470,6 +1554,22 @@ wss.on('connection', (ws) => {
                     player.lastMoveTime = now;
                     player.x = data.x; player.y = data.y;
                     abortSeparatedTrade(playerId);
+
+                    // Traversal is Tibia-native: walking onto the tile is the
+                    // whole interaction, so there is no new packet and no new
+                    // client action. A traversal tile is walkable, which is why
+                    // this runs after the isWalkable check above rather than
+                    // being rejected by it.
+                    //
+                    // The move cooldown is deliberately not charged for the
+                    // step itself beyond lastMoveTime, and the descent does not
+                    // re-enter movement: the player arrives standing still and
+                    // must walk again, so holding a movement key cannot chain
+                    // the player back up the far side.
+                    const traversal = MAP.getTransition(player.z, player.x, player.y);
+                    if (traversal && performTraversal(player, traversal)) {
+                        return;
+                    }
                     
                     if (player.bleedStacks > 0) {
                         const bleedDmg = player.bleedStacks * CFG.BLEED_DMG_BASE * CFG.BLEED_MOVE_MULT;
@@ -1522,7 +1622,7 @@ wss.on('connection', (ws) => {
             if (data.action === 'attack') { player.targetId = data.target_id; }
             if (data.action === 'interact_corpse') {
                 const c = corpses.get(data.id);
-                if (c && dist(player.x, player.y, c.x, c.y) <= 64) {
+                if (c && dist3D(player.x, player.y, player.z, c.x, c.y, c.z) <= 64) {
                     if (c.gold > 0) {
                         player.gold += c.gold;
                         sendTo(player, { action: 'log', message: `Looted ${c.gold} gold from ${c.ownerName}'s corpse!` });
@@ -1580,7 +1680,7 @@ wss.on('connection', (ws) => {
                 }
                 // Server-side distance check. Cheap to forge a packet without
                 // it, so it is never inferred from the request.
-                if (dist(player.x, player.y, entry.x, entry.y) > CFG.GROUND_PICKUP_RANGE) {
+                if (dist3D(player.x, player.y, player.z, entry.x, entry.y, entry.z) > CFG.GROUND_PICKUP_RANGE) {
                     sendProtocolError(player, 'Too far away.');
                     return;
                 }
@@ -1771,7 +1871,7 @@ wss.on('connection', (ws) => {
             
             // --- SHOP ACTIONS ---
             if (data.action === 'open_crafting') {
-                if (dist(player.x, player.y, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y) > 96) {
+                if (dist3D(player.x, player.y, player.z, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y, CRAFTING.WORKBENCH.z) > 96) {
                     sendProtocolError(player, 'You must be near the workbench.');
                     return;
                 }
@@ -1788,7 +1888,7 @@ wss.on('connection', (ws) => {
                     sendProtocolError(player, 'Invalid recipe request.');
                     return;
                 }
-                if (dist(player.x, player.y, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y) > 96) {
+                if (dist3D(player.x, player.y, player.z, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y, CRAFTING.WORKBENCH.z) > 96) {
                     sendProtocolError(player, 'You must be near the workbench.');
                     return;
                 }
@@ -1840,7 +1940,7 @@ wss.on('connection', (ws) => {
 
             if (data.action === 'bank_deposit_gold') {
                 const npc = npcs.get('n_banker');
-                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                if (!npc || dist3D(player.x, player.y, player.z, npc.x, npc.y, npc.z) > 96) return;
                 let amt = parseInt(data.amount);
                 if (amt > 0 && player.gold >= amt) {
                     player.gold -= amt;
@@ -1850,7 +1950,7 @@ wss.on('connection', (ws) => {
             }
             if (data.action === 'bank_withdraw_gold') {
                 const npc = npcs.get('n_banker');
-                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                if (!npc || dist3D(player.x, player.y, player.z, npc.x, npc.y, npc.z) > 96) return;
                 let amt = parseInt(data.amount);
                 if (amt > 0 && (player.bankGold || 0) >= amt) {
                     player.bankGold -= amt;
@@ -1860,7 +1960,7 @@ wss.on('connection', (ws) => {
             }
             if (data.action === 'bank_deposit_item') {
                 const npc = npcs.get('n_banker');
-                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                if (!npc || dist3D(player.x, player.y, player.z, npc.x, npc.y, npc.z) > 96) return;
                 const idx = player.inventory.indexOf(data.item);
                 if (idx !== -1) {
                     if (!player.bankItems) player.bankItems = [];
@@ -1873,7 +1973,7 @@ wss.on('connection', (ws) => {
             }
             if (data.action === 'bank_withdraw_item') {
                 const npc = npcs.get('n_banker');
-                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                if (!npc || dist3D(player.x, player.y, player.z, npc.x, npc.y, npc.z) > 96) return;
                 if (!player.bankItems) return;
                 const idx = player.bankItems.indexOf(data.item);
                 if (idx !== -1) {
@@ -1888,7 +1988,7 @@ wss.on('connection', (ws) => {
             if (data.action === 'talk_npc') {
                 // The workbench is a separate interactable, not a quest giver.
                 if (data.npc_id === CRAFTING.WORKBENCH.id) {
-                    if (dist(player.x, player.y, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y) > 96) return;
+                    if (dist3D(player.x, player.y, player.z, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y, CRAFTING.WORKBENCH.z) > 96) return;
                     sendTo(player, {
                         action: 'crafting_open',
                         recipes: CRAFTING.listRecipes(player),
@@ -1898,7 +1998,7 @@ wss.on('connection', (ws) => {
                     return;
                 }
                 const npc = npcs.get(data.npc_id);
-                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) return;
+                if (!npc || dist3D(player.x, player.y, player.z, npc.x, npc.y, npc.z) > 96) return;
                 
                 if (data.npc_id === 'n_merchant') {
                     sendTo(player, { action: 'open_shop', inventory: SHOP_INVENTORY, gold: player.gold });
@@ -1942,7 +2042,7 @@ wss.on('connection', (ws) => {
                     return;
                 }
                 const npc = npcs.get(data.npc_id);
-                if (!npc || dist(player.x, player.y, npc.x, npc.y) > 96) {
+                if (!npc || dist3D(player.x, player.y, player.z, npc.x, npc.y, npc.z) > 96) {
                     sendProtocolError(player, 'You must be near the speaker.');
                     return;
                 }
@@ -2059,7 +2159,17 @@ scheduleServerInterval(() => {
 
 scheduleServerInterval(() => {
     const now = Date.now();
-    const positions = [];
+    // Grouped by floor and sent one packet per occupied floor, not a single
+    // global list.
+    //
+    // A global players_sync re-admits everyone to everyone 200ms after a
+    // traversal. performTraversal sends player_left to the floor being left, but
+    // the next tick's roster put the departing player straight back, so a
+    // surface client carried a permanent ghost of someone standing in the cave
+    // at the ladder's coordinates. Scoping the packet is also what lets the
+    // existing client work unchanged: it keeps merging whatever it is sent, and
+    // now simply never hears about another floor.
+    const byFloor = new Map();
     players.forEach((p, pid) => {
         // Expire a lapsed skull here rather than only on read, so the flag
         // cannot linger in a save and the client sees it clear promptly.
@@ -2068,8 +2178,10 @@ scheduleServerInterval(() => {
             sendTo(p, { action: 'log', message: '💀 Your white skull has faded.' });
             broadcast({ action: 'fct', x: p.x + 16, y: p.y - 24, text: 'UNSKULL', color: '#aaaaaa' });
         }
-        positions.push({
-            id: pid, name: p.charName, x: p.x, y: p.y, z: MAP.normalizeZ(p.z), classType: p.classType,
+        const floor = MAP.normalizeZ(p.z);
+        if (!byFloor.has(floor)) byFloor.set(floor, []);
+        byFloor.get(floor).push({
+            id: pid, name: p.charName, x: p.x, y: p.y, z: floor, classType: p.classType,
             warmode: p.warmode, equipment: p.equipment,
             // Clients read this to render the skull marker. Sent as a plain
             // boolean so the client never has to reason about the timer.
@@ -2078,7 +2190,9 @@ scheduleServerInterval(() => {
             guild: p.guild || null
         });
     });
-    if (positions.length > 0) broadcast({ action: 'players_sync', players: positions });
+    for (const [floor, list] of byFloor) {
+        broadcastToFloor(floor, { action: 'players_sync', players: list });
+    }
     // Ground loot rides along with the same periodic broadcast so a client
     // that missed an earlier ground_sync resynchronises on its own.
     if (groundItems.size > 0) broadcastGroundSync();
@@ -2110,7 +2224,7 @@ scheduleServerInterval(() => {
         let closest = null, minD = Infinity;
         players.forEach(p => { 
             if (p.hp > 0 && !inSafeZone(p.x, p.y)) {
-                const d2 = dist(p.x, p.y, mob.x, mob.y); 
+                const d2 = dist3D(p.x, p.y, p.z, mob.x, mob.y, mob.z); 
                 if (d2 < minD) { minD = d2; closest = p; } 
             } 
         });
@@ -2170,7 +2284,7 @@ scheduleServerInterval(() => {
         let closest = null, minD = Infinity;
         players.forEach(p => {
             if (p.hp > 0 && !inSafeZone(p.x, p.y)) {
-                const d2 = dist(p.x, p.y, boss.x, boss.y);
+                const d2 = dist3D(p.x, p.y, p.z, boss.x, boss.y, boss.z);
                 if (d2 < minD) { minD = d2; closest = p; }
             }
         });

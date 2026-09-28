@@ -43,6 +43,11 @@ function createCombat(deps) {
         mobs,
         isDay,
         dist,
+        // Floor-aware distance: Infinity across a floor boundary, so every
+        // `<= range` guard below rejects a cross-floor target on its own. `dist`
+        // is kept for the handful of purely spatial checks that genuinely do
+        // not care which floor something is on.
+        dist3D,
         inSafeZone,
         broadcast,
         sendTo,
@@ -342,7 +347,7 @@ function createCombat(deps) {
             if (spellId === 1) { // Cleave
                 broadcast({ action: 'spell_anim', type: 'cleave', x: player.x, y: player.y });
                 for (let [mid, m] of mobs) {
-                    if (dist(player.x, player.y, m.x, m.y) <= 60) hitMob(m, 50 + player.level * 2);
+                    if (dist3D(player.x, player.y, player.z, m.x, m.y, m.z) <= 60) hitMob(m, 50 + player.level * 2);
                 }
             } else { // Charge
                 if (player.targetId && mobs.has(player.targetId)) {
@@ -359,13 +364,13 @@ function createCombat(deps) {
                     const t = mobs.get(player.targetId);
                     broadcast({ action: 'spell_anim', type: 'fireball', x: t.x, y: t.y });
                     for (let [mid, m] of mobs) {
-                        if (dist(t.x, t.y, m.x, m.y) <= 80) hitMob(m, 60 + player.level * 3);
+                        if (dist3D(t.x, t.y, t.z, m.x, m.y, m.z) <= 80) hitMob(m, 60 + player.level * 3);
                     }
                 }
             } else { // Frost Nova
                 broadcast({ action: 'spell_anim', type: 'frostnova', x: player.x, y: player.y });
                 for (let [mid, m] of mobs) {
-                    if (dist(player.x, player.y, m.x, m.y) <= 100) hitMob(m, 30 + player.level);
+                    if (dist3D(player.x, player.y, player.z, m.x, m.y, m.z) <= 100) hitMob(m, 30 + player.level);
                 }
             }
         } else if (c === 'ranger') {
@@ -373,7 +378,7 @@ function createCombat(deps) {
                 broadcast({ action: 'spell_anim', type: 'multishot', x: player.x, y: player.y });
                 let hits = 0;
                 for (let [mid, m] of mobs) {
-                    if (dist(player.x, player.y, m.x, m.y) <= 200 && hits < 3) {
+                    if (dist3D(player.x, player.y, player.z, m.x, m.y, m.z) <= 200 && hits < 3) {
                         hitMob(m, 40 + player.level * 2);
                         hits++;
                     }
@@ -419,7 +424,10 @@ function createCombat(deps) {
                 if (players.has(player.targetId)) {
                     const target = players.get(player.targetId);
                     if (player.warmode && target.warmode && !inSafeZone(player.x, player.y) && !inSafeZone(target.x, target.y)) {
-                        const d = dist(player.x, player.y, target.x, target.y);
+                        // PvP is same-floor. dist3D returns Infinity across a
+                        // boundary, so a warmode duel cannot be carried out
+                        // against someone a floor away.
+                        const d = dist3D(player.x, player.y, player.z, target.x, target.y, target.z);
                         const range = getAttackRange(player, (player.classType === 'mage' || player.classType === 'ranger') ? CFG.RANGED_RANGE : CFG.MELEE_RANGE);
                         if (d <= range && now - player.lastAttackTime >= getAttackCooldown(player, CFG.PLAYER_ATTACK_COOLDOWN)) {
                             player.lastAttackTime = now;
@@ -447,7 +455,7 @@ function createCombat(deps) {
                 }
                 else if (mobs.has(player.targetId)) {
                     const target = mobs.get(player.targetId);
-                    const d = dist(player.x, player.y, target.x, target.y);
+                    const d = dist3D(player.x, player.y, player.z, target.x, target.y, target.z);
                     const range = getAttackRange(player, (player.classType === 'mage' || player.classType === 'ranger') ? CFG.RANGED_RANGE : CFG.MELEE_RANGE);
                     if (d <= range && now - player.lastAttackTime >= getAttackCooldown(player, CFG.PLAYER_ATTACK_COOLDOWN)) {
                         player.lastAttackTime = now;
@@ -474,7 +482,7 @@ function createCombat(deps) {
     function runBossAttacks(bossId, boss, now) {
         players.forEach(player => {
             if (player.targetId === bossId && boss.hp > 0 && bosses.has(bossId)) {
-                const d = dist(player.x, player.y, boss.x, boss.y);
+                const d = dist3D(player.x, player.y, player.z, boss.x, boss.y, boss.z);
                 const range = getAttackRange(player, (player.classType === 'mage' || player.classType === 'ranger' || player.classType === 'healer') ? CFG.RANGED_RANGE : CFG.MELEE_RANGE);
                 if (d <= range && now - player.lastAttackTime >= getAttackCooldown(player, CFG.PLAYER_ATTACK_COOLDOWN)) {
                     player.lastAttackTime = now;

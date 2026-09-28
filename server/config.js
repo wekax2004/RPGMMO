@@ -25,6 +25,30 @@ module.exports = {
     Z_MIN: -3,
     Z_MAX: 0,
 
+    // --- Z-levels (Stage 2: traversal and the first underground floor) ---
+    // The dungeon is a deliberately small generated cave, not hand-authored
+    // content. It exists to prove the traversal loop end to end.
+    Z_DUNGEON: -1,
+    // Cave footprint, in tiles, and its world-space origin. Kept inside the
+    // map and far enough from the safe zone that surface play is unaffected.
+    DUNGEON_ORIGIN_X: 1024,
+    DUNGEON_ORIGIN_Y: 1024,
+    DUNGEON_TILES_W: 14,
+    DUNGEON_TILES_H: 14,
+    DUNGEON_PILLARS: 6,
+    // The surface ladder, in world pixels. Inside the safe zone on purpose: a
+    // traversal mechanic nobody can find is the same as no mechanic, and this
+    // is the one place a new player is guaranteed to walk.
+    LADDER_X: 288,
+    LADDER_Y: 288,
+    // Traversal is walked onto, so a tile that leads nowhere must not be a
+    // trap. A ladder the player cannot return up from is a dead character, so
+    // the arrival search guarantees a walkable landing tile.
+    ARRIVAL_SEARCH_RINGS: 6,
+    // Chat crosses floors (party and guild are social, not positional). Trade,
+    // targeting, combat and loot do not -- all of those use dist3D, which
+    // returns Infinity across a floor boundary.
+
     // Safe Zone (City)
     SAFE_ZONE: { x: 0, y: 0, w: 640, h: 640 },
 
