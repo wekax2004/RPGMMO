@@ -31,7 +31,9 @@
             mushroom: "mushroom_sprite.jpg",
             bone: "bone_sprite.jpg",
             ladder: "ladder_sprite.jpg",
-            stairs_up: "stairs_up_sprite.jpg"
+            stairs_up: "stairs_up_sprite.jpg",
+            merchant: "merchant_sprite.jpg",
+            banker: "banker_sprite.jpg"
         };
         const loadedSprites = {};
         Object.keys(SPRITE_FILES).forEach(key => {
@@ -238,10 +240,15 @@
                     ctx.fillRect(npc.x + 8, npc.y + 18, 4, 4);
                     ctx.fillRect(npc.x + 20, npc.y + 18, 4, 4);
                 } else {
-                    const npcSprite = getSprite("npc");
-                    const npc2Sprite = getSprite("npc2");
-                    const hash = id.charCodeAt(id.length - 1) % 2;
-                    const spr = (hash === 0 && npc2Sprite) ? npc2Sprite : npcSprite;
+                    let spr;
+                    if (npc.name === "Merchant Bob") spr = getSprite("merchant");
+                    else if (npc.name === "Banker Vault") spr = getSprite("banker");
+                    else {
+                        const npcSprite = getSprite("npc");
+                        const npc2Sprite = getSprite("npc2");
+                        const hash = id.charCodeAt(id.length - 1) % 2;
+                        spr = (hash === 0 && npc2Sprite) ? npc2Sprite : npcSprite;
+                    }
                     if (spr) {
                         ctx.drawImage(spr, npc.x, npc.y, 32, 32);
                     } else {

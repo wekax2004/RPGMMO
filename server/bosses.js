@@ -206,7 +206,7 @@ function castSpiderPoisonAoe(boss, players, broadcast, options = {}) {
     return spellId;
 }
 
-function bossAI(boss, players, broadcast, mobs) {
+function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
     const now = Date.now();
     const aggroRange = 600;
     const meleeRange = CFG.TILE_SIZE * 1.5;
@@ -240,7 +240,7 @@ function bossAI(boss, players, broadcast, mobs) {
             boss.x = nx;
             boss.y = ny;
             boss.lastMoveTime = now;
-            broadcast({ action: 'mob_move', id: boss.id, x: boss.x, y: boss.y });
+            broadcastToFloor(boss.z, { action: 'mob_move', id: boss.id, x: boss.x, y: boss.y, z: boss.z });
         } else {
             // Try other axis
             nx = boss.x;
@@ -254,7 +254,7 @@ function bossAI(boss, players, broadcast, mobs) {
                 boss.x = nx;
                 boss.y = ny;
                 boss.lastMoveTime = now;
-                broadcast({ action: 'mob_move', id: boss.id, x: boss.x, y: boss.y });
+                broadcastToFloor(boss.z, { action: 'mob_move', id: boss.id, x: boss.x, y: boss.y, z: boss.z });
             }
         }
     }

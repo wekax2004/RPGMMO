@@ -6,6 +6,7 @@
         const socket = new WebSocket(socketProtocol + "//" + window.location.host);
 
         let MAP_W = 3200, MAP_H = 3200;
+        let MAP_BOUNDS = null;
         let SAFE_ZONE = {w: 800, h: 800};
         const SCREEN_W = 640, SCREEN_H = 480;
 
@@ -221,6 +222,7 @@
                 }
                 window.currentZ = newZ;
                 obstacles = data.obstacles; 
+                MAP_BOUNDS = data.bounds || null;
                 if (data.width) MAP_W = data.width;
                 if (data.height) MAP_H = data.height;
                 if (data.safeZone) SAFE_ZONE = data.safeZone;
@@ -627,6 +629,9 @@ else if (data.action === "spell_anim") {
         let lastMoveTime = 0;
         function isWalkable(nx, ny) {
             if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) return false;
+            if (MAP_BOUNDS) {
+                if (nx < MAP_BOUNDS.minX || nx > MAP_BOUNDS.maxX || ny < MAP_BOUNDS.minY || ny > MAP_BOUNDS.maxY) return false;
+            }
             return !obstacleSet.has(nx + "," + ny);
         }
 

@@ -60,6 +60,13 @@ function connect(url) {
             if (p.action === 'your_id') st.id = p.id;
             if (p.action === 'status') st.status = p;
             if (p.action === 'log') st.logs.push(p.message);
+            // Death is a legitimate outcome here -- the dungeon is populated
+            // with tier-scaled mobs and a stationary player will lose that fight.
+            // It has to be noticed rather than inferred, because a respawn used
+            // to move the sprite without telling the client it had changed
+            // world, which then desynced every later assertion for no visible
+            // reason.
+            if (p.action === 'log' && /was slain by/.test(p.message || '')) st.died = true;
             if (p.action === 'log' && /^\u274c/.test(p.message || '')) st.errors.push(p.message);
 
             // Mirror the client exactly: map_data carrying a different z means
@@ -76,6 +83,9 @@ function connect(url) {
                 st.currentZ = newZ;
                 st.terrainZ = p.z;
                 st.terrain = p.obstacles || [];
+                st.bounds = p.bounds || null;
+                st.mapW = p.width;
+                st.mapH = p.height;
             }
             if (p.action === 'ground_sync') {
                 st.ground.clear();
@@ -124,6 +134,21 @@ async function login(st, name, classType) {
     return false;
 }
 
+// Puts a character at a level that can walk through the dungeon.
+//
+// The dungeon is meant to be lethal to a newcomer -- that is the tier doing its
+// job -- but this harness verifies traversal, not combat. Several mobs land a
+// hit per server tick, so a level 1 character standing in the room dies faster
+// than a heal sent between movement steps can land, and the traversal
+// assertions after that point fail for a reason that has nothing to do with
+// stairs. The game is left lethal; the test character is made capable.
+async function prepareForDungeon(st) {
+    send(st, { action: 'test_grant_xp', amount: 50000 });
+    await sleep(500);
+    send(st, { action: 'test_heal' });
+    await sleep(300);
+}
+
 // Breadth-first route over the terrain the client was actually sent.
 //
 // A greedy axis-first walk gets stuck on the first pillar it meets, because it
@@ -135,6 +160,16 @@ function routeTo(st, tx, ty) {
     const solid = new Set((st.terrain || [])
         .filter(o => !['ladder', 'stairs_up', 'stairs_down'].includes(o.type))
         .map(o => `${o.x},${o.y}`));
+    // Clip to where the server says the floor's standable ground is. Without
+    // this the search is unbounded: the bedrock enclosing the dungeon is
+    // walkability-only and never reaches the client, so from inside the cave
+    // the world looks wide open and the walk ran off toward negative infinity
+    // until the process exhausted memory. The map_data packet now carries
+    // `bounds` for exactly this reason; the real client needs the same clip in
+    // its own findPath, which is a frontend change to make.
+    const b = st.bounds;
+    const minX = b ? b.minX : 0, maxX = b ? b.maxX : (st.mapW || 3200) - TILE;
+    const minY = b ? b.minY : 0, maxY = b ? b.maxY : (st.mapH || 3200) - TILE;
     const start = `${st.pos.x},${st.pos.y}`;
     const goal = `${tx},${ty}`;
     if (start === goal) return [];
@@ -144,6 +179,7 @@ function routeTo(st, tx, ty) {
         const cur = queue.shift();
         for (const [dx, dy] of [[TILE, 0], [-TILE, 0], [0, TILE], [0, -TILE]]) {
             const nx = cur.x + dx, ny = cur.y + dy;
+            if (nx < minX || ny < minY || nx > maxX || ny > maxY) continue;
             const key = `${nx},${ny}`;
             if (key === goal) {
                 // Reconstruct the route: the goal, then its parent, then that
@@ -196,11 +232,33 @@ function routeTo(st, tx, ty) {
 // longer makes sense, and a walk that kept going would spend its budget
 // dragging them around the destination floor, making every later assertion
 // fail for the wrong reason.
+// Keeps a character topped up for as long as it is underground.
+//
+// A single heal per movement step is not enough. The server ticks every 100ms
+// and every mob in melee range lands a hit on each one, so nine tier-2.5 mobs
+// deal more per tick than a 330ms-interval heal can replace -- the character
+// loses the race outright and dies, which then invalidates every traversal
+// assertion that follows for a reason that has nothing to do with stairs.
+// Healing on its own tighter clock is what makes the room survivable enough to
+// walk through, and the dungeon is left exactly as lethal as it was.
+function startUndergroundKeepAlive(st) {
+    let underground = false;
+    const tick = setInterval(() => {
+        const isBelow = st.currentZ < 0;
+        if (isBelow && !underground) {
+            // Arriving below: level up first, or the first tick kills us.
+            send(st, { action: 'test_grant_xp', amount: 400000 });
+        }
+        if (isBelow) send(st, { action: 'test_heal' });
+        underground = isBelow;
+    }, 120);
+    return () => clearInterval(tick);
+}
+
 async function walkTo(st, tx, ty, budgetMs = 90000) {
     const deadline = Date.now() + budgetMs;
     const startZ = st.currentZ;
     let stalled = 0;
-    let lastAuth = null;
     while (Date.now() < deadline) {
         if (st.currentZ !== startZ) return 'changed-floor';
         if (st.pos.x === tx && st.pos.y === ty) return 'arrived';
@@ -212,35 +270,35 @@ async function walkTo(st, tx, ty, budgetMs = 90000) {
             const a = st.authPos;
             console.log(`      trace: local ${st.pos.x},${st.pos.y} auth ${a ? a.x + ',' + a.y : '?'} -> step ${nx},${ny} (${path.length} left)`);
         }
-        // Re-sync the optimistic position to the server's view before stepping,
-        // so a previous rejection does not compound into a diagonal.
-        if (st.authPos && (st.authPos.x !== st.pos.x || st.authPos.y !== st.pos.y)) {
-            st.pos = { x: st.authPos.x, y: st.authPos.y, z: st.pos.z };
-            const rerouted = routeTo(st, tx, ty);
-            if (rerouted === null) return 'no-path';
-            if (rerouted.length === 0) return 'arrived';
-            st.pos = { x: rerouted[0][0], y: rerouted[0][1], z: st.pos.z };
-            send(st, { action: 'move', x: rerouted[0][0], y: rerouted[0][1] });
-        } else {
-            send(st, { action: 'move', x: nx, y: ny });
-        }
+        // The tile we are standing on before the step, so a refusal can be told
+        // apart from success below.
+        const from = { x: st.pos.x, y: st.pos.y };
+        send(st, { action: 'move', x: nx, y: ny });
         st.pos = { x: nx, y: ny, z: st.pos.z };
         await sleep(STEP_DELAY);
 
-        // Judge the step by the server's own view, not by the absence of a
-        // correction. Two earlier revisions counted "no force_position arrived"
-        // as rejection, which is wrong: an accepted step is applied silently
-        // and produces no packet at all, so every good step scored as a bad one
-        // and the walk quit after eight.
-        const auth = st.authPos ? `${st.authPos.x},${st.authPos.y}` : null;
-        if (auth && auth === `${nx},${ny}`) {
-            stalled = 0;
-            lastAuth = auth;
-        } else if (auth && auth === lastAuth) {
-            if (++stalled > 10) return 'blocked';
+        // Judge the step by the server's own view, read from our own
+        // players_sync entry. Moves are never echoed: an accepted step is
+        // applied silently and a rejected one is ignored, so the absence of a
+        // packet tells you nothing. Two earlier revisions got this wrong --
+        // one counted "no correction arrived" as a rejection, which scores
+        // every good step as bad; the other reverted to authPos whenever it
+        // differed, which stomped a correct position with a stale one and threw
+        // the player back to the map spawn.
+        const auth = st.authPos;
+        if (!auth) { stalled++; }
+        else if (auth.x === nx && auth.y === ny) {
+            stalled = 0;                       // accepted
+        } else if (auth.x === from.x && auth.y === from.y) {
+            // Refused. Put the local position back where the server still thinks
+            // we are, so the next route is computed from reality.
+            st.pos = { x: from.x, y: from.y, z: st.pos.z };
+            if (++stalled > 8) return 'blocked';
         } else {
+            // The server put us somewhere else entirely -- a traversal, or a
+            // correction. Trust it and re-route from there.
+            st.pos = { x: auth.x, y: auth.y, z: st.pos.z };
             stalled = 0;
-            lastAuth = auth;
         }
     }
     return 'blocked';
@@ -252,6 +310,7 @@ async function main() {
     const server = new ServerController({ port: PORT, dbFile: DB_FILE, testMode: true });
     const url = `ws://127.0.0.1:${PORT}`;
     let a = null, b = null;
+    const keepAlive = [];
 
     try {
         await server.start();
@@ -262,6 +321,16 @@ async function main() {
         b = await connect(url);
         check('both clients connected and logged in', await login(a, 'Descender', 'warrior') && await login(b, 'Watcher', 'ranger'));
         await sleep(500);
+        // Both characters need to be able to stand in a populated cave: `a` to
+        // walk it, `b` to be attacked by nothing while stacked underneath it.
+        await prepareForDungeon(a);
+        await prepareForDungeon(b);
+        // Collected into an array declared outside the try: a `const` bound
+        // inside try is not in scope in finally, so naming them here and
+        // referencing them there threw a ReferenceError during teardown -- after
+        // every check had already passed.
+        keepAlive.push(startUndergroundKeepAlive(a));
+        keepAlive.push(startUndergroundKeepAlive(b));
 
         // 1. same-floor presence
         check('a same-floor client sees the other player',
@@ -338,8 +407,72 @@ async function main() {
             check('no surface chest was rostered into the dungeon', !chestLeak,
                 chestLeak ? 'a chest from another floor arrived' : 'clean');
 
+            // --- Stage 3 -----------------------------------------------------
+            // Checked here, while one client is below and one is above. The
+            // same checks placed after the climb-out read an empty roster and
+            // reported the dungeon as unpopulated, because the client had
+            // correctly flushed its caches on the way back up.
+            const dungeonMobs = [...a.mobs.values()].filter(m => m.z === CFG.Z_DUNGEON);
+            check('the dungeon roster is populated with mobs', dungeonMobs.length > 0,
+                `${dungeonMobs.length} mobs on z=${CFG.Z_DUNGEON}`);
+            check('every mob sent to the dungeon is on the dungeon floor',
+                a.mobs.size > 0 && [...a.mobs.values()].every(m => m.z === CFG.Z_DUNGEON),
+                `floors present: ${[...new Set([...a.mobs.values()].map(m => m.z))].join(',')}`);
+
+            // The surface client must never hear about a dungeon mob at all.
+            const leaked = [...b.mobs.values()].filter(m => m.z !== CFG.Z_SURFACE);
+            check('no dungeon mob leaked to the surface client', leaked.length === 0,
+                leaked.length ? `${leaked.length} leaked: ${leaked.slice(0, 3).map(m => m.type).join(' ')}` : 'clean');
+
+            // Dungeon mobs are tougher than their surface namesakes, which is
+            // the entire point of the tier.
+            const { getMobStats } = require('../server/mobs');
+            const sample = dungeonMobs[0];
+            if (sample) {
+                const surfaceStats = getMobStats(sample.type, false, 1);
+                check('a dungeon mob is tougher than the same type on the surface',
+                    sample.maxHp > surfaceStats.hp,
+                    `${sample.name} hp=${sample.maxHp} vs surface ${surfaceStats.hp} (tier ${CFG.DUNGEON_MOB_TIER})`);
+            }
+
+            // dist3D against a real entity: a surface player standing at a
+            // dungeon's exact coordinates must be untouchable by the mobs there.
+            // The dungeon and the city share X/Y space, so this is not synthetic.
+            if (sample) {
+                const bHpBefore = (b.status && b.status.hp) || 0;
+                b.pos = { x: sample.x, y: sample.y, z: CFG.Z_SURFACE };
+                b.packets.length = 0;
+                // Kept short on purpose: this client stands still in a populated
+                // cave for the duration, and a level 1 character loses that
+                // fight. The point of the check is that the surface player takes
+                // no damage at all, which a shorter window proves just as well.
+                const until = Date.now() + 3500;
+                while (Date.now() < until) {
+                    send(b, { action: 'move', x: sample.x, y: sample.y });
+                    await sleep(180);
+                    send(b, { action: 'move', x: sample.x, y: sample.y + CFG.TILE_SIZE });
+                    await sleep(180);
+                }
+                const bHpAfter = (b.status && b.status.hp) || 0;
+                check('a surface player stacked under a dungeon mob takes no damage',
+                    bHpAfter >= bHpBefore, `hp ${bHpBefore} -> ${bHpAfter}`);
+                const floatsOnB = b.packets.filter(p => p.action === 'fct' && /^-/.test(p.text || ''));
+                check('the surface client saw no damage text from the dungeon',
+                    floatsOnB.length === 0,
+                    `${floatsOnB.length} damage floats: ${floatsOnB.slice(0, 3).map(f => f.text).join(' ')}`);
+                b.pos = { x: 320, y: 320, z: CFG.Z_SURFACE };
+            }
+
             // 8. one-way back up
             const exit = [...MAP.getFloor(CFG.Z_DUNGEON).transitions.values()][0];
+            if (a.died) {
+                // A respawn mid-test is a real outcome, not a harness fault, and
+                // it invalidates every position below. Report it plainly instead
+                // of letting the next assertion fail for the wrong reason.
+                check('the player survived long enough to climb back out', false,
+                    `slain in the dungeon (hp floor ${CFG.Z_DUNGEON}); server respawned to z=${a.currentZ}, ` +
+                    `client now at ${a.pos.x},${a.pos.y}. Reduce the stand-still window or raise DUNGEON_MOB_TIER headroom.`);
+            }
             const atExit = await walkTo(a, exit.x, exit.y);
             check('the player can reach the stairs inside the cave',
                 atExit === 'arrived' || atExit === 'changed-floor',
@@ -371,6 +504,10 @@ async function main() {
         failures++;
         console.error('  verification crashed:', err && err.stack ? err.stack : err);
     } finally {
+        for (const stop of keepAlive) {
+            try { stop(); } catch { /* ignore */ }
+        }
+        keepAlive.length = 0;
         for (const s of [a, b]) {
             try { if (s && s.ws.readyState === 1) s.ws.close(); } catch { /* ignore */ }
         }

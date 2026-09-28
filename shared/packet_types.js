@@ -11,7 +11,7 @@
  * which is exactly what happened when the list was maintained by hand: it
  * listed actions the server never handled and missed every feature added since.
  *
- * Generated: 56 inbound, 65 outbound.
+ * Generated: 57 inbound, 65 outbound.
  */
 
 const PACKET = {
@@ -58,6 +58,7 @@ const PACKET = {
         TEST_GRANT_ITEM: 'test_grant_item',
         TEST_GRANT_MANA: 'test_grant_mana',
         TEST_GRANT_XP: 'test_grant_xp',
+        TEST_HEAL: 'test_heal',
         TEST_SPAWN_MOB: 'test_spawn_mob',
         TOGGLE_MOUNT: 'toggle_mount',
         TRADE_ACCEPT: 'trade_accept',

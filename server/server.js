@@ -5,7 +5,7 @@ const path = require('path');
 const CFG = require('./config');
 const { isWalkable, obstacleData, isWater, hasWaterNear } = require('./map');
 const MAP = require('./map');
-const { mobs, spawnMobPack, spawnMobAt, moveMobToward, mobAttack, inSafeZone } = require('./mobs');
+const { mobs, spawnMobPack, spawnFloorPack, spawnMobAt, moveMobToward, mobAttack, inSafeZone, countMobsOn } = require('./mobs');
 const { chests, spawnChest } = require('./chests');
 const { npcs } = require('./npcs');
 const corpses = new Map();
@@ -240,6 +240,7 @@ function syncFloorRoster(player) {
     sendTo(player, {
         action: 'map_data', z: floorTerrain.z,
         obstacles: floorTerrain.obstacleData, transitions: floorTerrain.transitions || [],
+        bounds: floorTerrain.bounds || null,
         width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE
     });
 
@@ -313,6 +314,13 @@ function performTraversal(player, transition) {
             : `🪜 You climb back to the surface.`
     });
     return true;
+}
+
+// Scoped alias for spawnMobPack, which only ever places surface mobs. Passed as
+// a plain function so the mob respawn in combat.js cannot announce a surface
+// creature to everyone standing in a dungeon.
+function broadcastSurface(dataObj) {
+    broadcastToFloor(CFG.Z_SURFACE, dataObj);
 }
 
 function sendTo(player, dataObj) {
@@ -405,9 +413,7 @@ function awardSkill(player, skillId, amount) {
             action: 'log',
             message: `⭐ ${result.name} is now level ${result.level}!`
         });
-        broadcast({
-            action: 'fct',
-            x: player.x + 16,
+        broadcastToFloor(player.z, { action: 'fct', x: player.x + 16,
             y: player.y - 24,
             text: `${result.name} ${result.level}`,
             color: '#fbbf24'
@@ -487,11 +493,15 @@ const COMBAT = createCombat({
     dist3D,
     inSafeZone,
     broadcast,
+    // Floor-scoped broadcast, used for every floating combat text. combat.js
+    // has no scope of its own for this, so omitting it here made every damage
+    // and XP number throw on the first hit.
+    broadcastToFloor,
     sendTo,
     addXp,
     checkPlayerDeath,
     sendQuestJournal,
-    spawnMobPack,
+    spawnMobPack: (size) => spawnMobPack(broadcastSurface, size),
     persistPlayer,
     awardSkill,
     grantWhiteSkull,
@@ -812,14 +822,60 @@ function addXp(player, amount) {
         player.hp = player.maxHp; player.mana = player.maxMana;
         sendTo(player, { action: 'log', message: `🎉 LEVEL UP! You are now Level ${player.level}!` });
         broadcast({ action: 'log', message: `🌟 ${player.charName} reached level ${player.level}!` });
-        broadcast({ action: 'fct', x: player.x, y: player.y, text: 'LEVEL UP!', color: '#ffcc00' });
+        broadcastToFloor(player.z, { action: 'fct', x: player.x, y: player.y, text: 'LEVEL UP!', color: '#ffcc00' });
     }
 }
 
-for(let i=0; i<15; i++) spawnMobPack(broadcast, 3);
+for(let i=0; i<15; i++) spawnMobPack(broadcastSurface, 3);
 for(let i=0; i<CFG.MAX_CHESTS; i++) spawnChest(broadcast);
 Q.spawnGatheringNodes(broadcast, isWalkable);
 scheduleServerInterval(() => { if (chests.size < CFG.MAX_CHESTS) spawnChest(broadcast); }, CFG.CHEST_SPAWN_INTERVAL);
+
+// --- Populate the dungeon (Stage 3) -----------------------------------------
+// Fills z = -1 so the floor is a place rather than a corridor. The point is to
+// put real entities on the far side of a floor boundary, because that is what
+// makes the dist3D work meaningful: an empty dungeon cannot demonstrate that a
+// surface player is safe from a mob one floor below.
+function populateDungeon() {
+    if (!MAP.hasFloor(CFG.Z_DUNGEON)) return 0;
+    const spawned = spawnFloorPack(broadcast, {
+        z: CFG.Z_DUNGEON,
+        size: CFG.DUNGEON_MOB_COUNT,
+        tier: CFG.DUNGEON_MOB_TIER,
+        eliteChance: CFG.DUNGEON_ELITE_CHANCE,
+        types: CFG.DUNGEON_MOB_TYPES
+    });
+    for (let i = 0; i < CFG.DUNGEON_CHEST_COUNT; i++) {
+        spawnChest(broadcast, CFG.Z_DUNGEON, { quiet: true });
+    }
+    return spawned.length;
+}
+populateDungeon();
+
+// Top the floor back up rather than leaving it to empty permanently. Without
+// this, a player who clears the dungeon once finds it bare on every return,
+// and the only reason to go back is gone. The count is checked rather than
+// blindly appending, so a respawn tick cannot inflate the population.
+scheduleServerInterval(() => {
+    if (!MAP.hasFloor(CFG.Z_DUNGEON)) return;
+    const missing = CFG.DUNGEON_MOB_COUNT - countMobsOn(CFG.Z_DUNGEON);
+    if (missing > 0) {
+        spawnFloorPack(broadcast, {
+            z: CFG.Z_DUNGEON,
+            size: missing,
+            tier: CFG.DUNGEON_MOB_TIER,
+            eliteChance: CFG.DUNGEON_ELITE_CHANCE,
+            types: CFG.DUNGEON_MOB_TYPES
+        });
+    }
+    let dungeonChests = 0;
+    for (const c of chests.values()) {
+        if (MAP.normalizeZ(c.z) === CFG.Z_DUNGEON) dungeonChests++;
+    }
+    if (dungeonChests < CFG.DUNGEON_CHEST_COUNT) {
+        spawnChest(broadcast, CFG.Z_DUNGEON, { quiet: true });
+    }
+}, CFG.DUNGEON_RESPAWN_INTERVAL);
 
 // Spawn all bosses
 // Silent on purpose: a restart would otherwise announce every boss at once.
@@ -879,10 +935,10 @@ function announceQuestCompletion(player, result) {
     const rewards = result.rewards || {};
     sendTo(player, { action: 'log', message: `📜 [QUEST] Completed: ${result.name}` });
     if (rewards.gold) {
-        broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${rewards.gold}G`, color: '#ffd700' });
+        broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `+${rewards.gold}G`, color: '#ffd700' });
     }
     if (rewards.xp) {
-        broadcast({ action: 'fct', x: player.x + 16, y: player.y - 20, text: `+${rewards.xp} XP`, color: '#ffcc00' });
+        broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y - 20, text: `+${rewards.xp} XP`, color: '#ffcc00' });
         addXp(player, rewards.xp);
     }
     (rewards.items || []).forEach(item => {
@@ -1210,6 +1266,20 @@ wss.on('connection', (ws) => {
                     sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
                 }
             }
+            if (TEST_MODE && data.action === 'test_heal') {
+                // Restores the character to full. A dungeon populated with
+                // tier-scaled mobs is lethal to a level 1 character on contact,
+                // which is correct for the game but makes any harness that has
+                // to stand still underground -- to verify traversal, not combat --
+                // fail for the wrong reason. TEST_MODE only, alongside the other
+                // grant actions.
+                player.hp = player.maxHp;
+                player.mana = player.maxMana;
+                player.poisonStacks = 0;
+                player.bleedStacks = 0;
+                player.stunUntil = 0;
+                sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
+            }
             if (TEST_MODE && data.action === 'test_grant_gold') {
                 const amount = Number(data.amount);
                 if (Number.isSafeInteger(amount) && amount >= 0) player.gold = amount;
@@ -1485,7 +1555,7 @@ wss.on('connection', (ws) => {
                     recalcPlayerStats(player);
                     player.hp = player.maxHp; player.mana = player.maxMana;
                     broadcast({ action: 'log', message: `🌟 ${player.charName} evolved into ${subclassId.toUpperCase()}!` });
-                    broadcast({ action: 'fct', x: player.x, y: player.y, text: `EVOLVED: ${subclassId}!`, color: '#ff00ff' });
+                    broadcastToFloor(player.z, { action: 'fct', x: player.x, y: player.y, text: `EVOLVED: ${subclassId}!`, color: '#ff00ff' });
                     sendTo(player, { action: 'evolution_complete', subclass: subclassId });
                 } else {
                     sendTo(player, { action: 'log', message: '❌ Invalid subclass selection.' });
@@ -1510,7 +1580,7 @@ wss.on('connection', (ws) => {
                 player.mana -= 25;
                 const healAmt = COMBAT.applyCombatModifiers(player, 40 + player.level * 2, 'heal');
                 target.hp = Math.min(target.maxHp, target.hp + healAmt);
-                broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `+${healAmt} HP`, color: '#44ff44' });
+                broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `+${healAmt} HP`, color: '#44ff44' });
             }
 
             if (data.action === 'accept_quest') {
@@ -1574,14 +1644,14 @@ wss.on('connection', (ws) => {
                     if (player.bleedStacks > 0) {
                         const bleedDmg = player.bleedStacks * CFG.BLEED_DMG_BASE * CFG.BLEED_MOVE_MULT;
                         player.hp -= bleedDmg;
-                        broadcast({ action: 'fct', x: player.x+16, y: player.y, text: `-${bleedDmg}`, color: '#ff0000' });
+                        broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `-${bleedDmg}`, color: '#ff0000' });
                         checkPlayerDeath(player);
                     }
 
                     chests.forEach((chest, chestId) => {
                         if (player.x === chest.x && player.y === chest.y) {
                             player.gold += CFG.CHEST_GOLD_REWARD;
-                            broadcast({ action: 'fct', x: player.x+16, y: player.y, text: `+${CFG.CHEST_GOLD_REWARD}G`, color: '#ffd700' });
+                            broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${CFG.CHEST_GOLD_REWARD}G`, color: '#ffd700' });
                             chests.delete(chestId); broadcast({ action: 'chest_update', id: chestId, active: false });
                         }
                     });
@@ -1590,7 +1660,7 @@ wss.on('connection', (ws) => {
                         if (node.active && player.x === node.x && player.y === node.y) {
                             node.active = false;
                             player.inventory.push(node.name);
-                            broadcast({ action: 'fct', x: player.x+16, y: player.y, text: `+${node.name}`, color: '#88ff88' });
+                            broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${node.name}`, color: '#88ff88' });
                             broadcast({ action: 'node_remove', id: nodeId });
                             const updates = Q.onItemGathered(player.quests, node.name);
                             updates.forEach(u => sendTo(player, { action: 'log', message: `📜 [QUEST] ${u.questName}: ${u.objective}` }));
@@ -1602,12 +1672,17 @@ wss.on('connection', (ws) => {
                                 sendTo(player, { action: 'skill_update', skill: gatherSkill });
                                 if (gatherSkill.leveled) {
                                     sendTo(player, { action: 'log', message: `⭐ ${gatherSkill.name} is now level ${gatherSkill.level}!` });
-                                    broadcast({ action: 'fct', x: player.x+16, y: player.y-24, text: `${gatherSkill.name} ${gatherSkill.level}`, color: '#fbbf24' });
+                                    broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y-24, text: `${gatherSkill.name} ${gatherSkill.level}`, color: '#fbbf24' });
                                 }
                             }
                             setTimeout(() => {
                                 node.active = true;
-                                broadcast({ action: 'node_sync', id: nodeId, name: node.name, x: node.x, y: node.y, color: node.color, symbol: node.symbol });
+                                // Floor-scoped, and it carries z. A global node_sync
+                                // with no z told a dungeon client about a surface ore
+                                // node and left it unable to say which world the
+                                // coordinates belonged to -- the same defect the mob
+                                // movement broadcast had.
+                                broadcastToFloor(node.z, { action: 'node_sync', id: nodeId, name: node.name, x: node.x, y: node.y, z: MAP.normalizeZ(node.z), color: node.color, symbol: node.symbol });
                             }, node.respawnTime);
                         }
                     });
@@ -1668,7 +1743,7 @@ wss.on('connection', (ws) => {
                 });
                 player.persistenceDirty = true;
                 broadcastGroundSync();
-                broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `-${item}`, color: '#cccccc' });
+                broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `-${item}`, color: '#cccccc' });
                 sendPlayerStatus(player);
             }
 
@@ -1688,7 +1763,7 @@ wss.on('connection', (ws) => {
                 player.inventory.push(entry.name);
                 player.persistenceDirty = true;
                 broadcastGroundSync();
-                broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${entry.name}`, color: '#88ff88' });
+                broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `+${entry.name}`, color: '#88ff88' });
                 sendPlayerStatus(player);
             }
 
@@ -1737,9 +1812,7 @@ wss.on('connection', (ws) => {
                 const item = caughtFish ? 'Raw Fish' : 'Old Boot';
                 player.inventory.push(item);
                 player.persistenceDirty = true;
-                broadcast({
-                    action: 'fct',
-                    x: player.x + 16,
+                broadcastToFloor(player.z, { action: 'fct', x: player.x + 16,
                     y: player.y,
                     text: `+${item}`,
                     color: caughtFish ? '#5bc0de' : '#8b7355'
@@ -1781,7 +1854,7 @@ wss.on('connection', (ws) => {
                     action: 'log',
                     message: `🔨 Bought ${result.item} for ${result.pricePaid} gold.`
                 });
-                broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${result.item}`, color: '#ffcc44' });
+                broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `+${result.item}`, color: '#ffcc44' });
 
                 // Tell the seller directly when they are online; otherwise the
                 // gold waits in their mailbox until they next log in.
@@ -1791,7 +1864,7 @@ wss.on('connection', (ws) => {
                         action: 'log',
                         message: `💰 Your ${result.item} sold for ${result.pricePaid} gold (fee ${result.sellerFee}). You received ${result.sellerPayout}.`
                     });
-                    broadcast({ action: 'fct', x: seller.x + 16, y: seller.y, text: `+${result.sellerPayout}g`, color: '#ffd700' });
+                    broadcastToFloor(seller.z, { action: 'fct', x: seller.x + 16, y: seller.y, text: `+${result.sellerPayout}g`, color: '#ffd700' });
                     sendPlayerStatus(seller);
                 } else {
                     sendTo(player, {
@@ -1826,11 +1899,11 @@ wss.on('connection', (ws) => {
                         player.inventory.splice(itemIndex, 1);
                         if (itemDef.type === 'heal') {
                             player.hp = Math.min(player.maxHp, player.hp + itemDef.val);
-                            broadcast({ action: 'fct', x: player.x+16, y: player.y, text: `+${itemDef.val} HP`, color: '#44ff44' });
+                            broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${itemDef.val} HP`, color: '#44ff44' });
                         }
                         if (itemDef.type === 'mana') {
                             player.mana = Math.min(player.maxMana, player.mana + itemDef.val);
-                            broadcast({ action: 'fct', x: player.x+16, y: player.y, text: `+${itemDef.val} MP`, color: '#4488ff' });
+                            broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${itemDef.val} MP`, color: '#4488ff' });
                         }
                     }
                 }
@@ -1897,7 +1970,7 @@ wss.on('connection', (ws) => {
                     sendTo(player, { action: 'log', message: '⚒️ ' + craftResult.message });
                 } else {
                     sendTo(player, { action: 'log', message: '⚒️ ' + craftResult.message });
-                    broadcast({ action: 'fct', x: player.x + 16, y: player.y, text: `+${craftResult.result}`, color: '#fbbf24' });
+                    broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `+${craftResult.result}`, color: '#fbbf24' });
                     sendTo(player, { action: 'crafting_sync', recipes: CRAFTING.listRecipes(player), inventory: player.inventory });
                     persistPlayer(player);
                 }
@@ -1930,7 +2003,7 @@ wss.on('connection', (ws) => {
                 if (player.mana >= CFG.PURIFY_MANA_COST) {
                     player.mana -= CFG.PURIFY_MANA_COST;
                     player.poisonStacks = 0; player.bleedStacks = 0;
-                    broadcast({ action: 'fct', x: player.x+16, y: player.y, text: 'PURIFIED', color: '#4488ff' });
+                    broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: 'PURIFIED', color: '#4488ff' });
                 }
             }
 
@@ -2111,7 +2184,7 @@ wss.on('connection', (ws) => {
 scheduleServerInterval(() => { 
     players.forEach(p => { 
         if (inSafeZone(p.x, p.y)) {
-            if (p.hp < p.maxHp) { p.hp = Math.min(p.hp + CFG.SAFEZONE_HEAL_PER_SEC, p.maxHp); broadcast({ action: 'fct', x: p.x+16, y: p.y, text: '+HP', color: '#44ff44' }); }
+            if (p.hp < p.maxHp) { p.hp = Math.min(p.hp + CFG.SAFEZONE_HEAL_PER_SEC, p.maxHp); broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: '+HP', color: '#44ff44' }); }
         }
         p.mana = Math.min(p.mana + CFG.MANA_REGEN_PER_SEC, p.maxMana); 
         
@@ -2176,7 +2249,7 @@ scheduleServerInterval(() => {
         if (p.skull && !hasActiveSkull(p, now)) {
             clearSkull(p);
             sendTo(p, { action: 'log', message: '💀 Your white skull has faded.' });
-            broadcast({ action: 'fct', x: p.x + 16, y: p.y - 24, text: 'UNSKULL', color: '#aaaaaa' });
+            broadcastToFloor(p.z, { action: 'fct', x: p.x + 16, y: p.y - 24, text: 'UNSKULL', color: '#aaaaaa' });
         }
         const floor = MAP.normalizeZ(p.z);
         if (!byFloor.has(floor)) byFloor.set(floor, []);
@@ -2243,15 +2316,20 @@ scheduleServerInterval(() => {
 
             const result = mobAttack(mob, closest, damageMultiplier, def); 
             if (result) {
-                broadcast({ action: 'fct', x: closest.x+16, y: closest.y, text: `-${result.damage}`, color: '#ff4444' });
-                if (result.poisoned) broadcast({ action: 'fct', x: closest.x+16, y: closest.y-20, text: `POISON`, color: '#00ff00' });
-                if (result.bled) broadcast({ action: 'fct', x: closest.x+16, y: closest.y-20, text: `BLEED`, color: '#ff4444' });
-                if (result.stunned) broadcast({ action: 'fct', x: closest.x+16, y: closest.y-20, text: `STUN`, color: '#ff88ff' });
+                broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y, text: `-${result.damage}`, color: '#ff4444' });
+                if (result.poisoned) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `POISON`, color: '#00ff00' });
+                if (result.bled) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `BLEED`, color: '#ff4444' });
+                if (result.stunned) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `STUN`, color: '#ff88ff' });
                 checkPlayerDeath(closest, mob.name);
             }
         } else if (minD <= AGGRO_RANGE) { 
             if (moveMobToward(mob, closest.x, closest.y)) {
-                broadcast({ action: 'mob_update', id: mobId, x: mob.x, y: mob.y, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type });
+                // Floor-scoped, and it carries z. Broadcast globally it told
+                // every surface client about a dungeon mob that had moved, and
+                // because the packet had no z the client filed it under "no
+                // floor" -- so a mob was simultaneously known to the surface
+                // roster and unclassifiable.
+                broadcastToFloor(mob.z, { action: 'mob_update', id: mobId, x: mob.x, y: mob.y, z: MAP.normalizeZ(mob.z), hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type });
             }
         }
     });
@@ -2259,13 +2337,13 @@ scheduleServerInterval(() => {
     players.forEach(p => {
         if (p.poisonStacks > 0 && now - p.lastPoisonTick >= CFG.POISON_TICK_INTERVAL) {
             p.lastPoisonTick = now; p.hp -= p.poisonStacks * CFG.POISON_DMG_PER_STACK;
-            broadcast({ action: 'fct', x: p.x+16, y: p.y, text: `-${p.poisonStacks * CFG.POISON_DMG_PER_STACK}`, color: '#00ff00' });
+            broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: `-${p.poisonStacks * CFG.POISON_DMG_PER_STACK}`, color: '#00ff00' });
             p.poisonStacks--; 
             checkPlayerDeath(p, 'Poison');
         }
         if (p.bleedStacks > 0 && now - p.lastBleedTick >= CFG.BLEED_TICK_INTERVAL) {
             p.lastBleedTick = now; p.hp -= p.bleedStacks * CFG.BLEED_DMG_BASE;
-            broadcast({ action: 'fct', x: p.x+16, y: p.y, text: `-${p.bleedStacks * CFG.BLEED_DMG_BASE}`, color: '#ff4444' });
+            broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: `-${p.bleedStacks * CFG.BLEED_DMG_BASE}`, color: '#ff4444' });
             p.bleedStacks--; 
             checkPlayerDeath(p, 'Bleeding');
         }
@@ -2273,7 +2351,7 @@ scheduleServerInterval(() => {
 
     // Boss AI tick
     bosses.forEach((boss, bossId) => {
-        bossAI(boss, players, broadcast, mobs);
+        bossAI(boss, players, broadcast, mobs, broadcastToFloor);
         // Delayed boss abilities can lower HP outside the main combat branch;
         // normalize death state on the next authoritative tick.
         players.forEach(p => {
@@ -2301,7 +2379,7 @@ scheduleServerInterval(() => {
                 }
                 const damage = Math.max(1, boss.damage - def);
                 closest.hp -= damage;
-                broadcast({ action: 'fct', x: closest.x+16, y: closest.y, text: `-${damage}`, color: '#ff0000' });
+                broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y, text: `-${damage}`, color: '#ff0000' });
                 checkPlayerDeath(closest, boss.name);
             }
         }
@@ -2353,8 +2431,9 @@ function checkPlayerDeath(player, killerName = 'Unknown') {
 
         const cid = "corpse_" + corpseIdCounter++;
         // The corpse stays where the player fell, on the floor they fell on.
-        corpses.set(cid, { id: cid, x: player.x, y: player.y, z: MAP.normalizeZ(player.z), gold: droppedGold, ownerName: player.charName, expiresAt: Date.now() + CFG.CORPSE_TTL_MS });
-        broadcast({ action: 'corpse_spawn', corpse: corpses.get(cid) });
+        const diedOn = MAP.normalizeZ(player.z);
+        corpses.set(cid, { id: cid, x: player.x, y: player.y, z: diedOn, gold: droppedGold, ownerName: player.charName, expiresAt: Date.now() + CFG.CORPSE_TTL_MS });
+        broadcastToFloor(diedOn, { action: 'corpse_spawn', corpse: corpses.get(cid) });
 
         player.hp = player.maxHp; player.mana = player.maxMana; 
         player.poisonStacks = 0; player.bleedStacks = 0; player.stunUntil = 0;
@@ -2366,6 +2445,16 @@ function checkPlayerDeath(player, killerName = 'Unknown') {
         // inside the dungeon terrain.
         player.z = CFG.Z_SURFACE;
         sendTo(player, { action: 'force_position', x: 320, y: 320, z: CFG.Z_SURFACE });
+
+        // And the client has to be told to change world. force_position alone
+        // moves the sprite and nothing else, so dying underground left the
+        // client holding the dungeon's terrain, its mobs and its ground loot
+        // while the server had the character on the surface -- a full desync,
+        // reached by doing the most ordinary thing in the game. This is the same
+        // path a traversal takes, which is why both go through it.
+        if (diedOn !== CFG.Z_SURFACE) {
+            syncFloorRoster(player);
+        }
     }
 }
 

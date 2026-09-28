@@ -212,6 +212,197 @@ test('the dungeon exit is always reachable, so the descent is never a soft-lock'
     assert.strictEqual(sealed, 0, `${sealed}/1500 generated caves could not be escaped from`);
 });
 
+// --- Stage 3: the dungeon is inhabited and enclosed ------------------------
+test('the dungeon is enclosed, not a walled room in an open plane', () => {
+    // z = -1 originally held nothing but a 14x14 room, so every other tile on
+    // the floor was standable. The first population attempt put mobs from x=32
+    // to x=3072: a player inside the cave saw almost none of them, and anything
+    // that wandered off was both unreachable and unkillable.
+    const W = CFG.DUNGEON_TILES_W, H = CFG.DUNGEON_TILES_H;
+    const step = CFG.TILE_SIZE;
+    const ox = CFG.DUNGEON_ORIGIN_X, oy = CFG.DUNGEON_ORIGIN_Y;
+    const tiles = [];
+    for (let x = 0; x < CFG.MAP_WIDTH; x += step) {
+        for (let y = 0; y < CFG.MAP_HEIGHT; y += step) {
+            if (MAP.isWalkable(x, y, CFG.Z_DUNGEON)) tiles.push({ x, y });
+        }
+    }
+    assert.ok(tiles.length > 0, 'the cave must have a floor');
+    // Every standable tile lies inside the cave's interior.
+    for (const t of tiles) {
+        assert.ok(t.x > ox && t.x < ox + (W - 1) * step,
+            `tile ${t.x},${t.y} is outside the cave on x`);
+        assert.ok(t.y > oy && t.y < oy + (H - 1) * step,
+            `tile ${t.x},${t.y} is outside the cave on y`);
+    }
+    // And the map's own corners are rock, not open dungeon.
+    for (const [x, y] of [[0, 0], [CFG.MAP_WIDTH - step, 0], [0, CFG.MAP_HEIGHT - step],
+        [CFG.MAP_WIDTH - step, CFG.MAP_HEIGHT - step], [2048, 2048]]) {
+        assert.strictEqual(MAP.isWalkable(x, y, CFG.Z_DUNGEON), false,
+            `${x},${y} must be bedrock on the dungeon floor`);
+    }
+});
+
+test('the bedrock is walkability-only, so map_data stays small', () => {
+    // Ten thousand rock tiles in obstacleData would add a few hundred kilobytes
+    // to every descent packet to draw geometry the player can never approach.
+    const terrain = MAP.getFloorTerrain(CFG.Z_DUNGEON);
+    const floor = MAP.getFloor(CFG.Z_DUNGEON);
+    assert.ok(floor.obstacles.size > 5000, 'the whole floor should be enclosed in rock');
+    assert.ok(terrain.obstacleData.length < 500,
+        `map_data carries ${terrain.obstacleData.length} dungeon tiles; only the cave should be drawn`);
+});
+
+test('dungeon mobs spawn inside the cave and never inside geometry', () => {
+    // The spawner must not place a mob somewhere a player cannot reach, and must
+    // not place one inside a wall. A random coordinate plus a retry loop does
+    // not give that: in a mostly-solid cave every random draw is rejected, and
+    // the loop's last candidate is one it already rejected.
+    const MOBS = require(path.join(SERVER_DIR, 'mobs'));
+    const before = MOBS.mobs.size;
+    const ids = MOBS.spawnFloorPack(() => { }, {
+        z: CFG.Z_DUNGEON, size: 12, tier: CFG.DUNGEON_MOB_TIER, types: CFG.DUNGEON_MOB_TYPES
+    });
+    try {
+        assert.ok(ids.length > 0, 'the dungeon must be able to hold mobs');
+        for (const id of ids) {
+            const m = MOBS.mobs.get(id);
+            assert.ok(MAP.isWalkable(m.x, m.y, CFG.Z_DUNGEON),
+                `mob at ${m.x},${m.y} is inside geometry`);
+            assert.strictEqual(m.z, CFG.Z_DUNGEON, 'a dungeon mob must record its floor');
+        }
+    } finally {
+        // The mobs map is a process-wide singleton; clear only what was added.
+        for (const id of ids) MOBS.mobs.delete(id);
+        assert.ok(MOBS.mobs.size <= before, 'no test mobs may be left behind');
+    }
+});
+
+test('the dungeon tier makes mobs tougher without touching the surface', () => {
+    const MOBS = require(path.join(SERVER_DIR, 'mobs'));
+    for (const type of CFG.DUNGEON_MOB_TYPES) {
+        const surface = MOBS.getMobStats(type, false, 1);
+        const deep = MOBS.getMobStats(type, false, CFG.DUNGEON_MOB_TIER);
+        assert.ok(deep.hp > surface.hp, `${type} must be tougher underground`);
+        assert.ok(deep.xp > surface.xp, `${type} must be worth more underground`);
+    }
+    // The surface is unchanged, and the default tier is exactly 1.
+    assert.strictEqual(MOBS.getMobStats('skeleton', false).hp, 40);
+    assert.strictEqual(MOBS.getMobStats('skeleton', false, 1).hp, 40);
+    assert.strictEqual(MOBS.getMobStats('skeleton', false).xp, 20);
+    // Elites still stack on top of the tier.
+    const elite = MOBS.getMobStats('skeleton', true, CFG.DUNGEON_MOB_TIER);
+    assert.strictEqual(elite.hp, MOBS.getMobStats('skeleton', false, CFG.DUNGEON_MOB_TIER).hp * 2);
+});
+
+test('an unknown or unbuilt floor spawns no mobs rather than guessing', () => {
+    const MOBS = require(path.join(SERVER_DIR, 'mobs'));
+    const empty = MAP.anUnregisteredFloor();
+    if (empty === null) return;   // the range is full; nothing to assert
+    const ids = MOBS.spawnFloorPack(() => { }, { z: empty, size: 5, types: CFG.DUNGEON_MOB_TYPES });
+    try {
+        assert.strictEqual(ids.length, 0, 'a floor with no terrain must hold no mobs');
+    } finally {
+        for (const id of ids) MOBS.mobs.delete(id);
+    }
+});
+
+test('a chest can only be looted from its own floor', () => {
+    // tryLootChest matched on x and y alone. Once chests exist on two floors, a
+    // player in the dungeon standing at a surface chest's coordinates looted it
+    // through a metre of rock, and it vanished from the surface for everyone.
+    const CHESTS = require(path.join(SERVER_DIR, 'chests'));
+    const sent = [];
+    CHESTS.chests.clear();
+    const surfaceSpot = MAP.randomWalkableTile(CFG.Z_SURFACE);
+    const deepSpot = MAP.randomWalkableTile(CFG.Z_DUNGEON);
+    assert.ok(surfaceSpot && deepSpot, 'both floors must have a place to put a chest');
+    CHESTS.chests.set('c_surface', { id: 'c_surface', x: surfaceSpot.x, y: surfaceSpot.y, z: CFG.Z_SURFACE });
+    CHESTS.chests.set('c_deep', { id: 'c_deep', x: deepSpot.x, y: deepSpot.y, z: CFG.Z_DUNGEON });
+    try {
+        // A player on the other floor, at the exact chest tile.
+        const intruder = {
+            x: surfaceSpot.x, y: surfaceSpot.y, z: CFG.Z_DUNGEON, gold: 0,
+            ws: { send: () => { } }
+        };
+        const looted = CHESTS.tryLootChest(intruder, { send: () => { } });
+        assert.strictEqual(looted, false, 'a cross-floor player must not loot the chest');
+        assert.ok(CHESTS.chests.has('c_surface'), 'the surface chest must survive');
+        assert.strictEqual(intruder.gold, 0, 'and award nothing');
+
+        // The rightful player gets it.
+        const owner = {
+            x: surfaceSpot.x, y: surfaceSpot.y, z: CFG.Z_SURFACE, gold: 0,
+            ws: { send: () => { } }
+        };
+        const okLoot = CHESTS.tryLootChest(owner, { send: () => { } });
+        assert.ok(okLoot, 'a same-floor player must be able to loot it');
+        assert.ok(!CHESTS.chests.has('c_surface'), 'and the chest is consumed');
+        assert.ok(owner.gold > 0, 'and pays out');
+    } finally {
+        CHESTS.chests.clear();
+    }
+    void sent;
+});
+
+test('floating combat text is floor-scoped everywhere', () => {
+    // Every fct packet carries a world coordinate. Broadcast globally, a
+    // surface player watches "+30 XP" float over a dungeon corpse, and a player
+    // gathering in a cave drops loot text onto the surface.
+    for (const rel of ['server.js', 'combat.js']) {
+        const src = fs.readFileSync(path.join(SERVER_DIR, rel), 'utf8');
+        const offenders = [];
+        src.split('\n').forEach((line, i) => {
+            if (!/broadcast\(\{\s*action:\s*'fct'/.test(line)) return;
+            offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
+        });
+        assert.deepStrictEqual(offenders, [],
+            'these fct broadcasts are not floor-scoped:\n  ' + offenders.join('\n  '));
+    }
+});
+
+test('map_data declares the floor walkable extent, and the client clips to it', () => {
+    // The bedrock enclosing the dungeon is walkability-only: it is in
+    // floor.obstacles but never in obstacleData, which would add ten thousand
+    // tiles to every descent packet. The consequence is that a client building
+    // its blocking set from obstacleData alone believes the ground beyond the
+    // cave is open. A pathfinder then walks off into empty coordinates -- in one
+    // harness, to negative infinity, until the process ran out of memory.
+    //
+    // So the packet has to state where the floor actually ends, and the client
+    // has to honour it. Both halves are asserted, because either alone is
+    // useless: bounds the client ignores, or a clip with nothing to clip to.
+    const terrain = MAP.getFloorTerrain(CFG.Z_DUNGEON);
+    assert.ok(terrain.bounds, 'map_data must carry the floor bounds');
+    const { minX, minY, maxX, maxY } = terrain.bounds;
+    assert.ok(maxX > minX && maxY > minY, 'bounds must describe a real area');
+    // They must describe where the ground IS, not where the map is.
+    assert.ok(minX > 0 && minY > 0, 'the dungeon does not start at the map origin');
+    assert.ok(maxX < CFG.MAP_WIDTH - CFG.TILE_SIZE,
+        'the dungeon does not reach the far edge of the map');
+    // And a tile inside the bounds really is standable, or the clip would trap
+    // the player in a region with no floor.
+    assert.ok(MAP.isWalkable(minX, minY, CFG.Z_DUNGEON), 'the bounds corner must be standable');
+    assert.ok(MAP.isWalkable(maxX, maxY, CFG.Z_DUNGEON), 'the far bound must be standable');
+
+    const engine = fs.readFileSync(CLIENT_JS, 'utf8');
+    assert.ok(/MAP_BOUNDS\s*=\s*data\.bounds\s*\|\|\s*null/.test(engine),
+        'engine.js must read data.bounds from map_data');
+    const walkable = engine.slice(engine.indexOf('function isWalkable'), engine.indexOf('function findPath'));
+    for (const edge of ['minX', 'maxX', 'minY', 'maxY']) {
+        assert.ok(walkable.includes(edge), `isWalkable must clip on ${edge}`);
+    }
+    // The search must also be bounded in its own right, so a missing or wrong
+    // bounds cannot turn into an unbounded walk.
+    const findPath = engine.slice(engine.indexOf('function findPath'));
+    assert.ok(/iterations\s*<\s*\d+/.test(findPath.slice(0, 1200)),
+        'findPath must cap its iterations');
+    // And the surface must not be clipped, or the whole map becomes a room.
+    const surface = MAP.getFloorBounds(CFG.Z_SURFACE);
+    assert.ok(surface && surface.minX === 0 && surface.minY === 0,
+        'the surface bounds must cover the map, not a sub-region');
+});
+
 test('a traversal tile cannot be placed pointing at a floor that does not exist', () => {
     // Otherwise the player stands on a tile that does nothing, with no
     // explanation, which reads as a broken game.

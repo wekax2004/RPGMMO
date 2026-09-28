@@ -16,7 +16,13 @@ function getMobTypeForZone(zone) {
     return 'spider'; // default fallback
 }
 
-function getMobStats(type, isElite) {
+// `tier` scales a mob for the floor it lives on. Underground creatures are
+// tougher than their surface namesakes without needing new sprites or new types:
+// a dungeon skeleton is the same skeleton, scaled. Keeping it a multiplier
+// rather than a new type list means the surface economy and the loot table
+// stay untouched, and a mob's identity -- which quests count, what it drops --
+// does not change with the floor.
+function getMobStats(type, isElite, tier = 1) {
     let hp = 30, xp = 15;
     if (type === 'spider') { hp = 30; xp = 15; }
     if (type === 'skeleton') { hp = 40; xp = 20; }
@@ -24,7 +30,11 @@ function getMobStats(type, isElite) {
     if (type === 'bear') { hp = 65; xp = 35; }
     if (type === 'minotaur') { hp = 80; xp = 45; }
     if (type === 'yeti') { hp = 100; xp = 60; }
-    
+
+    if (tier !== 1) {
+        hp = Math.round(hp * tier);
+        xp = Math.round(xp * tier);
+    }
     if (isElite) { hp *= 2; xp *= 2.5; }
     return { hp, xp };
 }
@@ -62,8 +72,62 @@ function spawnMobPack(broadcast, size = 3) {
         }
     }
 }
-
 const KNOWN_MOB_TYPES = ['spider', 'skeleton', 'bandit', 'bear', 'minotaur', 'yeti'];
+
+// Spawns a pack of one type on one floor, at real standable tiles.
+//
+// The surface path (spawnMobPack) picks a random coordinate and checks
+// isWalkable. Doing that underground is wrong in a way that is invisible from
+// the surface: a random coordinate in a 14x14 cave is almost always solid, so
+// the pack silently spawns nothing, or -- if a coordinate is kept from the last
+// attempt -- spawns inside a wall. Enumerating the floor's standable tiles makes
+// a miss impossible and lets the caller be told when a floor cannot hold a mob.
+//
+// `tier` scales stats for the floor. `types` restricts the roster, so the
+// dungeon gets undead rather than a surface bear wandering underground.
+function spawnFloorPack(broadcast, options = {}) {
+    const z = MAP.normalizeZ(options.z);
+    const types = Array.isArray(options.types) && options.types.length
+        ? options.types.filter(t => KNOWN_MOB_TYPES.indexOf(t) !== -1)
+        : KNOWN_MOB_TYPES;
+    const roster = types.length ? types : KNOWN_MOB_TYPES;
+    const size = Math.max(0, Math.floor(options.size || 0));
+    const tier = Number.isFinite(options.tier) && options.tier > 0 ? options.tier : 1;
+    const eliteChance = Number.isFinite(options.eliteChance) ? options.eliteChance : 0.1;
+
+    const spawned = [];
+    for (let i = 0; i < size; i++) {
+        const spot = MAP.randomWalkableTile(z);
+        if (!spot) break;   // the floor is full of geometry; stop, do not guess
+        const type = roster[Math.floor(Math.random() * roster.length)];
+        const isElite = Math.random() < eliteChance;
+        const stats = getMobStats(type, isElite, tier);
+        const name = (isElite ? 'Elite ' : '') + type.charAt(0).toUpperCase() + type.slice(1);
+        const id = 'm_' + Math.random().toString(36).substr(2, 6);
+        mobs.set(id, {
+            id, type, name, x: spot.x, y: spot.y, z,
+            hp: stats.hp, maxHp: stats.hp,
+            xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
+        });
+        broadcast({
+            action: 'mob_update', id, type, name, x: spot.x, y: spot.y, z,
+            hp: stats.hp, maxHp: stats.hp, alive: true, isElite
+        });
+        spawned.push(id);
+    }
+    return spawned;
+}
+
+// How many mobs a floor currently holds. Used by the respawn driver to top the
+// dungeon back up to its intended population rather than appending forever.
+function countMobsOn(z) {
+    const floor = MAP.normalizeZ(z);
+    let n = 0;
+    for (const mob of mobs.values()) {
+        if (MAP.normalizeZ(mob.z) === floor) n++;
+    }
+    return n;
+}
 
 // Spawns a single mob of an exact type at an exact spot. Normal spawning is
 // randomised across the whole map, which makes it impossible for a test to
@@ -167,4 +231,7 @@ function mobAttack(mob, player, damageMultiplier = 1.0, defense = 0) {
     return { damage, poisoned, bled, stunned };
 }
 
-module.exports = { mobs, spawnMobPack, spawnMobAt, inSafeZone, moveMobToward, mobAttack };
+module.exports = {
+    mobs, spawnMobPack, spawnFloorPack, spawnMobAt, inSafeZone,
+    moveMobToward, mobAttack, countMobsOn, getMobStats, KNOWN_MOB_TYPES
+};

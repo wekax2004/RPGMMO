@@ -276,6 +276,67 @@ function hasWaterNear(x, y, range, z = CFG.Z_SURFACE) {
     return found;
 }
 
+// A random standable tile on a floor, or null if the floor has none.
+//
+// Never returns a solid tile and never invents a coordinate. A caller that gets
+// null must handle "this floor cannot hold that" rather than proceed with a
+// guess. Random placement plus an isWalkable retry loop is not equivalent: a
+// random coordinate is usually solid, so a spawner either burns its attempts
+// and gives up, or keeps the last rejected one because that is the only
+// candidate the loop actually tried.
+function randomWalkableTile(z) {
+    const floor = getFloor(z);
+    if (!floor) return null;
+    const step = CFG.TILE_SIZE;
+    // A dungeon is small enough to enumerate exhaustively, so a mob there is
+    // always placed on a real tile. The surface is not, so rejection-sample it
+    // and accept that it may occasionally decline.
+    if (floor.obstacleData.length < 2000) {
+        const tiles = [];
+        for (let x = 0; x < CFG.MAP_WIDTH; x += step) {
+            for (let y = 0; y < CFG.MAP_HEIGHT; y += step) {
+                if (!floor.obstacles.has(`${x},${y}`)) tiles.push({ x, y });
+            }
+        }
+        if (tiles.length === 0) return null;
+        return tiles[Math.floor(Math.random() * tiles.length)];
+    }
+    for (let i = 0; i < 60; i++) {
+        const x = Math.floor(Math.random() * (CFG.MAP_WIDTH / step)) * step;
+        const y = Math.floor(Math.random() * (CFG.MAP_HEIGHT / step)) * step;
+        if (!floor.obstacles.has(`${x},${y}`)) return { x, y };
+    }
+    return null;
+}
+
+// The walkable extent of a floor, in world pixels.
+//
+// Exists because the bedrock that encloses the dungeon is walkability-only: it
+// is in floor.obstacles but deliberately not in obstacleData, which would add
+// ten thousand tiles to every descent packet to draw rock the player can never
+// approach. The consequence is that a client building its movement-blocking set
+// from obstacleData alone believes the ground beyond the cave is open, and a
+// pathfinder walks off into empty coordinates -- in one harness, to negative
+// infinity, until the process ran out of memory. This tells the client where
+// the floor actually ends so it can clip.
+function getFloorBounds(z) {
+    const floor = getFloor(z);
+    if (!floor) return null;
+    const step = CFG.TILE_SIZE;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let x = 0; x < CFG.MAP_WIDTH; x += step) {
+        for (let y = 0; y < CFG.MAP_HEIGHT; y += step) {
+            if (floor.obstacles.has(`${x},${y}`)) continue;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (minX === Infinity) return null;   // a floor with no floor at all
+    return { minX, minY, maxX, maxY };
+}
+
 // The full terrain description of one floor, for the map_data packet. Returns
 // null for a floor that was never generated, so a client asking for a dungeon
 // gets nothing rather than the surface's tiles relabelled.
@@ -286,6 +347,10 @@ function getFloorTerrain(z) {
         z: floor.z,
         obstacleData: floor.obstacleData,
         waterTiles: floor.waterTiles,
+        // Where the floor's standable ground actually is, so a client can clip
+        // its pathfinding to the cave instead of walking into the bedrock it
+        // was never told about.
+        bounds: getFloorBounds(floor.z),
         // Declared so the client can render a hint, and so a client that
         // mistypes a tile learns the floor is traversable rather than solid.
         transitions: [...floor.transitions.values()].map(t => ({ x: t.x, y: t.y, to: t.to, type: t.type, arrive: t.arrive }))
@@ -336,6 +401,28 @@ function generateDungeonFloor() {
     const h = CFG.DUNGEON_TILES_H;
     const step = CFG.TILE_SIZE;
 
+    // Bedrock: everything outside the cave footprint is solid.
+    //
+    // Without this the dungeon is not a cave, it is a 14x14 walled room sitting
+    // in the middle of an open plane that extends to the map edges. Measured
+    // after the first population attempt: mobs placed on z=-1 spanned x 32 to
+    // 3072, so a player inside the cave would have seen almost none of them and
+    // anything that did wander off was unreachable and unkillable.
+    //
+    // Only `obstacles` is filled, not `obstacleData`. The client cannot reach
+    // the outside, so drawing ten thousand rock tiles would only bloat map_data
+    // by a few hundred kilobytes on every descent.
+    const tilesAcross = Math.ceil(CFG.MAP_WIDTH / step);
+    const tilesDown = Math.ceil(CFG.MAP_HEIGHT / step);
+    for (let tx = 0; tx < tilesAcross; tx++) {
+        for (let ty = 0; ty < tilesDown; ty++) {
+            const insideCave = tx * step >= ox && tx * step < ox + w * step &&
+                               ty * step >= oy && ty * step < oy + h * step;
+            if (insideCave) continue;
+            obs.add(`${tx * step},${ty * step}`);
+        }
+    }
+
     for (let tx = 0; tx < w; tx++) {
         for (let ty = 0; ty < h; ty++) {
             // Hollow interior: the border only, so the cave is a walled room
@@ -384,7 +471,17 @@ function generateDungeonFloor() {
     }
 
     registerFloor(z, { obstacles: obs, obstacleData: data, waterTiles: new Set() });
-    return getFloor(z);
+    const floor = getFloor(z);
+    // A ring of visible rock just outside the walls, so the client draws an
+    // enclosure rather than dark void at the edge of the room. The bedrock
+    // beyond it is walkability-only and is not sent.
+    for (let tx = -1; tx <= w; tx++) {
+        for (let ty = -1; ty <= h; ty++) {
+            if (tx >= 0 && ty >= 0 && tx < w && ty < h) continue;
+            data.push({ x: ox + tx * step, y: oy + ty * step, type: 'cave_wall' });
+        }
+    }
+    return floor;
 }
 
 // Connects the surface to the dungeon with a two-way ladder at a fixed, known
@@ -436,6 +533,7 @@ if (CFG.Z_DUNGEON !== CFG.Z_SURFACE) {
 module.exports = {
     isWalkable, isWater, hasWaterNear, getZone, getFloor, hasFloor, getFloorTerrain,
     normalizeZ, registerFloor, unregisterFloor, anUnregisteredFloor, findArrivalPoint,
+    randomWalkableTile, getFloorBounds,
     placeTransition, getTransition, hasTransition, TILE_TYPES,
     // Kept as the surface's terrain: the map_data payload the client already
     // parses is unchanged, and no existing consumer has to learn about floors.

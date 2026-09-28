@@ -49,6 +49,33 @@ module.exports = {
     // targeting, combat and loot do not -- all of those use dist3D, which
     // returns Infinity across a floor boundary.
 
+    // --- Z-levels (Stage 3: the dungeon is inhabited) ---
+    // How many mobs live below, and how much tougher they are than their
+    // surface namesakes. The tier multiplies existing types rather than adding
+    // new ones, so a dungeon skeleton is the same skeleton scaled: it keeps its
+    // sprite, its loot table and its quest identity, and none of the surface
+    // economy shifts.
+    // Nine, in a 12x12 cave, is roughly one mob per twenty tiles. The first
+    // pass used fourteen and a level 1 character standing still in the room was
+    // killed faster than any heal could land -- several mobs land a hit per
+    // server tick, so topping up between steps loses the race outright. Lethal
+    // is correct for a dungeon; unsurvivable-by-arrival is not.
+    DUNGEON_MOB_COUNT: 9,
+    DUNGEON_MOB_TIER: 2.5,
+    // Elites are doubled on top of the tier. More common underground than on
+    // the surface, where it is 0.1.
+    DUNGEON_ELITE_CHANCE: 0.25,
+    // Underground roster. A surface bear wandering into a cave would be both
+    // wrong and, with the tier applied, a wall.
+    DUNGEON_MOB_TYPES: ['skeleton', 'spider', 'minotaur', 'bandit'],
+    // Top the dungeon back up to DUNGEON_MOB_COUNT on this interval, so a
+    // player who clears it does not permanently empty the floor.
+    DUNGEON_RESPAWN_INTERVAL: 30_000,
+    // Chests below. More valuable than the surface ones, since getting there
+    // is the point of the floor.
+    DUNGEON_CHEST_COUNT: 3,
+    DUNGEON_CHEST_GOLD: 150,
+
     // Safe Zone (City)
     SAFE_ZONE: { x: 0, y: 0, w: 640, h: 640 },
 

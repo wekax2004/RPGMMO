@@ -48,6 +48,10 @@ function createCombat(deps) {
         // is kept for the handful of purely spatial checks that genuinely do
         // not care which floor something is on.
         dist3D,
+        // Floor-scoped broadcast. A floating "+30 XP" over a corpse in the
+        // dungeon means nothing to a player on the surface, who sees the text
+        // at coordinates that do not exist in their world.
+        broadcastToFloor,
         inSafeZone,
         broadcast,
         sendTo,
@@ -117,7 +121,7 @@ function createCombat(deps) {
                 sendQuestJournal(member);
             }
         });
-        broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `+${target.xpReward} XP`, color: '#ffcc00' });
+        broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `+${target.xpReward} XP`, color: '#ffcc00' });
 
         let lootDropped = false;
         const loot = ITEMS.lootTable[target.type];
@@ -128,7 +132,7 @@ function createCombat(deps) {
                 if (Math.random() < chance) {
                     player.inventory.push(item.name);
                     lootDropped = true;
-                    broadcast({ action: 'fct', x: target.x+16, y: target.y-20, text: `+${item.name}`, color: '#ffffff' });
+                    broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y-20, text: `+${item.name}`, color: '#ffffff' });
                 }
             });
         }
@@ -168,7 +172,7 @@ function createCombat(deps) {
     function hitMobFor(player) {
         return function hitMob(m, dmg) {
             m.hp -= dmg;
-            broadcast({ action: 'fct', x: m.x+16, y: m.y, text: `-${dmg}`, color: '#ff8866' });
+            broadcastToFloor(m.z, { action: 'fct', x: m.x+16, y: m.y, text: `-${dmg}`, color: '#ff8866' });
             broadcast({ action: 'mob_update', id: m.id, type: m.type, name: m.name, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp, alive: true, isElite: m.isElite });
             if (m.hp <= 0) killMob(player, m);
         };
@@ -194,7 +198,7 @@ function createCombat(deps) {
         if (!grantWhiteSkull(caster)) return;
         sendTo(caster, { action: 'log', message: '💀 You are now skulled! You will drop all your gold if you die.' });
         sendTo(target, { action: 'log', message: `💀 You were hit by ${caster.charName}.` });
-        broadcast({ action: 'fct', x: caster.x + 16, y: caster.y - 24, text: 'SKULL', color: '#ff4444' });
+        broadcastToFloor(caster.z, { action: 'fct', x: caster.x + 16, y: caster.y - 24, text: 'SKULL', color: '#ff4444' });
     }
 
     // Damages every mob in range and returns how many were hit, so the caller
@@ -254,7 +258,7 @@ function createCombat(deps) {
             if (!isHostileTo(player, target)) continue;
             const dealt = damage + Math.floor(player.level * 2);
             target.hp -= dealt;
-            broadcast({ action: 'fct', x: target.x + 16, y: target.y, text: `-${dealt}`, color: '#ff8800' });
+            broadcastToFloor(target.z, { action: 'fct', x: target.x + 16, y: target.y, text: `-${dealt}`, color: '#ff8800' });
             checkPlayerDeath(target, player.charName);
             punishPvP(player, target);
             playersHit++;
@@ -282,13 +286,13 @@ function createCombat(deps) {
             if (Math.hypot(target.x - player.x, target.y - player.y) > radius) continue;
             if (isHostileTo(player, target)) {
                 target.hp -= damage;
-                broadcast({ action: 'fct', x: target.x + 16, y: target.y, text: `-${damage}`, color: '#ff8800' });
+                broadcastToFloor(target.z, { action: 'fct', x: target.x + 16, y: target.y, text: `-${damage}`, color: '#ff8800' });
                 checkPlayerDeath(target, player.charName);
                 punishPvP(player, target);
                 playersHit++;
             } else if (target.hp < target.maxHp) {
                 target.hp = Math.min(target.maxHp, target.hp + healAmount);
-                broadcast({ action: 'fct', x: target.x + 16, y: target.y, text: `+${healAmount}`, color: '#44ff44' });
+                broadcastToFloor(target.z, { action: 'fct', x: target.x + 16, y: target.y, text: `+${healAmount}`, color: '#44ff44' });
                 sendTo(target, { action: 'log', message: `✝ Holy Nova restored ${healAmount} HP.` });
                 healed++;
             }
@@ -398,7 +402,7 @@ function createCombat(deps) {
                 player.hp = Math.min(player.maxHp, player.hp + 50 + player.level * 5);
                 if (player.hp > before) {
                     spellDidSomething = true;
-                    broadcast({ action: 'fct', x: player.x, y: player.y, text: `+${player.hp - before}`, color: '#44ff44' });
+                    broadcastToFloor(player.z, { action: 'fct', x: player.x, y: player.y, text: `+${player.hp - before}`, color: '#44ff44' });
                 }
                 broadcast({ action: 'spell_anim', type: 'heal', x: player.x, y: player.y });
             } else { // Holy Smite
@@ -437,7 +441,7 @@ function createCombat(deps) {
                             }
                             target.hp -= damage; applyLifesteal(player, damage);
                             broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
-                            broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ff8800' });
+                            broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ff8800' });
                             checkPlayerDeath(target, player.charName);
                             if (player.classType === 'warrior') trainMelee(player);
                             // Attacking someone who is not already flagged
@@ -447,7 +451,7 @@ function createCombat(deps) {
                                 if (grantWhiteSkull(player)) {
                                     sendTo(player, { action: 'log', message: '💀 You are now skulled! You will drop all your gold if you die.' });
                                     sendTo(target, { action: 'log', message: '💀 You were attacked by ' + player.charName + '.' });
-                                    broadcast({ action: 'fct', x: player.x + 16, y: player.y - 24, text: 'SKULL', color: '#ff4444' });
+                                    broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y - 24, text: 'SKULL', color: '#ff4444' });
                                 }
                             }
                         }
@@ -467,7 +471,7 @@ function createCombat(deps) {
 
                         target.hp -= damage; applyLifesteal(player, damage);
                         broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
-                        broadcast({ action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
+                        broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
                         broadcast({ action: 'mob_update', id: player.targetId, x: target.x, y: target.y, hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
                         if (target.hp <= 0) killMob(player, target);
                         if (player.classType === 'warrior') trainMelee(player);
@@ -490,14 +494,14 @@ function createCombat(deps) {
                     if (player.equipment.weapon && ITEMS.weapons[player.equipment.weapon]) damage += ITEMS.weapons[player.equipment.weapon].bonus;
                     boss.hp -= damage; applyLifesteal(player, damage);
                     broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: boss.x, ty: boss.y });
-                    broadcast({ action: 'fct', x: boss.x+16, y: boss.y, text: `-${damage}`, color: '#ffffff' });
+                    broadcastToFloor(boss.z, { action: 'fct', x: boss.x+16, y: boss.y, text: `-${damage}`, color: '#ffffff' });
                     if (player.classType === 'warrior') trainBossMelee(player);
                     broadcast({ action: 'mob_update', id: bossId, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isBoss: true, name: boss.name, type: boss.type });
 
                     if (boss.hp <= 0) {
                         // Boss killed!
                         broadcast({ action: 'log', message: `🏆 ${player.charName} has slain ${boss.name}!` });
-                        broadcast({ action: 'fct', x: boss.x, y: boss.y, text: '💀 BOSS SLAIN!', color: '#ff00ff' });
+                        broadcastToFloor(boss.z, { action: 'fct', x: boss.x, y: boss.y, text: '💀 BOSS SLAIN!', color: '#ff00ff' });
 
                         // Distribute loot
                         const loot = ITEMS.lootTable[boss.type];
@@ -523,7 +527,7 @@ function createCombat(deps) {
                                         p.inventory.push(item.name);
                                         sendTo(p, { action: 'log', message: `You looted: ${item.name}` });
                                         if (p.id === player.id) { // Only show FCT for the actual killer
-                                            broadcast({ action: 'fct', x: boss.x+16, y: boss.y-20, text: `+${item.name}`, color: '#ff00ff' });
+                                            broadcastToFloor(boss.z, { action: 'fct', x: boss.x+16, y: boss.y-20, text: `+${item.name}`, color: '#ff00ff' });
                                         }
                                     }
                                 });
