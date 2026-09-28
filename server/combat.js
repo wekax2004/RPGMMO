@@ -187,7 +187,7 @@ function createCombat(deps) {
     function isHostileTo(caster, target) {
         if (!target || target.id === caster.id) return false;
         if (!(caster.warmode && target.warmode)) return false;
-        return !inSafeZone(caster.x, caster.y) && !inSafeZone(target.x, target.y);
+        return !inSafeZone(caster.x, caster.y, caster.z) && !inSafeZone(target.x, target.y, target.z);
     }
 
     // Applies the PvP consequence of hitting another player, so a Meteor
@@ -427,7 +427,7 @@ function createCombat(deps) {
             if (player.targetId) {
                 if (players.has(player.targetId)) {
                     const target = players.get(player.targetId);
-                    if (player.warmode && target.warmode && !inSafeZone(player.x, player.y) && !inSafeZone(target.x, target.y)) {
+                    if (player.warmode && target.warmode && !inSafeZone(player.x, player.y, player.z) && !inSafeZone(target.x, target.y, target.z)) {
                         // PvP is same-floor. dist3D returns Infinity across a
                         // boundary, so a warmode duel cannot be carried out
                         // against someone a floor away.

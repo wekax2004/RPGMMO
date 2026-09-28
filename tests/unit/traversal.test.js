@@ -403,6 +403,45 @@ test('map_data declares the floor walkable extent, and the client clips to it', 
         'the surface bounds must cover the map, not a sub-region');
 });
 
+test('only the surface has a safe zone', () => {
+    // inSafeZone(x, y) had no floor parameter. It worked only because the
+    // dungeon happens to sit outside the city's coordinates: a dungeon built
+    // under the city would make its players permanently invulnerable,
+    // self-healing and untouchable, because every caller would read their
+    // coordinates as "in the city". That is a coincidence of layout, not a rule.
+    const MOBS = require(path.join(SERVER_DIR, 'mobs'));
+    const sz = CFG.SAFE_ZONE;
+    const inCity = { x: sz.x + 32, y: sz.y + 32 };
+    assert.strictEqual(MOBS.inSafeZone(inCity.x, inCity.y, CFG.Z_SURFACE), true,
+        'the city is safe on the surface');
+    for (let z = CFG.Z_MIN; z < CFG.Z_SURFACE; z++) {
+        assert.strictEqual(MOBS.inSafeZone(inCity.x, inCity.y, z), false,
+            `floor ${z} must have no safe zone, even at city coordinates`);
+    }
+    // The default still means the surface, so a caller with no floor in mind
+    // keeps its original meaning rather than silently changing.
+    assert.strictEqual(MOBS.inSafeZone(inCity.x, inCity.y), true);
+});
+
+test('every inSafeZone call site states the floor it is asking about', () => {
+    // The parameter defaults to the surface, so a call that omits it silently
+    // keeps the old 2D meaning -- which is the coincidence this change removed.
+    const offenders = [];
+    for (const rel of ['server.js', 'combat.js', 'mobs.js']) {
+        const src = fs.readFileSync(path.join(SERVER_DIR, rel), 'utf8');
+        src.split('\n').forEach((line, i) => {
+            // the declaration is the one place a default belongs
+            if (/function inSafeZone/.test(line)) return;
+            for (const call of line.match(/inSafeZone\([^)]*\)/g) || []) {
+                const args = call.slice('inSafeZone('.length, -1).split(',');
+                if (args.length < 3) offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
+            }
+        });
+    }
+    assert.deepStrictEqual(offenders, [],
+        'these inSafeZone calls do not say which floor they mean:\n  ' + offenders.join('\n  '));
+});
+
 test('a traversal tile cannot be placed pointing at a floor that does not exist', () => {
     // Otherwise the player stands on a tile that does nothing, with no
     // explanation, which reads as a broken game.

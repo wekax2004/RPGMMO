@@ -74,6 +74,20 @@ function connect() {
                 state.player.x = packet.x;
                 state.player.y = packet.y;
             }
+            // Authoritative position, from our own players_sync entry. The two
+            // handlers above fire on login, traversal, death and stun -- not
+            // during ordinary walking -- so state.player froze wherever the
+            // character last was placed and the walk to a gathering node used to
+            // give up partway. players_sync arrives every ~200ms and includes
+            // the receiving player, so it is the dependable read.
+            if (packet.action === 'players_sync') {
+                for (const e of packet.players || []) {
+                    if (e.id === state.id) {
+                        state.player.x = e.x;
+                        state.player.y = e.y;
+                    }
+                }
+            }
             state.on.packet(packet);
         });
     });

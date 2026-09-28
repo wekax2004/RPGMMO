@@ -2183,7 +2183,7 @@ wss.on('connection', (ws) => {
 
 scheduleServerInterval(() => { 
     players.forEach(p => { 
-        if (inSafeZone(p.x, p.y)) {
+        if (inSafeZone(p.x, p.y, p.z)) {
             if (p.hp < p.maxHp) { p.hp = Math.min(p.hp + CFG.SAFEZONE_HEAL_PER_SEC, p.maxHp); broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: '+HP', color: '#44ff44' }); }
         }
         p.mana = Math.min(p.mana + CFG.MANA_REGEN_PER_SEC, p.maxMana); 
@@ -2296,7 +2296,7 @@ scheduleServerInterval(() => {
     mobs.forEach((mob, mobId) => {
         let closest = null, minD = Infinity;
         players.forEach(p => { 
-            if (p.hp > 0 && !inSafeZone(p.x, p.y)) {
+            if (p.hp > 0 && !inSafeZone(p.x, p.y, mob.z)) {
                 const d2 = dist3D(p.x, p.y, p.z, mob.x, mob.y, mob.z); 
                 if (d2 < minD) { minD = d2; closest = p; } 
             } 
@@ -2361,7 +2361,7 @@ scheduleServerInterval(() => {
         // Boss attacks nearest player
         let closest = null, minD = Infinity;
         players.forEach(p => {
-            if (p.hp > 0 && !inSafeZone(p.x, p.y)) {
+            if (p.hp > 0 && !inSafeZone(p.x, p.y, boss.z)) {
                 const d2 = dist3D(p.x, p.y, p.z, boss.x, boss.y, boss.z);
                 if (d2 < minD) { minD = d2; closest = p; }
             }

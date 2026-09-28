@@ -52,6 +52,25 @@ function connect(url) {
             }
             if (p.action === 'player_update' && p.id === st.id) st.pos = { x: p.x, y: p.y };
             if (p.action === 'force_position') st.pos = { x: p.x, y: p.y };
+            // Authoritative position, from our own players_sync entry.
+            //
+            // The two handlers above almost never fire during ordinary walking:
+            // player_update is sent on login and on traversal, force_position on
+            // death and on a stun. So st.pos froze at the spawn point and the
+            // walk below believed it was stuck, detouring blindly for its whole
+            // iteration budget. It only ever worked by accident, when some
+            // unrelated packet happened to move the character -- which is why
+            // this harness failed intermittently rather than reliably.
+            //
+            // players_sync arrives every ~200ms and includes the receiving
+            // player, so it is the one dependable read of where the server
+            // thinks we are. Moves are never echoed: an accepted step is applied
+            // silently and a rejected one ignored.
+            if (p.action === 'players_sync') {
+                for (const e of p.players || []) {
+                    if (e.id === st.id) st.authPos = { x: e.x, y: e.y };
+                }
+            }
             if (typeof st.on.packet === 'function') st.on.packet(p);
         });
     });
@@ -233,6 +252,11 @@ async function walkTo(st, tx, ty) {
     const budget = Date.now() + 60000;
     let detour = 0, detourFor = 0;
     for (let i = 0; i < 220; i++) {
+        // Step from where the server last said we were, not from a locally
+        // cached belief. The two can disagree whenever a step was refused, and
+        // walking from the stale copy is how this harness used to conclude it
+        // was stuck against a wall that was not there.
+        if (st.authPos) st.pos = { x: st.authPos.x, y: st.authPos.y };
         const dx = tx - st.pos.x, dy = ty - st.pos.y;
         if (dx === 0 && dy === 0) return true;
         const before = `${st.pos.x},${st.pos.y}`;
@@ -249,7 +273,11 @@ async function walkTo(st, tx, ty) {
         }
         send(st, { action: 'move', x: st.pos.x + sx, y: st.pos.y + sy });
         await sleep(STEP_DELAY);
-        if (`${st.pos.x},${st.pos.y}` === before) {
+        // Re-read the authoritative position and compare: a refused step leaves
+        // it exactly where it was, which is the only reliable signal, because
+        // a successful step produces no packet at all.
+        const after = st.authPos ? `${st.authPos.x},${st.authPos.y}` : before;
+        if (after === before) {
             detour = detour === 0 ? 1 : (detour === 1 ? -1 : 0);
             detourFor = detour === 0 ? 0 : 4;
         } else if (detourFor === 0) detour = 0;

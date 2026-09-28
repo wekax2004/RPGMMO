@@ -47,7 +47,7 @@ function spawnMobPack(broadcast, size = 3) {
         packX = Math.floor(Math.random() * (CFG.MAP_WIDTH / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
         packY = Math.floor(Math.random() * (CFG.MAP_HEIGHT / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
         zone = getZone(packX, packY);
-    } while (!isWalkable(packX, packY) || inSafeZone(packX, packY) || zone === 'City');
+    } while (!isWalkable(packX, packY) || inSafeZone(packX, packY, CFG.Z_SURFACE) || zone === 'City');
 
     const type = getMobTypeForZone(zone);
     const isElite = Math.random() < 0.1;
@@ -61,7 +61,7 @@ function spawnMobPack(broadcast, size = 3) {
         let y = packY + (Math.floor(Math.random() * 3) - 1) * CFG.TILE_SIZE;
         
         // Ensure spawn point is walkable
-        if (isWalkable(x, y) && !inSafeZone(x, y)) {
+        if (isWalkable(x, y) && !inSafeZone(x, y, CFG.Z_SURFACE)) {
             const id = 'm_' + Math.random().toString(36).substr(2, 6);
             mobs.set(id, {
                 id, type, name, x, y, z: CFG.Z_SURFACE,
@@ -159,7 +159,15 @@ function spawnMobAt(x, y, type, broadcast, z = CFG.Z_SURFACE) {
     return id;
 }
 
-function inSafeZone(x, y) {
+// Only the surface has a safe zone. Underground is meant to be dangerous, and
+// the dungeon happens to sit outside the city's coordinates -- which is why
+// this worked without a floor parameter. That is a coincidence of layout, not a
+// rule: a dungeon built under the city would make its players permanently
+// invulnerable, self-healing, and unable to be fought, because every caller
+// would read their coordinates as "in the city". Stating the floor here makes
+// the rule explicit instead of positional.
+function inSafeZone(x, y, z = CFG.Z_SURFACE) {
+    if (MAP.normalizeZ(z) !== CFG.Z_SURFACE) return false;
     return x >= CFG.SAFE_ZONE.x && x < CFG.SAFE_ZONE.x + CFG.SAFE_ZONE.w &&
            y >= CFG.SAFE_ZONE.y && y < CFG.SAFE_ZONE.y + CFG.SAFE_ZONE.h;
 }
@@ -175,7 +183,7 @@ function moveMobToward(mob, targetX, targetY) {
         ny += targetY > mob.y ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
     }
     
-    if (isWalkable(nx, ny) && !inSafeZone(nx, ny)) {
+    if (isWalkable(nx, ny) && !inSafeZone(nx, ny, MAP.normalizeZ(mob.z))) {
         mob.x = nx; mob.y = ny;
         mob.lastMoveTime = now;
         return true;
@@ -189,7 +197,7 @@ function moveMobToward(mob, targetX, targetY) {
         ny += targetY > mob.y ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
     }
 
-    if (isWalkable(nx, ny) && !inSafeZone(nx, ny)) {
+    if (isWalkable(nx, ny) && !inSafeZone(nx, ny, MAP.normalizeZ(mob.z))) {
         mob.x = nx; mob.y = ny;
         mob.lastMoveTime = now;
         return true;
