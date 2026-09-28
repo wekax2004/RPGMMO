@@ -587,8 +587,33 @@ function groundItemPayload(z) {
     return out;
 }
 
+// Republishes the ground loot, one packet per occupied floor.
+//
+// Sent globally it handed every client the whole world's loot, so a drop in the
+// dungeon was drawn on the surface at coordinates that mean nothing there. The
+// floors are derived from the items themselves, so a floor that currently holds
+// nothing simply gets no packet -- its clients already hold the correct empty
+// list from their last sync, and ground_sync is a full snapshot, not a delta.
+// Floors that have ever held ground loot, so a floor that has just been
+// emptied still gets a sync.
+//
+// Deriving the set from the items alone is wrong in the one case that matters
+// most: pick up the last item on a floor and nothing is left, so that floor
+// drops out of the set and no packet is sent at all -- and because ground_sync
+// is a full snapshot rather than a delta, a client that is not told keeps
+// drawing the item that no longer exists. The set only grows, and there are at
+// most a handful of floors, so the cost is a few empty payloads.
+const groundSyncFloors = new Set([CFG.Z_SURFACE]);
+
+// Republishes the ground loot, one packet per floor that has ever held any.
+//
+// Sent globally it handed every client the whole world's loot, so a drop in the
+// dungeon was drawn on the surface at coordinates that mean nothing there.
 function broadcastGroundSync() {
-    broadcast({ action: 'ground_sync', items: groundItemPayload() });
+    for (const g of groundItems.values()) groundSyncFloors.add(MAP.normalizeZ(g.z));
+    for (const floor of groundSyncFloors) {
+        broadcastToFloor(floor, { action: 'ground_sync', items: groundItemPayload(floor) });
+    }
 }
 
 // Despawns expired drops and enforces the hard cap, so neither a slow client
@@ -1652,7 +1677,7 @@ wss.on('connection', (ws) => {
                         if (player.x === chest.x && player.y === chest.y) {
                             player.gold += CFG.CHEST_GOLD_REWARD;
                             broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${CFG.CHEST_GOLD_REWARD}G`, color: '#ffd700' });
-                            chests.delete(chestId); broadcast({ action: 'chest_update', id: chestId, active: false });
+                            chests.delete(chestId); broadcastToFloor(MAP.normalizeZ(chest.z), { action: 'chest_update', id: chestId, active: false });
                         }
                     });
 
@@ -1661,7 +1686,7 @@ wss.on('connection', (ws) => {
                             node.active = false;
                             player.inventory.push(node.name);
                             broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${node.name}`, color: '#88ff88' });
-                            broadcast({ action: 'node_remove', id: nodeId });
+                            broadcastToFloor(MAP.normalizeZ(node.z), { action: 'node_remove', id: nodeId });
                             const updates = Q.onItemGathered(player.quests, node.name);
                             updates.forEach(u => sendTo(player, { action: 'log', message: `📜 [QUEST] ${u.questName}: ${u.objective}` }));
                             sendQuestJournal(player);
@@ -1703,8 +1728,8 @@ wss.on('connection', (ws) => {
                         sendTo(player, { action: 'log', message: `Looted ${c.gold} gold from ${c.ownerName}'s corpse!` });
                         sendTo(player, { action: 'fct', x: player.x, y: player.y, text: `+${c.gold} Gold`, color: '#ffd700' });
                         c.gold = 0;
+                        broadcastToFloor(MAP.normalizeZ(c.z), { action: 'corpse_remove', id: data.id });
                         corpses.delete(data.id);
-                        broadcast({ action: 'corpse_remove', id: data.id });
                     }
                 }
             }
@@ -1732,11 +1757,19 @@ wss.on('connection', (ws) => {
                 // on the tile the server believes the player occupies.
                 player.inventory.splice(index, 1);
                 const id = 'gi_' + groundItemCounter++;
+                // The drop records the floor it was made on. Without it the entry
+                // had no z at all, and both ends of that were wrong in opposite
+                // directions: a dungeon player could never pick up their own
+                // drop, because dist3D compared z = -1 against a missing value
+                // that normalised to the surface and returned Infinity, while a
+                // surface player at the same X/Y could take a dungeon item
+                // through the rock.
                 groundItems.set(id, {
                     id,
                     name: item,
                     x: player.x,
                     y: player.y,
+                    z: MAP.normalizeZ(player.z),
                     ownerId: player.id,
                     droppedAt: Date.now(),
                     expiresAt: Date.now() + CFG.GROUND_ITEM_TTL_MS
@@ -2209,7 +2242,7 @@ function sweepCorpses(now = Date.now()) {
             corpses.delete(id);
             // The client already handles corpse_remove, so this clears the
             // sprite instead of leaving a phantom behind.
-            broadcast({ action: 'corpse_remove', id });
+            broadcastToFloor(MAP.normalizeZ(corpse.z), { action: 'corpse_remove', id });
             removed++;
         }
     }

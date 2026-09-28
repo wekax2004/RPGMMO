@@ -67,6 +67,12 @@ function connect(url) {
                 // the server's real layout rather than this process's own
                 // randomly generated one.
                 st.obstacles = Array.isArray(p.obstacles) ? p.obstacles : [];
+                // Where the floor's standable ground is. The BFS above needs it
+                // to stay finite, and to agree with the server about where the
+                // world ends rather than searching off the edge of the map.
+                st.bounds = p.bounds || null;
+                st.mapW = p.width || st.mapW;
+                st.mapH = p.height || st.mapH;
             }
             if (p.action === 'auction_sync') st.listings = p.listings || [];
             if (p.action === 'auction_mailbox') st.auctionMailbox = p;
@@ -353,32 +359,81 @@ async function main() {
 // Walks toward a target, detouring around obstacles. The detour direction is
 // committed to for several steps rather than flipped every time, otherwise a
 // blocked tile makes the walker oscillate in place forever.
-async function walkTowards(st, tx, ty, maxSteps = 220) {
-    let detour = 0;          // -1, 0 or +1
-    let detourFor = 0;       // steps remaining on the current detour
-    for (let i = 0; i < maxSteps; i++) {
-        const dx = tx - st.pos.x, dy = ty - st.pos.y;
-        if (dx === 0 && dy === 0) return true;
-        const before = `${st.pos.x},${st.pos.y}`;
-        let sx = 0, sy = 0;
-        if (detourFor > 0) {
-            detourFor--;
-            // Slide perpendicular to the blocked axis to get around it.
-            sx = TILE * (Math.abs(dx) >= Math.abs(dy) ? 0 : detour);
-            sy = TILE * (Math.abs(dx) >= Math.abs(dy) ? detour : 0);
-        } else {
-            const useX = Math.abs(dx) >= Math.abs(dy);
-            sx = useX ? TILE * Math.sign(dx) : 0;
-            sy = useX ? 0 : TILE * Math.sign(dy);
+// Breadth-first route over the obstacle list the server actually sent.
+//
+// The previous walker was greedy: it moved along one axis toward the target and,
+// when blocked, slid perpendicular for four tiles before trying the original
+// axis again. The map places structures at random per process, so that walk
+// wedges itself in corners roughly half the time -- this harness failed 2 runs
+// in 4, at a different position each time, which is the signature of a walker
+// that cannot route rather than of a flaky game.
+//
+// map_data already carries the authoritative layout, and `bounds` says where the
+// floor's standable ground is, so the search is both correct and finite.
+function routeTo(st, tx, ty) {
+    const solid = new Set((st.obstacles || []).map(o => `${o.x},${o.y}`));
+    const b = st.bounds;
+    const minX = b ? b.minX : 0;
+    const minY = b ? b.minY : 0;
+    const maxX = b ? b.maxX : (st.mapW || 3200) - TILE;
+    const maxY = b ? b.maxY : (st.mapH || 3200) - TILE;
+    const start = `${st.pos.x},${st.pos.y}`;
+    const goal = `${tx},${ty}`;
+    if (start === goal) return [];
+
+    const prev = new Map([[start, null]]);
+    const queue = [st.pos];
+    while (queue.length) {
+        const cur = queue.shift();
+        for (const [dx, dy] of [[TILE, 0], [-TILE, 0], [0, TILE], [0, -TILE]]) {
+            const nx = cur.x + dx, ny = cur.y + dy;
+            if (nx < minX || ny < minY || nx > maxX || ny > maxY) continue;
+            const key = `${nx},${ny}`;
+            if (key === goal) {
+                // The goal is never added to `prev`, so the reconstruction
+                // begins at its parent. Starting at the goal collects a single
+                // node, the shift empties the list, and the walker reports it
+                // arrived where it started.
+                const back = [[nx, ny]];
+                let node = `${cur.x},${cur.y}`;
+                for (;;) {
+                    const [cx, cy] = node.split(',').map(Number);
+                    back.push([cx, cy]);
+                    const parent = prev.get(node);
+                    if (!parent) break;
+                    node = `${parent[0]},${parent[1]}`;
+                }
+                back.reverse();
+                back.shift();
+                return back;
+            }
+            if (solid.has(key) || prev.has(key)) continue;
+            prev.set(key, [cur.x, cur.y]);
+            queue.push({ x: nx, y: ny });
         }
-        send(st, { action: 'move', x: st.pos.x + sx, y: st.pos.y + sy });
+    }
+    return null;
+}
+
+async function walkTowards(st, tx, ty, maxSteps = 400) {
+    let blocked = 0;
+    for (let i = 0; i < maxSteps; i++) {
+        if (st.pos.x === tx && st.pos.y === ty) return true;
+        const path = routeTo(st, tx, ty);
+        if (path === null) return false;      // genuinely walled off
+        if (path.length === 0) return true;
+        const [nx, ny] = path[0];
+        // Remember the tile we stood on, so a refused step can be told from a
+        // taken one. Moves are never echoed: a successful step is applied
+        // silently, so the absence of a packet means nothing on its own.
+        const from = { x: st.pos.x, y: st.pos.y };
+        send(st, { action: 'move', x: nx, y: ny });
+        st.pos = { x: nx, y: ny };
         await sleep(STEP_DELAY);
-        if (`${st.pos.x},${st.pos.y}` === before) {
-            // Blocked. Commit to a detour for a few tiles.
-            detour = detour === 0 ? 1 : (detour === 1 ? -1 : 0);
-            detourFor = detour === 0 ? 0 : 4;
-        } else if (detourFor === 0) {
-            detour = 0;
+        if (st.pos.x === from.x && st.pos.y === from.y) {
+            if (++blocked > 6) return false;   // refused repeatedly
+        } else {
+            blocked = 0;
         }
     }
     return false;

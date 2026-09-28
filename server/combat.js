@@ -38,6 +38,12 @@ const { bosses, spawnBoss } = require('./bosses');
  * @param {Function} [deps.sendProtocolError] report a refused request
  */
 function createCombat(deps) {
+    // combat.js takes its dependencies by injection and has no map import, so
+    // the floor is normalised by an equivalent of map.normalizeZ. Kept in step
+    // with the config range: anything unrecognised becomes the surface rather
+    // than throwing, because a bad z must never break a damage broadcast.
+    const MAP_NORMALIZE = (z) =>
+        (Number.isSafeInteger(z) && z >= CFG.Z_MIN && z <= CFG.Z_MAX) ? z : CFG.Z_SURFACE;
     const {
         players,
         mobs,
@@ -143,7 +149,7 @@ function createCombat(deps) {
         }
 
         mobs.delete(target.id);
-        broadcast({ action: 'mob_update', id: target.id, alive: false });
+        broadcastToFloor(MAP_NORMALIZE(target.z), { action: 'mob_update', id: target.id, z: MAP_NORMALIZE(target.z), alive: false });
         if (player.targetId === target.id) player.targetId = null;
 
         setTimeout(() => spawnMobPack(broadcast, Math.floor(Math.random() * 2) + 1), 5000);
@@ -173,7 +179,7 @@ function createCombat(deps) {
         return function hitMob(m, dmg) {
             m.hp -= dmg;
             broadcastToFloor(m.z, { action: 'fct', x: m.x+16, y: m.y, text: `-${dmg}`, color: '#ff8866' });
-            broadcast({ action: 'mob_update', id: m.id, type: m.type, name: m.name, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp, alive: true, isElite: m.isElite });
+            broadcastToFloor(MAP_NORMALIZE(m.z), { action: 'mob_update', id: m.id, type: m.type, name: m.name, x: m.x, y: m.y, z: MAP_NORMALIZE(m.z), hp: m.hp, maxHp: m.maxHp, alive: true, isElite: m.isElite });
             if (m.hp <= 0) killMob(player, m);
         };
     }
@@ -440,7 +446,7 @@ function createCombat(deps) {
                                 damage += ITEMS.weapons[player.equipment.weapon].bonus;
                             }
                             target.hp -= damage; applyLifesteal(player, damage);
-                            broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
+                            broadcastToFloor(MAP_NORMALIZE(player.z), { action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                             broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ff8800' });
                             checkPlayerDeath(target, player.charName);
                             if (player.classType === 'warrior') trainMelee(player);
@@ -470,9 +476,9 @@ function createCombat(deps) {
                         }
 
                         target.hp -= damage; applyLifesteal(player, damage);
-                        broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
+                        broadcastToFloor(MAP_NORMALIZE(player.z), { action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                         broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
-                        broadcast({ action: 'mob_update', id: player.targetId, x: target.x, y: target.y, hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
+                        broadcastToFloor(MAP_NORMALIZE(target.z), { action: 'mob_update', id: player.targetId, x: target.x, y: target.y, z: MAP_NORMALIZE(target.z), hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
                         if (target.hp <= 0) killMob(player, target);
                         if (player.classType === 'warrior') trainMelee(player);
                     }
@@ -493,10 +499,10 @@ function createCombat(deps) {
                     let damage = applyCombatModifiers(player, Math.floor(Math.random() * 15) + 10 + (player.level * 2));
                     if (player.equipment.weapon && ITEMS.weapons[player.equipment.weapon]) damage += ITEMS.weapons[player.equipment.weapon].bonus;
                     boss.hp -= damage; applyLifesteal(player, damage);
-                    broadcast({ action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: boss.x, ty: boss.y });
+                    broadcastToFloor(MAP_NORMALIZE(player.z), { action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: boss.x, ty: boss.y });
                     broadcastToFloor(boss.z, { action: 'fct', x: boss.x+16, y: boss.y, text: `-${damage}`, color: '#ffffff' });
                     if (player.classType === 'warrior') trainBossMelee(player);
-                    broadcast({ action: 'mob_update', id: bossId, x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, alive: true, isBoss: true, name: boss.name, type: boss.type });
+                    broadcastToFloor(MAP_NORMALIZE(boss.z), { action: 'mob_update', id: bossId, x: boss.x, y: boss.y, z: MAP_NORMALIZE(boss.z), hp: boss.hp, maxHp: boss.maxHp, alive: true, isBoss: true, name: boss.name, type: boss.type });
 
                     if (boss.hp <= 0) {
                         // Boss killed!
@@ -543,7 +549,7 @@ function createCombat(deps) {
                         if (player.targetId === bossId) player.targetId = null;
 
                         bosses.delete(bossId);
-                        broadcast({ action: 'mob_update', id: bossId, alive: false });
+                        broadcastToFloor(MAP_NORMALIZE(boss.z), { action: 'mob_update', id: bossId, z: MAP_NORMALIZE(boss.z), alive: false });
 
                         // Respawn boss after 60s
                         setTimeout(() => {

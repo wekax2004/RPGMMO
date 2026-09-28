@@ -442,6 +442,48 @@ test('every inSafeZone call site states the floor it is asking about', () => {
         'these inSafeZone calls do not say which floor they mean:\n  ' + offenders.join('\n  '));
 });
 
+test('every positional broadcast is floor-scoped', () => {
+    // A packet carrying a world coordinate, or describing an entity that lives
+    // on a floor, must not go to every client: the recipient draws it in a world
+    // where the coordinates mean nothing and has no way to tell.
+    //
+    // This has been the shape of every leak found -- mob movement, node respawn,
+    // chest looted, corpse looted, ground sync, ground drops with no floor of
+    // their own, the spell animation, and all forty floating combat texts. The
+    // sweep runs the audit tool so the list of actions stays in one place.
+    const { execFileSync } = require('child_process');
+    const audit = path.join(__dirname, '..', '..', 'tools', 'audit_unscoped_broadcasts.js');
+    let out = '';
+    let failed = false;
+    try {
+        out = execFileSync(process.execPath, [audit], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+        out = (e.stdout || '') + (e.stderr || '');
+        failed = true;
+    }
+    assert.ok(out.includes('every positional packet is floor-scoped'),
+        'the unscoped-broadcast audit found leaks:\n' + out);
+    assert.strictEqual(failed, false, 'the audit tool should exit 0 when clean');
+});
+
+test('a dropped item records the floor it was dropped on', () => {
+    // Without z, both ends of the pickup check were wrong in opposite
+    // directions: a dungeon player could never retrieve their own drop, because
+    // dist3D compared z = -1 against a missing value normalised to the surface
+    // and returned Infinity, while a surface player at the same X/Y could take a
+    // dungeon item through the rock.
+    const src = fs.readFileSync(path.join(SERVER_DIR, 'server.js'), 'utf8');
+    const at = src.indexOf('groundItems.set(');
+    assert.ok(at !== -1, 'groundItems.set must exist');
+    const block = src.slice(at, at + 600);
+    assert.ok(/z:\s*MAP\.normalizeZ\(player\.z\)/.test(block),
+        'a ground drop must record the floor of the player who made it');
+    // And the pickup check has to compare floors, not just coordinates.
+    const pickup = src.slice(src.indexOf("action === 'pickup_item'"), src.indexOf("action === 'pickup_item'") + 900);
+    assert.ok(/dist3D\(player\.x, player\.y, player\.z, entry\.x, entry\.y, entry\.z\)/.test(pickup),
+        'pickup must compare floors as well as distance');
+});
+
 test('a traversal tile cannot be placed pointing at a floor that does not exist', () => {
     // Otherwise the player stands on a tile that does nothing, with no
     // explanation, which reads as a broken game.
