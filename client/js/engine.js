@@ -24,6 +24,7 @@
         let groundItemsLocal = [];
         let floatingTextsLocal = [];
         let itemDict = { items: {}, materials: {}, recipes: {} };
+        let floorTransitions = [];
         window.currentZ = 0;
 
         function getItemTooltip(name) {
@@ -222,6 +223,12 @@
                 }
                 window.currentZ = newZ;
                 obstacles = data.obstacles; 
+                // The traversal tiles arrive as their own list, keyed by where
+                // they lead rather than by how they look. It was previously
+                // discarded, which left the client unable to say anything about
+                // its own exits -- a floor label and a drawing, with no way to
+                // tell "nowhere to go" from "you have not looked yet".
+                floorTransitions = data.transitions || [];
                 MAP_BOUNDS = data.bounds || null;
                 if (data.width) MAP_W = data.width;
                 if (data.height) MAP_H = data.height;
@@ -515,6 +522,34 @@ else if (data.action === "spell_anim") {
             packetQueue.forEach(socket.onmessage);
             packetQueue = [];
         };
+
+        // Read-only snapshot of the client's own world caches, for the browser
+        // acceptance tests. Same role as window.currentZ and
+        // window.processPacketQueue: without it, a test can only confirm that a
+        // floor change made the canvas *look* different, which is satisfied
+        // equally well by a client that forgot to drop the surface roster and
+        // is drawing it one floor too low. Reading the client's own state back
+        // is what distinguishes the two. Deliberately read-only -- it must not be
+        // able to move anything, or it would stop being a probe.
+        window.__worldSnapshot = () => ({
+            z: window.currentZ,
+            mobs: Object.keys(mobs).length,
+            // Ids, not just a count: a client that kept the surface roster and
+            // merged the dungeon's on top of it would show a *plausible* count,
+            // so the count alone cannot detect a failed flush. Comparing these
+            // against the ids the server was known to have on the surface can.
+            mobIds: Object.keys(mobs),
+            otherPlayers: Object.keys(otherPlayers).length,
+            corpses: Object.keys(clientCorpses).length,
+            groundItems: groundItemsLocal.length,
+            obstacles: (obstacles || []).length,
+            obstacleTypes: [...new Set((obstacles || []).map(o => o.type))].sort(),
+            transitions: floorTransitions.map(t => ({ x: t.x, y: t.y, type: t.type, to: t.to })),
+            bounds: MAP_BOUNDS ? Object.assign({}, MAP_BOUNDS) : null,
+            mapW: MAP_W,
+            mapH: MAP_H,
+            player: player ? { x: player.x, y: player.y } : null
+        });
         
         // --- End of socket logic ---
 

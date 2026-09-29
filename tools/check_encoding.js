@@ -8,7 +8,14 @@ const ROOT = path.join(__dirname, '..');
 const FILES = [
     'server/config.js', 'server/map.js', 'server/mobs.js', 'server/bosses.js',
     'server/chests.js', 'server/quests.js', 'server/server.js',
-    'tests/unit/zlevels.test.js', 'tools/mutate_zlevels.js'
+    'tests/unit/zlevels.test.js', 'tools/mutate_zlevels.js',
+    // The client is maintained here now, and engine.js carries emoji and
+    // non-ASCII in its strings, so it is exposed to exactly the hazard this
+    // check exists for. It was not listed, which meant a BOM or a
+    // double-encoded comment in the client would have gone unnoticed.
+    'client/js/engine.js', 'client/js/renderer.js',
+    'tests/browser/test_descent.js', 'tests/browser/browser_runner.js',
+    'tools/mutate_ac5.js'
 ];
 let bad = 0;
 for (const rel of FILES) {
