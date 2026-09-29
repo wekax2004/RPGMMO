@@ -81,7 +81,13 @@
             
             const data = JSON.parse(event.data);
             
-            if (data.action === "login_error" || data.action === "auth_error") {
+            // The server reports a refused login under two names. login_error
+            // covers a bad character name, an unknown class, a name already
+            // online; login_fail covers a throttled connection. Handling only
+            // the first meant a player who was simply logged into too many
+            // times got no response at all -- the request vanished and the
+            // client sat there looking like it had hung.
+            if (data.action === "login_error" || data.action === "login_fail" || data.action === "auth_error") {
                 if (data.action === "auth_error") {
                     document.getElementById("overlay").style.display = "block";
                     document.getElementById("auth-error").innerText = data.message || "Authentication failed.";
@@ -398,7 +404,65 @@ else if (data.action === "spell_anim") {
             else if (data.action === "fct") {
                 floatingTextsLocal.push({ x: data.x, y: data.y, text: data.text, color: data.color, life: 1.0 });
             }
+            else if (data.action === "damage") {
+                // A hit landing on someone. The packet names a target and an
+                // amount but carries no position, so the number has to be drawn
+                // over whatever the client currently believes that target is.
+                //
+                // The floor scoping is free and is the reason this can be handled
+                // at all: `mobs` and `otherPlayers` are cleared and refilled on
+                // every floor change, so a target that is not in them is on
+                // another floor and is ignored here. A player in the city cannot
+                // be shown a hit landing on someone in the cave, and cannot be
+                // shown a floating number over empty ground.
+                const victim = mobs[data.targetId] || otherPlayers[data.targetId];
+                if (victim && typeof data.amount === "number" && data.amount > 0) {
+                    floatingTextsLocal.push({
+                        x: victim.x + 16, y: victim.y - 20,
+                        text: `-${Math.round(data.amount)}`, color: '#ff6b6b', life: 1.0
+                    });
+                }
+            }
             else if (data.action === "player_left") { delete otherPlayers[data.id]; }
+            else if (data.action === "player_update") {
+                // Someone arrived on this floor, or changed while standing on it.
+                // Without this they would not appear until the next roster tick,
+                // up to 200ms later -- long enough to look like the server lost
+                // them. Traversal is what sends it, so without handling it a
+                // player who climbed a ladder stayed invisible to the floor they
+                // arrived on for a fifth of a second.
+                if (data.id === myId) return;
+                const existing = otherPlayers[data.id];
+                if (existing) {
+                    existing.x = data.x; existing.y = data.y;
+                    existing.classType = data.classType; existing.guild = data.guild || null;
+                    existing.skulled = !!data.skulled; existing.isMounted = data.isMounted === true;
+                } else {
+                    otherPlayers[data.id] = {
+                        x: data.x, y: data.y, renderX: data.x, renderY: data.y,
+                        classType: data.classType, name: data.name, warmode: !!data.warmode,
+                        dir: 0, moveFrame: 0, skulled: !!data.skulled,
+                        guild: data.guild || null, isMounted: data.isMounted === true
+                    };
+                }
+            }
+            else if (data.action === "inventory_update") {
+                // Loot landed. The periodic status would carry the same thing
+                // within 300ms, so this is not a correctness fix so much as
+                // removing a visible delay between picking something up and
+                // seeing it in the pack.
+                if (Array.isArray(data.inventory)) applyInventory(data.inventory);
+                if (typeof data.gold === "number") applyGold(data.gold);
+            }
+            else if (data.action === "server_shutdown") {
+                // The server is going away. Say so, instead of letting the socket
+                // close and leaving the player to wonder whether they were
+                // disconnected, kicked, or the game had crashed.
+                addLog("⚠️ The server is shutting down. Reconnect in a moment.");
+            }
+            else if (data.action === "auth_logout_success") {
+                addLog("👋 Signed out.");
+            }
             else if (data.action === "status") {
                 if (data.isMounted !== undefined) player.isMounted = data.isMounted;
                 player.classType = data.classType;
@@ -416,8 +480,7 @@ else if (data.action === "spell_anim") {
                 document.getElementById("mana-bar").style.width = (data.mana/data.maxMana*100)+"%"; document.getElementById("mana-text").innerText = "Mana: "+data.mana+"/"+data.maxMana;
                 document.getElementById("xp-bar").style.width = (data.xp/data.nextXp*100)+"%"; document.getElementById("xp-text").innerText = "XP: "+data.xp+"/"+data.nextXp;
                 
-                myGold = data.gold;
-                document.getElementById("gold-val").innerText = myGold;
+                applyGold(data.gold);
                 
                 const btnSkill = document.getElementById("btn-skill");
                 if(data.classType==="warrior") btnSkill.innerText = "Cleave (Press 2)";
@@ -445,15 +508,7 @@ else if (data.action === "spell_anim") {
                 }
                 
                 speedBonus = data.speedBonus || 0;
-                myInventoryData = data.inventory || [];
-                
-                const invEl = document.getElementById("inventory-list");
-                if (myInventoryData.length > 0) {
-                    let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
-                    invEl.innerHTML = Object.keys(counts).map(k => 
-                        "<div class='inv-item' draggable='true' ondragstart='window.dragStart(event, \"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='" + escapeHtml(getItemTooltip(k)).replace(/'/g, "&#39;") + "\n(Click to equip/use)'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
-                    ).join("");
-                } else { invEl.innerHTML = "<em style=\"color:#666\">Empty</em>"; }
+                applyInventory(data.inventory || []);
             }
             else if (data.action === "chat") {
                 const channelLabel = data.channel === "party" ? "[Party]" : data.channel === "zone" ? "[Zone]" : "[Global]";
@@ -477,7 +532,7 @@ else if (data.action === "spell_anim") {
             else if (data.action === "open_shop") {
                 document.getElementById("overlay").style.display = "block";
                 document.getElementById("shop-modal").style.display = "block";
-                document.getElementById("shop-player-gold").innerText = data.gold;
+                applyGold(data.gold);
                 audio.coin();
                 
                 let buyHtml = "";
@@ -512,8 +567,7 @@ else if (data.action === "spell_anim") {
                 audio.questUpdate();
             }
             else if (data.action === "shop_sync") {
-                myGold = data.gold;
-                document.getElementById("shop-player-gold").innerText = data.gold;
+                applyGold(data.gold);
                 renderShopSellList();
             }
         };
@@ -522,6 +576,35 @@ else if (data.action === "spell_anim") {
             packetQueue.forEach(socket.onmessage);
             packetQueue = [];
         };
+
+        // Renders the pack panel from a new inventory list.
+        //
+        // Extracted from the status handler so that inventory_update and status
+        // cannot drift apart: they are two doors onto the same state, and when
+        // the rendering lived inside one of them the other could only ever
+        // update the variable and not the panel.
+        function applyInventory(items) {
+            myInventoryData = items || [];
+            const invEl = document.getElementById("inventory-list");
+            if (!invEl) return;
+            if (myInventoryData.length > 0) {
+                const counts = {};
+                myInventoryData.forEach(i => counts[i] = (counts[i] || 0) + 1);
+                invEl.innerHTML = Object.keys(counts).map(k =>
+                    "<div class='inv-item' draggable='true' ondragstart='window.dragStart(event, \"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='" + escapeHtml(getItemTooltip(k)).replace(/'/g, "&#39;") + "\n(Click to equip/use)'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
+                ).join("");
+            } else {
+                invEl.innerHTML = "<em style=\"color:#666\">Empty</em>";
+            }
+        }
+
+        function applyGold(amount) {
+            myGold = amount;
+            const hud = document.getElementById("gold-val");
+            if (hud) hud.innerText = myGold;
+            const shop = document.getElementById("shop-player-gold");
+            if (shop) shop.innerText = myGold;
+        }
 
         // Read-only snapshot of the client's own world caches, for the browser
         // acceptance tests. Same role as window.currentZ and
