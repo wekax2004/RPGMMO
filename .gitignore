@@ -19,3 +19,7 @@ server/data/
 opentibia_sprite_pack/
 tibia_sprites_repo/
 tibia_sprites_zip/
+
+# Screenshots written by tools/boss_sprite_shots.js. Regenerable, and they are
+# 300-700 KB each, so they do not belong in history.
+tmp_shots/

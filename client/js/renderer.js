@@ -33,7 +33,15 @@
             ladder: "ladder_sprite.jpg",
             stairs_up: "stairs_up_sprite.jpg",
             merchant: "merchant_sprite.jpg",
-            banker: "banker_sprite.jpg"
+            banker: "banker_sprite.jpg",
+            // Bosses, from the OpenTibia sprite pack (CC BY 4.0). These three
+            // were the only mob types with no art at all and fell through to a
+            // grey box. Sliced out of the pack's own sheets by
+            // tools/slice_sprite.py -- see CREDITS.md for the licence and the
+            // per-sprite provenance.
+            spider_queen: "boss_spider_queen.png",
+            ice_dragon: "boss_ice_dragon.png",
+            skeleton_king: "boss_skeleton_king.png"
         };
         const loadedSprites = {};
         Object.keys(SPRITE_FILES).forEach(key => {

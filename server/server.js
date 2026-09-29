@@ -5,7 +5,7 @@ const path = require('path');
 const CFG = require('./config');
 const { isWalkable, obstacleData, isWater, hasWaterNear } = require('./map');
 const MAP = require('./map');
-const { mobs, spawnMobPack, spawnFloorPack, spawnMobAt, moveMobToward, mobAttack, inSafeZone, countMobsOn } = require('./mobs');
+const { mobs, spawnMobPack, spawnFloorPack, spawnMobAt, moveMobToward, mobAttack, inSafeZone, countMobsOn, KNOWN_MOB_TYPES } = require('./mobs');
 const { chests, spawnChest } = require('./chests');
 const { npcs } = require('./npcs');
 const corpses = new Map();
@@ -1267,6 +1267,15 @@ wss.on('connection', (ws) => {
                 // randomised across the whole map, so a test can never
                 // reliably reach a mob on foot.
                 const type = typeof data.type === 'string' ? data.type : 'spider';
+                // Reject an unknown type instead of letting spawnMobAt quietly
+                // substitute a spider. It used to: the log said "Spawned
+                // ice_dragon", the floor was told about a spider, and a test
+                // waiting for a boss to appear waited forever for something that
+                // was never going to be sent.
+                if (!KNOWN_MOB_TYPES.includes(type)) {
+                    sendProtocolError(player, `Unknown mob type '${type}'. Known: ${KNOWN_MOB_TYPES.join(', ')}.`);
+                    return;
+                }
                 const x = Number.isInteger(data.x) ? data.x : player.x + CFG.TILE_SIZE;
                 const y = Number.isInteger(data.y) ? data.y : player.y;
                 if (!isInBounds(x, y) || !isWalkable(x, y)) {
@@ -1275,6 +1284,35 @@ wss.on('connection', (ws) => {
                 }
                 const id = spawnMobAt(x, y, type, broadcast);
                 sendTo(player, { action: 'log', message: `Spawned ${type} at ${x},${y} (${id}).` });
+                return;
+            }
+            if (TEST_MODE && data.action === 'test_spawn_boss') {
+                // Bosses are not in KNOWN_MOB_TYPES -- they are a separate roster
+                // with their own lairs -- so they need their own affordance.
+                // spawnBoss otherwise picks a random tile inside the boss's
+                // quadrant, which is no use to a test that wants to look at it.
+                const type = typeof data.type === 'string' ? data.type : 'spider_queen';
+                if (!BOSS_TYPES[type]) {
+                    sendProtocolError(player, `Unknown boss type '${type}'. Known: ${Object.keys(BOSS_TYPES).join(', ')}.`);
+                    return;
+                }
+                const x = Number.isInteger(data.x) ? data.x : player.x + CFG.TILE_SIZE * 2;
+                const y = Number.isInteger(data.y) ? data.y : player.y;
+                // Floor-aware, because a boss placed on the caller's floor must be
+                // checked against that floor's geometry. The surface's walkable
+                // set and a dungeon's barely overlap.
+                if (!isInBounds(x, y) || !isWalkable(x, y, player.z)) {
+                    sendProtocolError(player, 'Spawn point is not walkable.');
+                    return;
+                }
+                const boss = spawnBoss(type, broadcast, {
+                    at: { x, y }, z: player.z, broadcastToFloor
+                });
+                if (!boss) {
+                    sendProtocolError(player, 'Boss failed to spawn.');
+                    return;
+                }
+                sendTo(player, { action: 'log', message: `Spawned boss ${type} at ${boss.x},${boss.y} (${boss.id}).` });
                 return;
             }
             if (TEST_MODE && data.action === 'trigger_boss_aoe') {

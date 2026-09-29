@@ -92,12 +92,25 @@ function spawnBoss(type, broadcast, options = {}) {
     // walkability search is scoped to that floor rather than the surface's.
     const floorZ = MAP.normalizeZ(options.z);
     let x, y;
-    let attempts = 0;
-    do {
-        x = def.bounds.minX + Math.floor(Math.random() * ((def.bounds.maxX - def.bounds.minX) / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
-        y = def.bounds.minY + Math.floor(Math.random() * ((def.bounds.maxY - def.bounds.minY) / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
-        attempts++;
-    } while (!isWalkable(x, y, floorZ) && attempts < 100);
+    // An explicit position, for a caller that needs the boss on a known tile --
+    // a test photographing it, or a lair that is not the default one. Only
+    // honoured when the tile is genuinely standable on the requested floor, so a
+    // caller cannot drop a boss inside a wall and then wonder why it never paths
+    // anywhere. A bad `at` falls through to the random search rather than
+    // failing: a boss that spawns somewhere odd is recoverable, one that does
+    // not spawn at all is not.
+    const at = options.at;
+    if (at && Number.isSafeInteger(at.x) && Number.isSafeInteger(at.y) && isWalkable(at.x, at.y, floorZ)) {
+        x = at.x;
+        y = at.y;
+    } else {
+        let attempts = 0;
+        do {
+            x = def.bounds.minX + Math.floor(Math.random() * ((def.bounds.maxX - def.bounds.minX) / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
+            y = def.bounds.minY + Math.floor(Math.random() * ((def.bounds.maxY - def.bounds.minY) / CFG.TILE_SIZE)) * CFG.TILE_SIZE;
+            attempts++;
+        } while (!isWalkable(x, y, floorZ) && attempts < 100);
+    }
 
     const id = 'boss_' + type + '_' + Date.now().toString(36);
     const boss = {
