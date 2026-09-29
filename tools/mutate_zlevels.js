@@ -21,6 +21,12 @@ const ROOT = path.join(__dirname, '..');
 const TARGET = path.join(ROOT, 'server', 'server.js');
 const TEST = path.join(ROOT, 'tests', 'unit', 'zlevels.test.js');
 const TRAVERSAL_TEST = path.join(ROOT, 'tests', 'unit', 'traversal.test.js');
+// The boss floor tests. They live in the same run as the other two so a
+// mutation in bosses.js is measured against the same baseline as everything
+// else -- a separate run would have its own pass count to compare against, and
+// comparing two different baselines is how a harness ends up reporting a
+// mutation as caught when the suite was already failing.
+const BOSS_TEST = path.join(ROOT, 'tests', 'unit', 'boss_floors.test.js');
 const LIVE_TEST = path.join(ROOT, 'tests', 'traversal_live_verify.js');
 // A mutation names the file it applies to; server.js is the default.
 const DEFAULTS = { file: path.join('server', 'server.js') };
@@ -110,6 +116,47 @@ const MUTATIONS = [
         from: 'const WALKABLE_OBSTACLE_TYPES = new Set(["ladder", "stairs_up", "stairs_down"]);',
         to: 'const WALKABLE_OBSTACLE_TYPES = new Set([]);',
         file: 'client/js/engine.js'
+    },
+    // --- Bosses: victim selection and movement were all 2D -------------------
+    // These were found by writing the test first and watching it fail against
+    // unmodified code, which is the only reason they are known at all: the
+    // Molten Depths sits 544x544 inside the Skeleton King's quadrant, so a
+    // 2D distance test could not tell a player in the city from one in the cave.
+    {
+        name: 'the boss AoE victim loop drops its floor check',
+        from: 'if (player.hp > 0 && sameFloor(player, boss) &&\n                Math.hypot(player.x - originX, player.y - originY) <= radius) {',
+        to: 'if (player.hp > 0 &&\n                Math.hypot(player.x - originX, player.y - originY) <= radius) {',
+        file: 'server/bosses.js'
+    },
+    {
+        name: 'the boss picks its nearest target across every floor again',
+        from: '        if (!sameFloor(player, boss)) continue;\n        const dist = Math.hypot(player.x - boss.x, player.y - boss.y);',
+        to: '        const dist = Math.hypot(player.x - boss.x, player.y - boss.y);',
+        file: 'server/bosses.js'
+    },
+    {
+        name: 'the web trap and ice crash pick victims from every floor',
+        from: 'filter(p => p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange)',
+        to: 'filter(p => p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange)',
+        file: 'server/bosses.js'
+    },
+    {
+        name: 'the death wave reaches players on other floors',
+        from: 'if (p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - boss.x, p.y - boss.y) <= 200) {',
+        to: 'if (p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= 200) {',
+        file: 'server/bosses.js'
+    },
+    {
+        name: 'boss damage is broadcast to every client on every floor again',
+        from: "broadcastToFloor(MAP.normalizeZ(p.z), { action: 'damage', targetId: p.id, amount: 100 });",
+        to: "broadcast({ action: 'damage', targetId: p.id, amount: 100 });",
+        file: 'server/bosses.js'
+    },
+    {
+        name: 'a boss steps onto tiles validated against the surface, not its own floor',
+        from: 'if (isWalkable(nx, ny, boss.z) && isInsideBossBounds(boss, nx, ny)) {',
+        to: 'if (isWalkable(nx, ny) && isInsideBossBounds(boss, nx, ny)) {',
+        file: 'server/bosses.js'
     }
 ];
 
@@ -119,7 +166,7 @@ function writeTarget(file, text) { fs.writeFileSync(file, text, 'utf8'); }
 
 function runTests() {
     try {
-        const out = execFileSync(process.execPath, ['--test', TEST, TRAVERSAL_TEST], {
+        const out = execFileSync(process.execPath, ['--test', TEST, TRAVERSAL_TEST, BOSS_TEST], {
             cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
         });
         return { ok: true, out };

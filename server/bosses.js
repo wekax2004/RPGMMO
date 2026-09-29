@@ -33,6 +33,22 @@ function isInsideBossBounds(boss, x, y) {
     return x >= bounds.minX && x < bounds.maxX && y >= bounds.minY && y < bounds.maxY;
 }
 
+// Are these two things standing on the same floor?
+//
+// Every targeting test in this file is a 2D circle or cone: "is the player
+// within N pixels of the boss". That is only a question about the boss's world
+// if the player is in the boss's world. Without this, a player in the city
+// standing at the same (x,y) as the Molten Depths is inside a Skeleton King's
+// cone, and the floor layouts overlap -- z=-2 sits 544x544 inside the Skeleton
+// King's own quadrant -- so this was not theoretical. A king standing at
+// (2200,2200), both legal positions, hit a player through the world.
+//
+// The check is a floor comparison rather than a distance one because that is
+// what it is: two entities can be 32 pixels apart and be in different worlds.
+function sameFloor(a, b) {
+    return MAP.normalizeZ(a && a.z) === MAP.normalizeZ(b && b.z);
+}
+
 const BOSS_TYPES = {
     'spider_queen': {
         name: 'Spider Queen',
@@ -185,10 +201,18 @@ function spawnBoss(type, broadcast, options = {}) {
     return boss;
 }
 
-function spawnAdd(boss, type, mobs, broadcast) {
+// `broadcastToFloor` is injected by the caller so the minion is announced to the
+// floor it was actually summoned onto. Taking it as a parameter rather than
+// reaching for a module-level one is the same discipline the rest of this file
+// uses; the previous version referenced an identifier that was not in scope, so
+// every add threw a ReferenceError and the boss summoned nothing.
+function spawnAdd(boss, type, mobs, broadcast, broadcastToFloor) {
     const x = boss.x + (Math.floor(Math.random() * 3) - 1) * CFG.TILE_SIZE;
     const y = boss.y + (Math.floor(Math.random() * 3) - 1) * CFG.TILE_SIZE;
-    if (isWalkable(x, y)) {
+    // Checked on the summoner boss's floor, not the surface's default. The
+    // minion is placed on the boss's floor (see z, below), so validating the
+    // tile against a different floor's geometry could drop it inside rock.
+    if (isWalkable(x, y, boss.z)) {
         const id = 'm_' + Math.random().toString(36).substr(2, 6);
         const stats = { 
             spider: { hp: 30, xp: 15 }, 
@@ -225,15 +249,26 @@ function castSpiderPoisonAoe(boss, players, broadcast, options = {}) {
     const damage = Number.isFinite(options.damage) ? options.damage : 40;
     const delay = Number.isFinite(options.delay) ? options.delay : 2000;
     const effectType = typeof options.type === 'string' ? options.type : 'poison';
+    // Injected by the caller so the damage lands only on the floor it happened
+    // on. The fallback takes BOTH arguments for the reason spelled out in
+    // spawnBoss: a one-parameter fallback silently binds the floor index to the
+    // packet and broadcasts a number.
+    const toFloor = typeof options.broadcastToFloor === 'function'
+        ? options.broadcastToFloor
+        : (floor, dataObj) => broadcast(dataObj);
 
     broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius, type: effectType, phase: 'warning', durationMs: delay });
     setTimeout(() => {
         if (!bosses.has(boss.id)) return;
         broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius, type: effectType, phase: 'detonate', durationMs: delay });
         for (const player of players.values()) {
-            if (player.hp > 0 && Math.hypot(player.x - originX, player.y - originY) <= radius) {
+            // The floor test comes first and is not an optimisation: it is the
+            // difference between the AoE being a circle in the boss's world and
+            // being a circle in a world where the boss does not exist.
+            if (player.hp > 0 && sameFloor(player, boss) &&
+                Math.hypot(player.x - originX, player.y - originY) <= radius) {
                 player.hp -= damage;
-                broadcast({ action: 'damage', targetId: player.id, amount: damage });
+                toFloor(MAP.normalizeZ(player.z), { action: 'damage', targetId: player.id, amount: damage });
             }
         }
     }, delay);
@@ -245,11 +280,14 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
     const aggroRange = 600;
     const meleeRange = CFG.TILE_SIZE * 1.5;
 
-    // Find nearest player
+    // Find nearest player, on this boss's floor. A player a floor away is not a
+    // target no matter how close their (x,y) looks: the boss would walk toward
+    // a coordinate that means nothing to it and stop at the lair wall.
     let nearest = null;
     let minDist = Infinity;
     for (const player of players.values()) {
         if (player.hp <= 0) continue;
+        if (!sameFloor(player, boss)) continue;
         const dist = Math.hypot(player.x - boss.x, player.y - boss.y);
         if (dist < minDist) {
             minDist = dist;
@@ -270,7 +308,7 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
             ny += nearest.y > boss.y ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
         }
         
-        if (isWalkable(nx, ny) && isInsideBossBounds(boss, nx, ny)) {
+        if (isWalkable(nx, ny, boss.z) && isInsideBossBounds(boss, nx, ny)) {
             boss.x = nx;
             boss.y = ny;
             boss.lastMoveTime = now;
@@ -284,7 +322,7 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
             } else {
                 ny += nearest.y > boss.y ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
             }
-            if (isWalkable(nx, ny) && isInsideBossBounds(boss, nx, ny)) {
+            if (isWalkable(nx, ny, boss.z) && isInsideBossBounds(boss, nx, ny)) {
                 boss.x = nx;
                 boss.y = ny;
                 boss.lastMoveTime = now;
@@ -308,18 +346,18 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
 
         if (now - (boss.lastAbilityTime.get('poison_aoe') || 0) > 8000 * cdMulti) {
             boss.lastAbilityTime.set('poison_aoe', now);
-            castSpiderPoisonAoe(boss, players, broadcast);
+            castSpiderPoisonAoe(boss, players, broadcast, { broadcastToFloor });
         }
 
         if (now - (boss.lastAbilityTime.get('spawn_adds') || 0) > 15000 * cdMulti) {
             boss.lastAbilityTime.set('spawn_adds', now);
             const addsCount = boss.phase === 2 ? 4 : 2;
-            for (let i = 0; i < addsCount; i++) spawnAdd(boss, 'spider', mobs, broadcast);
+            for (let i = 0; i < addsCount; i++) spawnAdd(boss, 'spider', mobs, broadcast, broadcastToFloor);
         }
         
         if (boss.phase === 2 && now - (boss.lastAbilityTime.get('web_trap') || 0) > 12000) {
             boss.lastAbilityTime.set('web_trap', now);
-            const pList = Array.from(players.values()).filter(p => p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange);
+            const pList = Array.from(players.values()).filter(p => p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange);
             if (pList.length > 0) {
                 const p = pList[Math.floor(Math.random() * pList.length)];
                 p.stunUntil = now + 3000;
@@ -348,6 +386,7 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
                 broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, targetX, targetY, type: 'ice_breath', phase: 'detonate' });
                 for (const p of players.values()) {
                     if (p.hp <= 0) continue;
+                    if (!sameFloor(p, boss)) continue;
                     const distance = Math.hypot(p.x - originX, p.y - originY);
                     if (distance <= 150) {
                         const dx = targetX - originX;
@@ -362,7 +401,7 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
                         if (dot > dotThreshold) { // Wider cone in phase 2
                             p.hp -= 60;
                             p.stunUntil = Date.now() + 1500;
-                            broadcast({ action: 'damage', targetId: p.id, amount: 60 });
+                            broadcastToFloor(MAP.normalizeZ(p.z), { action: 'damage', targetId: p.id, amount: 60 });
                         }
                     }
                 }
@@ -371,7 +410,7 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
 
         if (now - (boss.lastAbilityTime.get('ice_crash') || 0) > 20000) {
             boss.lastAbilityTime.set('ice_crash', now);
-            const pList = Array.from(players.values()).filter(p => p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange);
+            const pList = Array.from(players.values()).filter(p => p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - boss.x, p.y - boss.y) <= aggroRange);
             if (pList.length > 0) {
                 for (let i = 0; i < 3; i++) {
                     const p = pList[Math.floor(Math.random() * pList.length)];
@@ -384,9 +423,9 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
                         if (!bosses.has(boss.id)) return;
                         broadcastAoe(broadcast, { bossId: boss.id, spellId, x: tx, y: ty, radius: 64, type: 'ice_crash', phase: 'detonate' });
                         for (const p of players.values()) {
-                            if (p.hp > 0 && Math.hypot(p.x - tx, p.y - ty) <= 64) {
+                            if (p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - tx, p.y - ty) <= 64) {
                                 p.hp -= 80;
-                                broadcast({ action: 'damage', targetId: p.id, amount: 80 });
+                                broadcastToFloor(MAP.normalizeZ(p.z), { action: 'damage', targetId: p.id, amount: 80 });
                             }
                         }
                     }, 3000);
@@ -403,9 +442,9 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
                 broadcastAoe(broadcast, { bossId: boss.id, spellId, x: boss.x, y: boss.y, radius: 200, type: 'ice_crash', phase: 'detonate', durationMs: 5000 });
                 // Simple implementation: instant large damage. Full DoT requires tracking in server tick.
                 for (const p of players.values()) {
-                    if (p.hp > 0 && Math.hypot(p.x - boss.x, p.y - boss.y) <= 200) {
+                    if (p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - boss.x, p.y - boss.y) <= 200) {
                         p.hp -= 100;
-                        broadcast({ action: 'damage', targetId: p.id, amount: 100 });
+                        broadcastToFloor(MAP.normalizeZ(p.z), { action: 'damage', targetId: p.id, amount: 100 });
                     }
                 }
             }, 2000);
@@ -420,7 +459,7 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
         if (now - (boss.lastAbilityTime.get('summon_skeletons') || 0) > 10000) {
             boss.lastAbilityTime.set('summon_skeletons', now);
             const addsCount = boss.phase === 2 ? 5 : 3;
-            for (let i = 0; i < addsCount; i++) spawnAdd(boss, 'skeleton', mobs, broadcast);
+            for (let i = 0; i < addsCount; i++) spawnAdd(boss, 'skeleton', mobs, broadcast, broadcastToFloor);
         }
         
         if (now - (boss.lastAbilityTime.get('death_wave') || 0) > 12000) {
@@ -435,9 +474,9 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
                 if (!bosses.has(boss.id)) return;
                 broadcastAoe(broadcast, { bossId: boss.id, spellId, x: originX, y: originY, radius: waveRadius, type: 'death_wave', phase: 'detonate' });
                 for (const p of players.values()) {
-                    if (p.hp > 0 && Math.hypot(p.x - originX, p.y - originY) <= waveRadius) {
+                    if (p.hp > 0 && sameFloor(p, boss) && Math.hypot(p.x - originX, p.y - originY) <= waveRadius) {
                         p.hp -= 50;
-                        broadcast({ action: 'damage', targetId: p.id, amount: 50 });
+                        broadcastToFloor(MAP.normalizeZ(p.z), { action: 'damage', targetId: p.id, amount: 50 });
                     }
                 }
             }, 2000);
@@ -454,11 +493,16 @@ function bossAI(boss, players, broadcast, mobs, broadcastToFloor) {
     }
 }
 
-function triggerBossAoe(type, players, broadcast, centerPlayer = null) {
+function triggerBossAoe(type, players, broadcast, centerPlayer = null, broadcastToFloor = null) {
     const boss = Array.from(bosses.values()).find(candidate => candidate.type === type || candidate.id === type);
     if (!boss || !broadcast) return null;
 
-    const target = centerPlayer || Array.from(players.values()).find(player => player.hp > 0);
+    // The centre defaults to a living player, and "a living player" has to mean
+    // one on the boss's floor. Taking the first in map order meant a player
+    // standing in the city could become the centre of a spell cast in a cave,
+    // with the circle drawn around coordinates the boss cannot see.
+    const target = centerPlayer || Array.from(players.values())
+        .find(player => player.hp > 0 && sameFloor(player, boss));
     const x = target ? target.x : boss.x;
     const y = target ? target.y - 64 : boss.y;
     return castSpiderPoisonAoe(boss, players, broadcast, {
@@ -467,7 +511,12 @@ function triggerBossAoe(type, players, broadcast, centerPlayer = null) {
         radius: 96,
         damage: 10,
         delay: 1500,
-        type: 'fire'
+        type: 'fire',
+        // Only forwarded when supplied. castSpiderPoisonAoe falls back to a
+        // global broadcast, which is correct for a caller that has no floor
+        // scope to give, and wrong for one that does -- so a real injection is
+        // passed all the way down rather than reconstructed here.
+        ...(typeof broadcastToFloor === 'function' ? { broadcastToFloor } : {})
     });
 }
 

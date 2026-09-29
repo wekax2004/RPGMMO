@@ -1316,7 +1316,7 @@ wss.on('connection', (ws) => {
                 return;
             }
             if (TEST_MODE && data.action === 'trigger_boss_aoe') {
-                const spellId = triggerBossAoe(data.bossType || 'spider_queen', players, broadcast, player);
+                const spellId = triggerBossAoe(data.bossType || 'spider_queen', players, broadcast, player, broadcastToFloor);
                 if (!spellId) sendProtocolError(player, 'Boss not found.');
                 return;
             }
