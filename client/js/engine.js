@@ -202,16 +202,16 @@
                 renderParty({ members: [] });
             }
             else if (data.action === "guild_invited") {
-                pendingGuildInvite = { guildName: data.guildName, inviter: data.inviter || "A player" };
-                addLog("🛡️ " + pendingGuildInvite.inviter + " invited you to " + data.guildName);
-                if (typeof renderGuild === 'function') renderGuild({ members: [] });
-            }
-            else if (data.action === "guild_update") {
-                if (data.guild === null && typeof renderGuild === 'function') {
-                    renderGuild({ members: [] });
-                } else if (data.guild && typeof renderGuild === 'function') {
-                    renderGuild(data.guild);
-                }
+                // The guild id is kept, not just the name, so the pending invite
+                // can be confirmed against the guild it belongs to. A name is
+                // ambiguous the moment two guilds share one.
+                pendingGuildInvite = {
+                    guildId: data.guildId,
+                    guildName: data.guildName,
+                    inviter: data.inviter || "A player"
+                };
+                addLog("🛡️ " + pendingGuildInvite.inviter + " invited you to " + data.guildName +
+                    ". Type /guild accept to join.");
             }
             else if (data.action === "bank_open") {
                 if (typeof openBank === 'function') openBank(data);

@@ -31,6 +31,7 @@ function createGuild(player, guildName) {
 function inviteGuild(player, targetName) {
     if (!player.guild) return sendTo(player, { action: 'log', message: 'You are not in a guild.' });
     const g = guilds.get(player.guild);
+    if (!g) return sendTo(player, { action: 'log', message: 'Your guild no longer exists.' });
     if (g.leader !== player.charName) return sendTo(player, { action: 'log', message: 'Only the leader can invite.' });
     
     const target = getPlayerByName(targetName);
@@ -38,6 +39,17 @@ function inviteGuild(player, targetName) {
     if (target.guild) return sendTo(player, { action: 'log', message: 'Player is already in a guild.' });
     
     target.pendingGuildInvite = g.id;
+    // A dedicated action, not only a log line. The client has a handler for
+    // guild_invited that records the invite so the guild panel can show it --
+    // but nothing on the server sent it, so an invite reached the player as a
+    // line of chat they could easily scroll past and then wonder why /guild
+    // accept said they had no pending invites.
+    sendTo(target, {
+        action: 'guild_invited',
+        guildId: g.id,
+        guildName: g.name,
+        inviter: player.charName
+    });
     sendTo(target, { action: 'log', message: `You have been invited to join the guild ${g.name}. Type /guild accept to join.` });
     sendTo(player, { action: 'log', message: `Invited ${target.charName} to the guild.` });
 }
