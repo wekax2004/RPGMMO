@@ -353,12 +353,12 @@ function sendPartySync(party) {
         });
     }
 }
-function sendTradeSync(trade, playerId, action = 'trade_sync') {
+function sendTradeSync(trade, playerId, action) {
     const snapshot = TRADE.getTradeSnapshot(trade, playerId);
     if (!snapshot) return;
     sendTo(players.get(playerId), { action, tradeId: snapshot.tradeId, ...snapshot, trade: snapshot });
 }
-function sendTradeSyncAll(trade, action = 'trade_sync') {
+function sendTradeSyncAll(trade, action) {
     if (!trade) return;
     [trade.player1Id, trade.player2Id].forEach(playerId => sendTradeSync(trade, playerId, action));
 }
@@ -915,7 +915,7 @@ scheduleServerInterval(() => {
 // Silent on purpose: a restart would otherwise announce every boss at once.
 Object.keys(BOSS_TYPES).forEach(type => spawnBoss(type, broadcast, { announce: false, broadcastToFloor }));
 
-function syncTrade(tradeId, action = 'trade_sync') {
+function syncTrade(tradeId, action) {
     const trade = TRADE.activeTrades.get(tradeId);
     if (!trade) return;
     sendTradeSyncAll(trade, action);
@@ -2264,9 +2264,9 @@ wss.on('connection', (ws) => {
 scheduleServerInterval(() => { 
     players.forEach(p => { 
         if (inSafeZone(p.x, p.y, p.z)) {
-            if (p.hp < p.maxHp) { p.hp = Math.min(p.hp + CFG.SAFEZONE_HEAL_PER_SEC, p.maxHp); broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: '+HP', color: '#44ff44' }); }
+            if (p.hp < p.maxHp) { p.hp = Math.min(p.hp + CFG.SAFEZONE_HEAL_PER_TICK, p.maxHp); broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: '+HP', color: '#44ff44' }); }
         }
-        p.mana = Math.min(p.mana + CFG.MANA_REGEN_PER_SEC, p.maxMana); 
+        p.mana = Math.min(p.mana + CFG.MANA_REGEN_PER_TICK, p.maxMana);
         
         
         persistPlayer(p);

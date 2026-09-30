@@ -135,8 +135,8 @@ module.exports = {
     // קסמים
     PURIFY_MANA_COST: 20,
     SKILL_MANA_COST: 30, 
-    MANA_REGEN_PER_SEC: 5,
-    SAFEZONE_HEAL_PER_SEC: 5, // ריפוי אוטומטי בעיר
+    MANA_REGEN_PER_TICK: 5,
+    SAFEZONE_HEAL_PER_TICK: 5, // ריפוי אוטומטי בעיר
 
     // חפצים
     MAX_CHESTS: 30,

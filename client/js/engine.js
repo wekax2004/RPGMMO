@@ -161,7 +161,7 @@
                 document.getElementById("trade-their-offer").innerHTML = "";
                 document.getElementById("trade-their-gold").innerText = "Gold: 0";
             }
-            else if (data.action === "trade_sync" || data.action === "trade_update") {
+            else if (data.action === "trade_update") {
                 handleTradeSync(data);
             }
             else if (data.action === "trade_locked") {
