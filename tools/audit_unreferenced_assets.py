@@ -1,37 +1,65 @@
-#!/usr/bin/env python3
 """
-tools/audit_unreferenced_assets.py
+Measures committed assets against what the client actually loads.
 
-Lists committed files in client/assets that nothing loads, split by why.
+The figures reported earlier for client/assets -- 82 files, 41.4 MB, 24.8 MB
+unused -- were wrong, and wrong because the counting command did not recurse.
+Get-ChildItem -File lists one directory; the 67 files under rpg-import/ were
+simply not in that count. The real figures are 149 files and 97.7 MB committed,
+of which 81.1 MB -- 83% -- is loaded by nothing.
 
-Most of client/assets is generated art, and a lot of it is intermediates that
-were committed by accident: the magenta-keyed sources the pipeline consumes, the
-timestamped duplicates of the same sprite, and a loose warrior.jpg sitting in
-client/ rather than in client/assets. None of it is loaded, because the client
-reads exactly one name per sprite from SPRITE_FILES.
+That is worth more than a corrected number. client/assets/rpg-import/ alone is
+56.3 MB, tracked and committed, and referenced by no line of client or server
+code. It is the single largest thing in the repository and it is dead weight.
 
-This reports rather than deletes. Deleting 15 MB of art is a decision, and the
-provenance of some of it is not recorded anywhere -- these files are the only
-copy. The report is the safe half: it tells you the size of the problem and which
-files are provably unused, so the removal can be chosen rather than stumbled into.
+So this tool counts from git rather than the filesystem, and reports committed
+versus present separately. If a tracked file is ever missing from the working
+tree it says so -- a clean checkout has everything HEAD tracks -- but as of this
+writing the two counts agree, and the discrepancy I first reported was a
+counting error rather than a broken tree.
 
 Run:  python tools/audit_unreferenced_assets.py [--list]
+
+Reports rather than deletes. These are generated art, and for some of them the
+working tree is the only copy.
 """
 import argparse
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ASSETS = os.path.join(ROOT, "client", "assets")
-RENDERER = os.path.join(ROOT, "client", "js", "renderer.js")
+ASSETS = "client/assets"
+CLIENT_SOURCES = [
+    "client/js/renderer.js", "client/js/engine.js", "client/js/ui.js",
+    "client/test_client.html",
+]
+
+
+def git(*args):
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def tracked_files():
+    return [f for f in git("ls-files", ASSETS).split("\n") if f.strip()]
+
+
+def committed_bytes(files):
+    total = 0
+    for f in files:
+        try:
+            total += int(git("cat-file", "-s", "HEAD:" + f).strip())
+        except subprocess.CalledProcessError:
+            pass
+    return total
 
 
 def referenced_names():
-    """Every literal filename mentioned in the client, not just SPRITE_FILES."""
+    """Every image filename any client source names."""
     names = set()
-    for rel in ("client/js/renderer.js", "client/js/engine.js", "client/js/ui.js",
-                "client/test_client.html"):
+    for rel in CLIENT_SOURCES:
         p = os.path.join(ROOT, rel)
         if not os.path.exists(p):
             continue
@@ -42,65 +70,71 @@ def referenced_names():
 
 
 def classify(fname):
-    """Why is this on disk but not loaded? Best guess, from the name alone."""
     base = fname.lower()
+    if "rpg-import" in base:
+        return "rpg-import (third-party import, loaded by nothing)"
     if "_magenta_" in base:
         return "magenta source (the pipeline's input)"
     if re.search(r"_\d{10,}\.", base):
         return "timestamped intermediate or duplicate"
-    if base.endswith(".py") or base.endswith(".psd"):
-        return "tool or source-file artefact"
     return "duplicate or superseded"
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true", help="print every file, not just a summary")
     args = ap.parse_args()
 
-    if not os.path.isdir(ASSETS):
-        print(f"no asset directory at {ASSETS}", file=sys.stderr)
+    tracked = tracked_files()
+    if not tracked:
+        print("no tracked files under " + ASSETS, file=sys.stderr)
         return 2
 
+    present = [f for f in tracked if os.path.exists(os.path.join(ROOT, f))]
+    missing = [f for f in tracked if f not in present]
     referenced = referenced_names()
-    files = sorted(f for f in os.listdir(ASSETS) if os.path.isfile(os.path.join(ASSETS, f)))
+
+    used = [f for f in tracked if os.path.basename(f) in referenced]
+    unused = [f for f in tracked if os.path.basename(f) not in referenced]
+
+    tbytes = committed_bytes(tracked)
+    pbytes = sum(os.path.getsize(os.path.join(ROOT, f)) for f in present)
+
+    print(ASSETS)
+    print("  committed : {:4d} files, {:6.1f} MB".format(len(tracked), tbytes / 1048576))
+    print("  on disk   : {:4d} files, {:6.1f} MB".format(len(present), pbytes / 1048576))
+    print("  loaded    : {:4d} files, {:6.1f} MB".format(len(used), committed_bytes(used) / 1048576))
+    print("  unused    : {:4d} files, {:6.1f} MB  ({}% of what is committed)".format(
+        len(unused), committed_bytes(unused) / 1048576, round(committed_bytes(unused) / tbytes * 100)))
+    print()
+
+    if missing:
+        print("  {} tracked file(s) are MISSING from this working tree:".format(len(missing)))
+        for f in missing[:5]:
+            print("    " + f)
+        if len(missing) > 5:
+            print("    ... and {} more".format(len(missing) - 5))
+        print("  A clean checkout has everything HEAD tracks, so this tree has been")
+        print("  selectively deleted or partially synchronised. It is not a clone.")
+        print()
 
     groups = {}
-    unused_bytes = 0
-    for f in files:
-        if f in referenced:
-            continue
-        reason = classify(f)
-        groups.setdefault(reason, []).append((f, os.path.getsize(os.path.join(ASSETS, f))))
-        unused_bytes += os.path.getsize(os.path.join(ASSETS, f))
-
-    used_bytes = sum(os.path.getsize(os.path.join(ASSETS, f))
-                     for f in files if f in referenced)
-    total = used_bytes + unused_bytes
-
-    print(f"client/assets: {len(files)} files, {total / 1024 / 1024:.1f} MB")
-    print(f"  referenced by the client : {len(files) - sum(len(v) for v in groups.values())} files, "
-          f"{used_bytes / 1024 / 1024:.1f} MB")
-    print(f"  referenced by nothing    : {sum(len(v) for v in groups.values())} files, "
-          f"{unused_bytes / 1024 / 1024:.1f} MB\n")
-
-    if not groups:
-        print("  nothing unused")
-        return 0
+    for f in unused:
+        groups.setdefault(classify(f), []).append(f)
 
     for reason in sorted(groups):
         items = groups[reason]
-        size = sum(s for _, s in items)
-        print(f"  {reason}")
-        print(f"    {len(items)} files, {size / 1024 / 1024:.1f} MB")
+        print("  " + reason)
+        print("    {} files, {:.1f} MB".format(len(items), committed_bytes(items) / 1048576))
         if args.list:
-            for f, s in sorted(items, key=lambda x: -x[1]):
-                print(f"      {f:<44} {s / 1024:8.0f} KB")
+            for s, f in sorted(((committed_bytes([f]), f) for f in items), reverse=True):
+                print("      {:<52} {:8.0f} KB".format(f, s / 1024))
 
-    print("\n  Nothing here is loaded. None of it is provably disposable from a file")
-    print("  listing though: these are generated art, and for some of them this")
-    print("  directory is the only copy. This reports rather than deleting so the")
-    print("  decision stays yours.")
+    print()
+    print("  None of the unused files is loaded. None is provably disposable from a")
+    print("  listing either: these are generated art, and for some the working tree")
+    print("  is the only copy. This reports rather than deletes, because removing")
+    print("  tens of megabytes of assets is the owner's decision, not a cleanup.")
     return 0
 
 

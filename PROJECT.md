@@ -1,206 +1,311 @@
-# Project: Tibia MMORPG Expansion and Overhaul
+# Project: Tibia MMORPG
 
-> **Status note (2026-09-25):** This document describes the target architecture and roadmap. The current implementation is still flatter: the live entry point is `server/server.js`, persistence is `server/persistence.js`, and the domain modules are directly under `server/`. Use `IMPLEMENTATION_PLAN.md` for the ordered execution plan and `docs/PROTOCOL.md` for the currently implemented wire contract.
+> **This document describes the code as it is, not as it was planned to be.**
+>
+> An earlier version of this file described a target architecture —
+> `server/engine/`, `server/network/`, `server/systems/`, `server/world/`,
+> `server/multiplayer/`, a spatial AoI grid, hybrid Firebase persistence — and
+> listed test files at paths that do not exist. None of that was ever built. The
+> file was aspirational and unlabelled enough that a reader would reasonably
+> assume it was a map of the repository. It was rewritten on 2026-09-30 against
+> the actual tree.
+>
+> The gap between that document and the code is recorded honestly in
+> [Not Built](#not-built) below, rather than left for someone to discover.
+
+## What this is
+
+A browser MMORPG in the style of Tibia: a persistent world, a tile map, mobs,
+quests, bosses, and players who meet in it. Vanilla JavaScript and a 2D canvas
+on the client; Node and SQLite on the server. No build step, no framework, no
+bundler — `npm start` and open a browser.
 
 ## Architecture
-The Tibia MMORPG architecture consists of:
-1. **Server Core (`server/`)**:
-   - `server/server.js`: Modular server bootstrapper, HTTP static server, WebSocket connection manager.
-   - `server/engine/game_loop.js`: Unified high-precision tick loop (100ms combat/physics tick, 200ms spatial AoI broadcast tick, 10s persistence flush).
-   - `server/network/aoi_grid.js`: Spatial 2D Grid Area of Interest (AoI) partitioning (cells of 400x400 px). Messages (movement, combat, FCT) broadcast only to observers in adjacent cells, preventing quadratic $O(N^2)$ network scaling under 50+ bots.
-   - `server/network/packet_dispatcher.js`: Structured incoming packet router with validation, rate limiting, and session state.
-   - `server/persistence/db_adapter.js`: Hybrid persistence layer with Firebase Firestore primary driver, atomic local JSON fallback store (`server/data/players.json`), dirty-state queue, and graceful shutdown handlers (`SIGINT`/`SIGTERM`) ensuring 100% persistence reliability on server restart.
-2. **Gameplay Systems (`server/systems/`)**:
-   - `combat_system.js`: Damage formulas, armor mitigation, combat cooldowns, and auto-attack loop.
-   - `subclass_system.js`: Level 10 threshold validation, promotion handlers, class-specific stat multipliers, and sub-class abilities (Warrior -> Juggernaut/Berserker, Mage -> Archmage/Necromancer, Ranger -> Marksman/Shadowstalker).
-   - `boss_system.js`: Boss encounter manager for Spider Queen (Broodmother Voraxia), 2-phase state machine, telegraphed AoE ground attacks (`aoe_warning` broadcast 1500ms before detonation), minion spawning, and boss loot tables.
-3. **World & Content (`server/world/`, `server/content/`)**:
-   - `map_manager.js`: Multi-biome map system (Forest, Town, Swamp, Crypt, Mountain) with collision masks and spawn zones.
-   - `npc_manager.js`: Advanced NPC state machine with branching dialogue trees (DAG structure), quest assignment, and trading.
-   - `quest_system.js`: Multi-step quest chains, progress tracking, objective verification (kill, collect, talk), and rewards.
-   - `item_system.js`: Rich loot tables, equipment slotting (helm, armor, legs, boots, weapon, shield, ring), rarities, and inventory operations.
-4. **Multiplayer Systems (`server/multiplayer/`)**:
-   - `trade_system.js`: 5-stage secure player-to-player trade state machine (Invite -> Stage Items/Gold -> Mutual Lock -> Mutual Confirm -> Atomic Swap) with safety aborts on distance/movement/disconnect.
-   - `party_system.js`: 4-player party manager, invites, party chat, shared member status broadcasts, and proximity XP distribution (+15% party bonus).
-   - `chat_system.js`: Multi-channel chat router (World, Trade, Help, Party, Whisper) with channel filtering.
-5. **Client (`client/`)**:
-   - `client/test_client.html`: HTML5 Canvas 2D isometric rendering, AoE ground indicator telegraph rendering, HUD overlays (Party status, Trade window, Dialogue modals, Sub-class selection modal, Multi-channel chat tabs).
-6. **E2E & Acceptance Testing (`tests/`)**:
-   - `tests/e2e/test_runner.js`: Automated runner for both programmatic headless bots and headless browser verification.
-   - `tests/bots/headless_bot_load.js`: 50 concurrent WebSocket bot load test measuring tick rate and memory.
-   - `tests/bots/party_chat_bot.js`: 2-bot party formation and multi-channel chat verification.
-   - `tests/bots/persistence_restart_bot.js`: Server restart state integrity verification.
-   - `tests/browser/browser_acceptance.js`: Puppeteer/Playwright headless browser verification of Sub-class transition, Boss AoE ground indicator, NPC dialogue & quest, and Player trade flow.
 
----
+### Server
 
-## Feature Inventory
-| # | Feature | Description | Milestone | Source |
-|---|---------|-------------|-----------|--------|
-| 1 | E2E Test Runner & Harness | Automated CLI test runner executing all Acceptance Criteria | M1 | ORIGINAL_REQUEST §Acceptance Criteria |
-| 2 | 50-Bot Load Test Harness | Programmatic script spawning 50 WebSocket bots actively moving/attacking | M1 | ORIGINAL_REQUEST §AC-H1 |
-| 3 | Party & Chat Bot Harness | 2-bot script testing party formation and global chat messages | M1 | ORIGINAL_REQUEST §AC-H2 |
-| 4 | Persistence Restart Harness | Bot script verifying state saved before shutdown and restored on restart | M1 | ORIGINAL_REQUEST §AC-H3 |
-| 5 | Browser Bot Acceptance Suite | Headless browser scripts verifying UI/Canvas interactions for AC1-AC4 | M1 | ORIGINAL_REQUEST §AC-B1..B4 |
-| 6 | Unified High-Precision Game Loop | Decoupled tick scheduler replacing arbitrary intervals | M2 | R4, Survey Codebase |
-| 7 | Spatial Grid AoI Partitioning | 2D Spatial partitioning to eliminate $O(N^2)$ global broadcast lag | M2 | R4, Survey Systems |
-| 8 | Hybrid Firebase / Local Persistence | Resilient persistence with Firestore adapter, atomic JSON store, and shutdown flush | M2 | R4, ORIGINAL_REQUEST §AC-H3 |
-| 9 | NPC & Packet Routing Refactor | Fix NPC interaction crash (`quests_offered`), modular packet dispatch | M2 | R4, Survey Codebase |
-| 10 | Sub-Class Progression & Stats | Level 10 threshold, 6 sub-classes (Juggernaut, etc.), stat scaling | M3 | R1, ORIGINAL_REQUEST §AC-B1 |
-| 11 | Sub-Class Selection & UI | Client UI modal for class promotion and enhanced skill activation | M3 | R1, ORIGINAL_REQUEST §AC-B1 |
-| 12 | Boss Encounter (Spider Queen) | Multi-phase boss AI with minion spawns and enraged states | M3 | R1, ORIGINAL_REQUEST §AC-B2 |
-| 13 | Telegraphed AoE Ground Indicators | Server `aoe_warning` packet and client rendering of ground telegraph before damage | M3 | R1, ORIGINAL_REQUEST §AC-B2 |
-| 14 | Multi-Biome World Expansion | Expanded map with Forest, Town, Swamp, Crypt, and Mountain regions | M4 | R2, ORIGINAL_REQUEST §R2 |
-| 15 | Advanced NPC Dialogue Tree Engine | Branching DAG dialogue trees with conditional choices and responses | M4 | R2, ORIGINAL_REQUEST §AC-B3 |
-| 16 | Multi-Step Quest System | Multi-step quest chains, journal tracking, UI acceptance & turn-in | M4 | R2, ORIGINAL_REQUEST §AC-B3 |
-| 17 | Rich Item & Loot Ecosystem | Extended item catalog, rarities, equipment slots, boss drop tables | M4 | R2, ORIGINAL_REQUEST §R2 |
-| 18 | Secure Player-to-Player Trading | 5-stage secure trade machine with atomic swap and cancel safety | M5 | R3, ORIGINAL_REQUEST §AC-B4 |
-| 19 | Player Trade Window UI | Dual-side staging UI with mutual lock, confirm buttons, and item preview | M5 | R3, ORIGINAL_REQUEST §AC-B4 |
-| 20 | Party System Engine | Party creation, invitations, member list, and shared proximity XP | M5 | R3, ORIGINAL_REQUEST §AC-H2 |
-| 21 | Party HUD & Overlays | Client party HUD displaying party members and health/mana bars | M5 | R3, ORIGINAL_REQUEST §AC-H2 |
-| 22 | Multi-Channel Global Chat | Channel router for World, Trade, Help, Party tabs and slash commands | M5 | R3, ORIGINAL_REQUEST §AC-H2 |
-| 23 | E2E Acceptance Pass (Tiers 1-4) | 100% pass on all 7 Acceptance Criteria tests | M6 | ORIGINAL_REQUEST §Acceptance Criteria |
-| 24 | Adversarial Coverage Hardening (Tier 5) | White-box stress-testing, concurrency race condition audits, performance profiling | M6 | Project Pattern Phase 2 |
+One entry point, `server/server.js`, owns the WebSocket server, the static file
+server, and the periodic ticks. It is large (~2,600 lines) and that is a real
+maintainability cost, recorded under [Known Debt](#known-debt).
 
----
+The domain logic is split into modules that `server.js` composes. Each is
+directly testable because none of them require a socket.
 
-## Milestones
-| # | Name | Scope | Dependencies | Status |
-|---|------|-------|-------------|--------|
-| M1 | Test Infrastructure & Acceptance Harness | E2E test runner, 50-bot load tester, party/chat bot, persistence restart tester, and browser acceptance test suites (Features 1-5, TEST_INFRA.md, TEST_READY.md) | none | IMPLEMENTED / VERIFIED |
-| M2 | Technical Refactoring & Architecture Modernization | Modular engine, unified game loop, Spatial AoI grid, Hybrid Firebase / local persistence with graceful shutdown flush, packet dispatcher, NPC crash fix (Features 6-9) | M1 | PARTIAL |
-| M3 | Gameplay & Combat Systems | Sub-class progression (Level 10 threshold, Warrior -> Juggernaut/Berserker, Mage, Ranger), Spider Queen Boss with telegraphed AoE ground indicators (Features 10-13) | M2 | PARTIAL |
-| M4 | World & Content Expansion | Multi-biome world expansion (Swamp, Crypt, Mountain), branching NPC dialogue trees, multi-step quest lines, rich item/loot ecosystem (Features 14-17) | M2 | PARTIAL |
-| M5 | Multiplayer Features | Secure 2-phase player-to-player trading with UI, 4-player party system with shared proximity XP & HUD, multi-channel global chat (Features 18-22) | M2 | PARTIAL |
-| M6 | Final Acceptance Validation & Adversarial Hardening | 100% pass on all 7 Acceptance Criteria tests (AC1-AC7), followed by Tier 5 adversarial stress testing and concurrency hardening (Features 23-24) | M1, M3, M4, M5 | ACCEPTANCE PASSED / HARDENING PENDING |
+| Module | Responsibility |
+|---|---|
+| `server.js` | Entry point, HTTP + WebSocket, packet dispatch, tick loops |
+| `config.js` | Every tunable constant. Contains Hebrew comments |
+| `map.js` | Floor registry, walkability, biomes, traversal tiles, Z-levels |
+| `mobs.js` | Mob types, stats, spawn packs, movement, standard AI |
+| `bosses.js` | Boss definitions, phase machine, telegraphed AoE, minions |
+| `combat.js` | Damage formulas, targeting, death. A dependency-injected factory |
+| `chests.js` | Loot containers, floor-scoped |
+| `quests.js` | Quest chains, progress, rewards |
+| `npcs.js` | NPC definitions and dialogue trees |
+| `items.js` | Item catalogue, equipment slots, rarity |
+| `skills.js` / `subclasses.js` | Skill costs, subclass promotion and stats |
+| `trade.js` | Secure player-to-player trade state machine |
+| `party.js` | Party membership, invites, shared XP |
+| `guilds.js` | Guild creation, invites, membership |
+| `auction.js` | Player listings, escrow, expiry |
+| `crafting.js` | Recipes and inventory consumption |
+| `persistence.js` | Save scheduling, dirty tracking, shutdown drain |
+| `database.js` | SQLite access |
+| `db_firebase.js` | Optional Firestore adapter, off by default |
+| `auth.js` | Account registration and login, scrypt hashing |
+| `ollama.js` | Optional local-LLM integration |
 
----
+### Client
 
-## Interface Contracts
+| File | Responsibility |
+|---|---|
+| `client/test_client.html` | Markup, HUD panels, modals |
+| `client/js/engine.js` | Socket, packet handling, input, movement, player state |
+| `client/js/renderer.js` | Canvas drawing, sprite loading, minimap, Z-level lighting |
+| `client/js/ui.js` | Panels, chat, trade window, inventory |
 
-### 1. Persistence Adapter Contract (`server/persistence/db_adapter.js`)
-```javascript
-interface DatabaseAdapter {
-  init(): Promise<void>;
-  loadPlayer(charName: string): Promise<PlayerData | null>;
-  savePlayer(charName: string, data: PlayerData): Promise<boolean>;
-  saveAllDirty(): Promise<number>;
-  shutdown(): Promise<void>;
-}
+### Testing
+
+| Path | What it does |
+|---|---|
+| `tests/unit/` | 200 unit tests across 11 files. `npm test` |
+| `tests/e2e_runner.js` | Master runner: `--suite=baseline\|acceptance\|browser\|bots` |
+| `tests/browser/` | Puppeteer acceptance tests, AC1–AC5 |
+| `tests/bots/` | Headless WebSocket clients: 50-bot load, party chat, persistence |
+| `tests/lib/` | Server lifecycle controller, preload, test framework |
+| `tests/traversal_live_verify.js` | Live end-to-end check of the Z-level walk |
+| `tests/ground_aoe_live_verify.js` | Live check of ground AoE resolution |
+| `tests/skills_live_verify.js` | Live check of skill cost and effect |
+| `tests/skull_live_verify.js` | Live check of the skull timer |
+| `tests/corpse_trade_live_verify.js` | Live check of looting and trading |
+| `tests/features4_live_verify.js` | Live check of mount, auction and fishing |
+| `tests/adversarial_challenge.js` | Adversarial white-box probes |
+| `tools/mutate_zlevels.js` | 21 mutations against the Z-level suite |
+| `tools/mutate_ac5.js` | 11 mutations against the browser descent test |
+
+Harnesses whose name starts `*_probe.js` — `traversal_probe.js`,
+`spell_xp_rate_probe.js`, `wal_checkpoint_probe.js`, `auction_restart_probe.js` —
+are small diagnostics run individually rather than as suite members.
+
+## Running it
+
+```
+npm install
+npm start          # server on :8080
+npm test           # 200 unit tests
 ```
 
-### 2. Spatial Grid AoI Contract (`server/network/aoi_grid.js`)
-```javascript
-interface AoIGrid {
-  addEntity(entity: Entity): void;
-  updateEntityPosition(entity: Entity, oldX: number, oldY: number, newX: number, newY: number): { enteredCells: Cell[], leftCells: Cell[] };
-  removeEntity(entity: Entity): void;
-  getNearbyPlayers(x: number, y: number, radiusPx: number): Player[];
-  broadcastToNearby(x: number, y: number, packet: object, radiusPx?: number): void;
-}
+`server/` has its own `package.json` and needs `npm install` in that directory
+for `sqlite3`.
+
+The five browser acceptance suites:
+
+```
+npm run test:browser      # all of AC1-AC5
+npm run test:baseline
+npm run test:acceptance
+npm run test:bots
 ```
 
-### 3. Sub-Class Contract (`server/systems/subclass_system.js`)
-```javascript
-// Packet from client: { action: 'select_subclass', subclass: 'juggernaut' }
-// Packet from server: { action: 'subclass_promoted', charName: string, subclass: string, stats: Stats, abilities: string[] }
-```
+Run them **one at a time.** They bind fixed ports and will collide with each
+other; `npm test` is the only one safe to run concurrently.
 
-### 4. Boss AoE Telegraph Contract (`server/systems/boss_system.js`)
-```javascript
-// Packet broadcast to AoI:
-// { action: 'aoe_warning', spellId: string, x: number, y: number, radius: number, durationMs: number, shape: 'circle' }
-// Followed durationMs later by:
-// { action: 'aoe_impact', spellId: string, x: number, y: number, radius: number, damage: number, affectedPlayers: string[] }
-```
+### Verification tools
 
-### 5. Secure Trade Contract (`server/multiplayer/trade_system.js`)
-```javascript
-// Packets:
-// -> { action: 'trade_request', targetPlayer: string }
-// <- { action: 'trade_requested', fromPlayer: string }
-// -> { action: 'trade_accept', fromPlayer: string }
-// <- { action: 'trade_start', partnerName: string }
-// -> { action: 'trade_offer', items: Item[], gold: number }
-// <- { action: 'trade_update', partnerItems: Item[], partnerGold: number }
-// -> { action: 'trade_lock' }
-// <- { action: 'trade_locked', partnerLocked: boolean }
-// -> { action: 'trade_confirm' }
-// <- { action: 'trade_complete', receivedItems: Item[], receivedGold: number }
-// -> { action: 'trade_cancel' }
-// <- { action: 'trade_cancelled', reason: string }
 ```
-
-### 6. Party Contract (`server/multiplayer/party_system.js`)
-```javascript
-// Packets:
-// -> { action: 'party_invite', targetPlayer: string }
-// <- { action: 'party_invited', fromPlayer: string }
-// -> { action: 'party_accept', leaderName: string }
-// -> { action: 'party_leave' }
-// <- { action: 'party_sync', leader: string, members: [{ name: string, hp: number, maxHp: number, x: number, y: number }] }
+node tools/pack_source.js <out.zip>    # source-only archive, excludes secrets and art
+python tools/slice_sprite.py --help     # cut a sprite from a sheet, key magenta
+node tools/check_asset_integrity.js    # committed sprites match HEAD
+python tools/audit_unreferenced_assets.py  # what in client/assets is loaded by nothing
+node tools/check_config_keys.js        # every CFG.* reference resolves
+node tools/check_encoding.js           # no BOM, no mojibake
+node tools/check_hash_comments.js      # Node 25 rejects # comments in .js
 ```
-
-### 7. Multi-Channel Chat Contract (`server/multiplayer/chat_system.js`)
-```javascript
-// Packets:
-// -> { action: 'chat', channel: 'world' | 'trade' | 'help' | 'party', text: string }
-// <- { action: 'chat', channel: string, sender: string, text: string, timestamp: number }
-```
-
----
 
 ## Code Layout
+
+The tree as it is, not as it was planned. `tools/check_doc_paths.js` verifies
+every path below exists, so this cannot drift into describing structure that was
+never built.
+
 ```
 tibia_mmo/
 ├── server/
-│   ├── server.js                      # Main entry point & WebSocket server
-│   ├── config.js                      # Server configurations & constants
-│   ├── engine/
-│   │   ├── game_loop.js               # Unified high-precision tick loop
-│   │   └── spatial_grid.js            # AoI spatial grid partitioning
-│   ├── network/
-│   │   └── packet_dispatcher.js       # Packet router & validation
-│   ├── persistence/
-│   │   ├── db_adapter.js              # Persistence manager interface
-│   │   ├── firebase_driver.js         # Firestore persistence driver
-│   │   └── local_driver.js            # Atomic local JSON fallback driver
-│   ├── entities/
-│   │   ├── player.js                  # Player entity state & mechanics
-│   │   ├── mob.js                     # Monster entity & standard AI
-│   │   └── boss.js                    # Boss entity (Spider Queen) & state machine
-│   ├── systems/
-│   │   ├── combat_system.js           # Combat formulas & auto-attacks
-│   │   ├── subclass_system.js         # Sub-class promotion & abilities
-│   │   └── boss_system.js             # Boss encounter & AoE telegraphing
-│   ├── world/
-│   │   ├── map_data.js                # Biome tiles, collisions, spawn zones
-│   │   └── biomes.js                  # Biome definitions & weather/effects
-│   ├── content/
-│   │   ├── items.js                   # Item definitions, rarities, stats
-│   │   ├── npcs.js                    # NPC definitions & dialogue DAGs
-│   │   └── quests.js                  # Quest chains & progression tracker
-│   ├── multiplayer/
-│   │   ├── trade_manager.js           # 2-phase secure trade state machine
-│   │   ├── party_manager.js           # Party management & shared XP
-│   │   └── chat_manager.js            # Multi-channel chat router
-│   ├── data/
-│   │   └── players.json               # Local persistence store
-│   └── package.json
+│   ├── server.js              # entry point, HTTP + WebSocket, dispatch, ticks
+│   ├── config.js              # every tunable constant (Hebrew comments)
+│   ├── map.js                 # floor registry, walkability, traversal, Z-levels
+│   ├── mobs.js                # mob types, stats, spawn packs, movement, AI
+│   ├── bosses.js              # boss defs, phases, telegraphed AoE, minions
+│   ├── combat.js              # damage, targeting, death (DI factory)
+│   ├── chests.js              # loot containers, floor-scoped
+│   ├── quests.js              # quest chains, progress, rewards
+│   ├── npcs.js                # NPC definitions and dialogue trees
+│   ├── items.js               # catalogue, equipment slots, rarity
+│   ├── skills.js              # skill costs and effects
+│   ├── subclasses.js          # promotion and stat scaling
+│   ├── trade.js               # secure trade state machine
+│   ├── party.js               # party membership and shared XP
+│   ├── guilds.js              # guilds, invites, membership
+│   ├── auction.js             # listings, escrow, expiry
+│   ├── crafting.js            # recipes, inventory consumption
+│   ├── persistence.js         # save scheduling, dirty tracking, shutdown drain
+│   ├── database.js            # SQLite access
+│   ├── db_firebase.js         # optional Firestore adapter, off by default
+│   ├── auth.js                # accounts, scrypt hashing
+│   ├── ollama.js              # optional local-LLM integration
+│   ├── migrate_to_sqlite.js   # one-off JSON to SQLite migration
+│   └── data/                  # live database (gitignored)
 ├── client/
-│   ├── test_client.html               # Main HTML5 Canvas client & UI overlays
-│   └── js/                            # Optional modular client scripts if needed
-└── tests/
-    ├── e2e_runner.js                  # Master test suite runner
-    ├── bots/
-    │   ├── bot_client.js              # Headless WebSocket bot library
-    │   ├── load_test_50_bots.js       # 50-bot load & tick benchmark (AC5)
-    │   ├── party_chat_test.js         # Party & multi-channel chat test (AC6)
-    │   └── persistence_test.js        # Server shutdown & restart test (AC7)
-    └── browser/
-        ├── browser_runner.js          # Browser test runner
-        ├── test_subclass.js           # Level-up & subclass transition test (AC1)
-        ├── test_boss_aoe.js           # Boss AoE indicator rendering test (AC2)
-        ├── test_npc_quest.js          # NPC dialogue & quest accept test (AC3)
-        └── test_trade.js              # Secure trade flow test (AC4)
+│   ├── test_client.html       # markup, HUD panels, modals
+│   ├── css/style.css
+│   ├── js/engine.js           # socket, packets, input, movement, player state
+│   ├── js/renderer.js         # canvas drawing, sprites, minimap, Z-level light
+│   ├── js/ui.js               # panels, chat, trade window, inventory
+│   └── assets/                # 149 files, 97.7 MB (81.1 MB loaded by nothing)
+├── tests/
+│   ├── e2e_runner.js          # master runner for all four suites
+│   ├── unit/                  # 200 tests across 11 files
+│   ├── browser/               # AC1-AC5, driver, canvas inspector
+│   ├── bots/                  # bot client, 50-bot load, party chat, persistence
+│   └── lib/                   # server controller, preload, test framework
+├── tools/                     # mutation harnesses, sprite pipeline, guards
+├── docs/PROTOCOL.md           # implemented wire contract
+├── CREDITS.md                 # asset licences and provenance
+├── TEST_INFRA.md              # test architecture
+└── PROJECT.md                 # this file
 ```
+
+## Design decisions that look like mistakes
+
+These are deliberate. Changing them reintroduces bugs that are already fixed and
+tested.
+
+- **`dist()` is floor-unaware; `dist3D()` is the floor-aware form.** Two names on
+  purpose. `dist3D` returns `Infinity` across a floor boundary, so an existing
+  `<= RANGE` guard rejects a cross-floor target with no second condition.
+- **`z` is always a trailing parameter**, never inserted positionally. So
+  `spawnMobAt(x, y, type, broadcast, z = 0)` kept its meaning.
+- **`broadcast()` is untouched; `broadcastToFloor(z, packet)` is separate.**
+  Anything carrying a world coordinate or describing an entity must use the
+  floor-scoped form. A packet naming a victim belongs to that victim's floor.
+- **`Set-Content` corrupts files here.** It adds a BOM and double-encodes the
+  Hebrew comments in `config.js`. Use the editor, or Node, or `apply_patch`.
+- **A `#` comment is a syntax error in a `.js` file on Node 25.** Use `//` or
+  `/* */`. Python tools are unaffected.
+- **`client/assets/` art is magenta-backed on purpose.** The renderer keys
+  magenta to transparency at load. A magenta-heavy JPEG is the intended state,
+  not corruption.
+
+## Not Built
+
+Each of these was described in the earlier version of this file. None exists.
+
+- **Spatial AoI grid.** There is no `aoi_grid.js` and no spatial partitioning.
+  `players_sync` is sent per floor every 200ms to every client on that floor.
+  Broadcast cost is O(N) per packet, not O(N²) — at the tested scale of 50 bots
+  this is not a bottleneck, and it is not implemented as a workaround for one.
+- **`server/engine/game_loop.js`.** No unified tick loop. `server.js` calls
+  `scheduleServerInterval` for each concern separately.
+- **`server/network/packet_dispatcher.js`.** No dispatcher. `server.js` has
+  roughly 59 `data.action ===` branches in one handler.
+- **`server/persistence/db_adapter.js` with Firebase primary.** The real
+  arrangement is SQLite, with `db_firebase.js` available but not enabled.
+- **`server/entities/`, `server/systems/`, `server/world/`, `server/content/`,
+  `server/multiplayer/`.** None of these directories exist. The equivalent
+  modules are flat under `server/`.
+- **The test files listed in the old layout.** `tests/e2e/test_runner.js`,
+  `tests/bots/headless_bot_load.js`, `tests/bots/party_chat_bot.js`,
+  `tests/bots/persistence_restart_bot.js` and
+  `tests/browser/browser_acceptance.js` do not exist. The real ones are listed
+  under [Testing](#testing).
+
+## Known Debt
+
+Ordered roughly by cost to fix.
+
+1. **`server.js` is a ~2,600-line monolith** with ~59 packet branches in one
+   async handler, plus the game loops, login and broadcast logic. The split is
+   real work and is not started.
+2. **`client/warrior.jpg` is a 556 KB duplicate** sitting loose in `client/`
+   rather than in `client/assets/`, referenced by nothing.
+3. **81.1 MB of the 97.7 MB committed in `client/assets/` is loaded by nothing**
+   — 83%. The largest single item is `client/assets/rpg-import/`: 67 files,
+   56.3 MB, tracked and committed, referenced by no line of client or server code.
+   The rest are the magenta sources the sprite pipeline consumes (9.5 MB),
+   timestamped duplicates (4.9 MB) and superseded leftovers (10.4 MB). Run
+   `python tools/audit_unreferenced_assets.py --list`. Some of these are the only
+   copy of the art, which is why nothing deletes them automatically.
+4. **Six background-removal scripts at the repo root** (`fix_bg.py`,
+   `perfect_bg.py`, `process_all_magenta.py`, `remove_bg.py`,
+   `remove_bg_smart.py`, `remove_magenta.py`) hardcode a GUID path inside an
+   IDE scratch directory. They record what was done; they cannot be re-run.
+   `tools/slice_sprite.py` supersedes them for new work.
+5. **`ui.js` innerHTML is not audited.** `engine.js` escapes consistently and
+   `check_asset_integrity` covers assets, but player-controlled strings reaching
+   `ui.js` panels have not been reviewed.
+6. **Sessions are in-memory.** Correct for one process; blocks horizontal
+   scaling. Tokens travel inside WebSocket messages, so deployment needs TLS.
+7. **Ollama is hardcoded** to `127.0.0.1:11434` with a fallback model.
+
+## Feature Inventory
+
+Delivered. "Verified" means an automated test asserts it, not that it was
+observed once.
+
+| Feature | Verified by |
+|---|---|
+| E2E runner, baseline/acceptance/browser/bots suites | `tests/e2e_runner.js` |
+| 50-bot concurrent load | `tests/bots/load_test_50_bots.js` |
+| Party formation and party chat | `tests/bots/party_chat_test.js` |
+| Persistence across restart | `tests/bots/persistence_test.js` |
+| Browser: subclass progression | AC1 |
+| Browser: boss AoE telegraph | AC2 |
+| Browser: NPC dialogue and quests | AC3 |
+| Browser: secure trade | AC4 |
+| Browser: Z-level descent and ascent | AC5 |
+| Subclass progression and stats | `tests/unit/` |
+| Multi-biome world | `tests/unit/core.test.js` |
+| Quest chains and journal | `tests/unit/quests_dialogue.test.js` |
+| Crafting | `tests/unit/crafting.test.js` |
+| Auction and mounts | `tests/unit/auction_mount_fish.test.js` |
+| Skull system | `tests/unit/skull.test.js` |
+| **Z-levels: 2 underground floors, traversal, cross-floor isolation** | `tests/unit/zlevels.test.js`, `traversal.test.js`, `boss_floors.test.js`, AC5, 21 mutations |
+| Account auth, scrypt | `tests/unit/core.test.js` |
+
+## Z-Levels
+
+The most recent substantial work, and the part with the most tests. Two
+underground floors (`z=-1` The Bone Crypt, `z=-2` The Molten Depths) reached by
+walking onto a ladder.
+
+The rule that governs the whole feature: **a floor index travels with every
+entity that can be on a different floor.** A player, a mob, a boss, a corpse, a
+chest, a ground drop and a traversal tile each record theirs. Anything that
+measures distance between two such entities uses `dist3D`. Anything that tells a
+client about one uses `broadcastToFloor`.
+
+This is enforced, not just documented:
+
+- `tests/unit/traversal.test.js` audits the server source for unscoped
+  broadcasts, floor-unaware distance calls, and `inSafeZone` calls that do not
+  say which floor they mean.
+- `tests/unit/boss_floors.test.js` does the same for boss targeting, and pins
+  the specific layout overlap that once made it exploitable.
+- `tools/mutate_zlevels.js` re-injects each bug that was found and fixed, one at
+  a time, and fails if the suite does not catch it. 21 mutations, 21 caught.
+
+Two bugs this found that would not have been found by reading:
+
+- Bosses selected victims by 2D distance across all floors. The Molten Depths
+  sits 544×544 inside the Skeleton King's quadrant, so a surface boss could hit a
+  player in the cave at identical coordinates.
+- `isWalkable`'s third parameter defaults to the *surface*, so a dungeon boss
+  was validating every step against city geometry — refusing tiles that are open
+  ground above, accepting tiles that are solid rock around it.
+
+## Licence and assets
+
+See `CREDITS.md`. Three boss sprites are derived from the OpenTibia sprite pack
+under CC BY 4.0; the rest were generated for this project. Two sprite
+collections in the working tree are proprietary CipSoft art and are deliberately
+excluded from the repository — altering them does not make them permissive.
