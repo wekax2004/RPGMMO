@@ -75,7 +75,9 @@ node tools/check_config_keys.js          # every CFG.* reference resolves
 node tools/check_encoding.js             # no BOM, no mojibake
 node tools/check_hash_comments.js        # Node 25 rejects # comments in .js
 node tools/check_doc_paths.js            # PROJECT.md describes files that exist
+node tools/check_doc_claims.js           # PROJECT.md's numbers match the repo
 node tools/check_asset_integrity.js      # committed sprites match HEAD
+node tools/check_asset_licensing.js      # unlicensed assets are not tracked
 node tools/selftest_check_doc_paths.js   # proves the check above actually fires
 node tools/mutate_zlevels.js             # 21 mutations, must all be caught
 node tools/mutate_ac5.js                 # 11 mutations, must all be caught
@@ -146,9 +148,12 @@ Not done, and worth knowing before you rely on any of it:
   full roster every 200 ms. Fine at the tested scale of 50 bots; it is the first
   thing that will need to change for more.
 - **Sessions are in-memory.** One process only, and tokens need TLS.
-- **`client/assets/` is 83% unused** — 81.1 MB of 97.7 MB that nothing loads. The
-  largest chunk is `rpg-import/` (56.3 MB), tracked and committed but referenced
-  by no line of client or server code.
+- **`client/assets/` is 83% unused** — 81.1 MB of 97.7 MB that nothing loads.
+  Most of it is harmless (sprite-pipeline sources and duplicates), but
+  **`rpg-import/` (56.3 MB) is a licensing problem, not clutter.** This project's
+  own `docs/ASSET_IMPORT.md` says those files must not be published, and they
+  have been on `origin/main` since the initial commit. The source repository has
+  no licence file. See `PROJECT.md` → *Known Licence Issues*.
 - **`ui.js` is not audited for escaping.** `engine.js` is consistent; the panels
   have not been reviewed.
 

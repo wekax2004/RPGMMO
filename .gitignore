@@ -23,3 +23,23 @@ tibia_sprites_zip/
 # Screenshots written by tools/boss_sprite_shots.js. Regenerable, and they are
 # 300-700 KB each, so they do not belong in history.
 tmp_shots/
+
+# Third-party import that must not be published. See docs/ASSET_IMPORT.md.
+#
+#   client/assets/rpg-import/   67 files, 56.3 MB, from wekax2004/RPG
+#
+# The source repository has no LICENSE file (GitHub reports "license": null), so
+# these files must not be distributed. docs/ASSET_IMPORT.md has said that since
+# the import was staged; this entry is the mechanism that was missing, which is
+# why the directory was committed in the initial commit and has been on
+# origin/main since 2026-09-25.
+#
+# This entry does NOT untrack files that are already tracked -- git ignores
+# .gitignore for anything already in the index. Removing them from the repository
+# tip needs `git rm --cached -r client/assets/rpg-import` and a commit; removing
+# them from published history needs a filter-repo rewrite and a force-push. Both
+# are the owner's call. See PROJECT.md, Known Licence Issues.
+#
+# Listed here anyway so that a file added to this directory from now on is not
+# silently staged by `git add`.
+client/assets/rpg-import/

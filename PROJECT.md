@@ -219,6 +219,47 @@ Each of these was described in the earlier version of this file. None exists.
   `tests/browser/browser_acceptance.js` do not exist. The real ones are listed
   under [Testing](#testing).
 
+## Known Licence Issues
+
+### `client/assets/rpg-import/` is published and should not be
+
+67 files, 56.3 MB, imported from `https://github.com/wekax2004/RPG`
+(`public/assets/`, commit `acf42ef3`).
+
+`docs/ASSET_IMPORT.md` says the import is "intentionally ignored by Git until
+licensing is confirmed" and that, absent a root `LICENSE` in the source
+repository, "the files must not be published or distributed yet". Neither
+condition held:
+
+- **It is published.** Present on `origin/main` since the initial commit
+  `f624f26` (2026-09-25). `.gitignore` never listed it, so `git add` picked it
+  up with everything else.
+- **The source has no licence.** The GitHub API reports `"license": null` for
+  `wekax2004/RPG`.
+- **Nothing uses it.** No line of client or server code references
+  `rpg-import`. The game renders through the procedural renderer and its own
+  sprites.
+
+The violation is the project's own stated rule, not an external standard.
+
+**Resolving it is the owner's decision**, because it depends on facts about
+ownership that are not in this repository:
+
+1. If the art is yours, licence it in the source repository, add attribution
+   here, and keep the assets.
+2. If ownership is unclear, remove them — from the working tree *and* from
+   history.
+
+Deleting the files in a normal commit stops them being served and stops the
+problem growing, but **does not unpublish them**: the blobs remain in git
+history and anyone who has already cloned has them. Unpublishing requires
+`git filter-repo` plus a force-push, which rewrites every commit from
+`f624f26` onward and invalidates existing clones. That is a deliberate,
+irreversible action and is not taken here.
+
+The audit tool reports this directory by name so it cannot be swept up in a
+general asset cleanup without the licence question being answered first.
+
 ## Known Debt
 
 Ordered roughly by cost to fix.
@@ -229,12 +270,18 @@ Ordered roughly by cost to fix.
 2. **`client/warrior.jpg` is a 556 KB duplicate** sitting loose in `client/`
    rather than in `client/assets/`, referenced by nothing.
 3. **81.1 MB of the 97.7 MB committed in `client/assets/` is loaded by nothing**
-   — 83%. The largest single item is `client/assets/rpg-import/`: 67 files,
-   56.3 MB, tracked and committed, referenced by no line of client or server code.
-   The rest are the magenta sources the sprite pipeline consumes (9.5 MB),
-   timestamped duplicates (4.9 MB) and superseded leftovers (10.4 MB). Run
-   `python tools/audit_unreferenced_assets.py --list`. Some of these are the only
-   copy of the art, which is why nothing deletes them automatically.
+   — 83%. Most of that is benign (the magenta sources the sprite pipeline
+   consumes, 9.5 MB; timestamped duplicates, 4.9 MB; superseded leftovers,
+   10.4 MB). Run `python tools/audit_unreferenced_assets.py --list`.
+
+   **One item is not benign.** `client/assets/rpg-import/` — 67 files, 56.3 MB —
+   is a third-party import that `docs/ASSET_IMPORT.md` states must not be
+   published, and it is: it has been on `origin/main` since the initial commit
+   `f624f26`, because `.gitignore` never listed it. The source repository has no
+   licence file (GitHub reports `"license": null`). Nothing in the client or
+   server loads any of it. **This is a licensing question, not a cleanup task**,
+   and removing it from the working tree would not unpublish it — that needs a
+   history rewrite. See [Known Licence Issues](#known-licence-issues).
 4. **Six background-removal scripts at the repo root** (`fix_bg.py`,
    `perfect_bg.py`, `process_all_magenta.py`, `remove_bg.py`,
    `remove_bg_smart.py`, `remove_magenta.py`) hardcode a GUID path inside an
