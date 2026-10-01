@@ -68,7 +68,7 @@ directly testable because none of them require a socket.
 
 | Path | What it does |
 |---|---|
-| `tests/unit/` | 207 unit tests across 12 files. `npm test` |
+| `tests/unit/` | 212 unit tests across 13 files. `npm test` |
 | `tests/e2e_runner.js` | Master runner: `--suite=baseline\|acceptance\|browser\|bots` |
 | `tests/browser/` | Puppeteer acceptance tests, AC1–AC5 |
 | `tests/bots/` | Headless WebSocket clients: 50-bot load, party chat, persistence |
@@ -83,6 +83,7 @@ directly testable because none of them require a socket.
 | `tools/mutate_zlevels.js` | 21 mutations against the Z-level suite |
 | `tools/mutate_ac5.js` | 11 mutations against the browser descent test |
 | `tools/mutate_keybindings.js` | 12 mutations against the keybinding suite |
+| `tools/mutate_xss.js` | 8 mutations against the XSS sink suite |
 
 Harnesses whose name starts `*_probe.js` — `traversal_probe.js`,
 `spell_xp_rate_probe.js`, `wal_checkpoint_probe.js`, `auction_restart_probe.js` —
@@ -93,7 +94,7 @@ are small diagnostics run individually rather than as suite members.
 ```
 npm install
 npm start          # server on :8080
-npm test           # 207 unit tests
+npm test           # 212 unit tests
 ```
 
 `server/` has its own `package.json` and needs `npm install` in that directory
@@ -165,7 +166,7 @@ tibia_mmo/
 │   └── assets/                # 149 files, 97.7 MB (81.1 MB loaded by nothing)
 ├── tests/
 │   ├── e2e_runner.js          # master runner for all four suites
-│   ├── unit/                  # 207 tests across 12 files
+│   ├── unit/                  # 212 tests across 13 files
 │   ├── browser/               # AC1-AC5, driver, canvas inspector
 │   ├── bots/                  # bot client, 50-bot load, party chat, persistence
 │   └── lib/                   # server controller, preload, test framework
@@ -268,9 +269,7 @@ Ordered roughly by cost to fix.
 1. **`server.js` is a ~2,600-line monolith** with ~59 packet branches in one
    async handler, plus the game loops, login and broadcast logic. The split is
    real work and is not started.
-2. **`client/warrior.jpg` is a 556 KB duplicate** sitting loose in `client/`
-   rather than in `client/assets/`, referenced by nothing.
-3. **81.1 MB of the 97.7 MB committed in `client/assets/` is loaded by nothing**
+2. **81.1 MB of the 97.7 MB committed in `client/assets/` is loaded by nothing**
    — 83%. Most of that is benign (the magenta sources the sprite pipeline
    consumes, 9.5 MB; timestamped duplicates, 4.9 MB; superseded leftovers,
    10.4 MB). Run `python tools/audit_unreferenced_assets.py --list`.
@@ -283,17 +282,22 @@ Ordered roughly by cost to fix.
    server loads any of it. **This is a licensing question, not a cleanup task**,
    and removing it from the working tree would not unpublish it — that needs a
    history rewrite. See [Known Licence Issues](#known-licence-issues).
-4. **Six background-removal scripts at the repo root** (`fix_bg.py`,
-   `perfect_bg.py`, `process_all_magenta.py`, `remove_bg.py`,
-   `remove_bg_smart.py`, `remove_magenta.py`) hardcode a GUID path inside an
-   IDE scratch directory. They record what was done; they cannot be re-run.
-   `tools/slice_sprite.py` supersedes them for new work.
-5. **`ui.js` innerHTML is not audited.** `engine.js` escapes consistently and
-   `check_asset_integrity` covers assets, but player-controlled strings reaching
-   `ui.js` panels have not been reviewed.
-6. **Sessions are in-memory.** Correct for one process; blocks horizontal
+
+   A second asset is held out for a different reason.
+   `client/assets/king_arthur_sprite.jpg` arrived with a UI change, is
+   referenced by `renderer.js`, and has no recorded provenance. It is
+   magenta-keyed Tibia-style art of a recognisable Tibia NPC, so it is
+   gitignored rather than published on nobody's memory. See CREDITS.md.
+
+3. **The magenta sources are not provably disposable.** Seven of the "timestamped
+   duplicate" files are *not* byte-identical to the plain file they sit beside,
+   so "duplicate" in the audit's output means superseded, not identical. Some of
+   the working tree is the only copy of that art. The audit reports rather than
+   deletes for this reason, and that judgement should stand until someone has
+   regenerated the processed sprites from a source they control.
+4. **Sessions are in-memory.** Correct for one process; blocks horizontal
    scaling. Tokens travel inside WebSocket messages, so deployment needs TLS.
-7. **Ollama is hardcoded** to `127.0.0.1:11434` with a fallback model.
+5. **Ollama is hardcoded** to `127.0.0.1:11434` with a fallback model.
 
 ## Feature Inventory
 

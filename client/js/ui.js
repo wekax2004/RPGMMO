@@ -765,11 +765,22 @@
             }
             let html = "";
             window.auctionItems.forEach(item => {
+                // Everything here came off the wire and is escaped before it
+                // becomes markup. sellerName in particular is the seller's
+                // chosen character name, and character names are only checked
+                // for being a non-empty string -- nothing stops one containing
+                // markup. Unescaped, listing an item executed script in every
+                // other player's browser when they opened this panel, which is
+                // a stored XSS reachable by anyone who can make a character.
+                //
+                // price is coerced rather than escaped: it is a count of gold,
+                // and Number() drops anything that is not one instead of
+                // rendering it.
                 html += `<div style="display:flex; justify-content:space-between; align-items:center; background:#222; padding:5px; margin-bottom:5px; border-radius:3px;">
-                    <div><span style="color:#fbbf24">${item.item}</span> <span style="color:#aaa; font-size:12px;">(Seller: ${item.sellerName})</span></div>
+                    <div><span style="color:#fbbf24">${escapeHtml(item.item)}</span> <span style="color:#aaa; font-size:12px;">(Seller: ${escapeHtml(item.sellerName)})</span></div>
                     <div>
-                        <span style="color:gold; margin-right: 10px;">${item.price}G</span>
-                        <button onclick="window.buyAuction('${item.id}')" style="background:#3b82f6; color:white; border:none; padding:4px 8px; cursor:pointer;">Buy</button>
+                        <span style="color:gold; margin-right: 10px;">${Number(item.price) || 0}G</span>
+                        <button onclick="window.buyAuction('${escapeHtml(item.id)}')" style="background:#3b82f6; color:white; border:none; padding:4px 8px; cursor:pointer;">Buy</button>
                     </div>
                 </div>`;
             });

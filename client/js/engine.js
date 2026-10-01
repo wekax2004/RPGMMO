@@ -275,7 +275,7 @@
                     }
                 }
             }
-else if (data.action === "spell_anim") {
+            else if (data.action === "spell_anim") {
                 let color = "rgba(255, 255, 255, 0.5)";
                 let radius = 30;
                 if (data.type === 'cleave') { color = "rgba(255, 50, 50, 0.6)"; radius = 60; }
@@ -286,6 +286,36 @@ else if (data.action === "spell_anim") {
                 else if (data.type === 'trap') { color = "rgba(100, 100, 100, 0.8)"; radius = 40; }
                 else if (data.type === 'heal') { color = "rgba(50, 255, 50, 0.6)"; radius = 40; }
                 else if (data.type === 'smite') { color = "rgba(255, 255, 100, 0.8)"; radius = 40; }
+                else if (data.type === 'meteor_strike' || data.type === 'holy_nova') {
+                    // Epic AoE Spells
+                    window.screenShake = 15; // Stage 8: Screen Shake
+                    if (data.type === "meteor_strike") {
+                        for(let i=0; i<80; i++) {
+                            let angle = Math.random() * Math.PI * 2;
+                            let speed = 2 + Math.random() * 6;
+                            particles.push({ 
+                                x: data.x + 16, y: data.y + 16, 
+                                vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
+                                life: 1.0, maxLife: 1.0, gravity: 0,
+                                color: Math.random() > 0.5 ? "#f97316" : "#dc2626", size: 4 
+                            });
+                        }
+                    } else if (data.type === "holy_nova") {
+                        for(let i=0; i<80; i++) {
+                            let angle = Math.random() * Math.PI * 2;
+                            let speed = 2 + Math.random() * 6;
+                            particles.push({ 
+                                x: data.x + 16, y: data.y + 16, 
+                                vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
+                                life: 1.0, maxLife: 1.0, gravity: 0,
+                                color: Math.random() > 0.5 ? "#fef08a" : "#fef9c3", size: 4 
+                            });
+                        }
+                    }
+                    audio.spellBlast();
+                    return; // skip bossAoeEffects push for these
+                }
+                
                 bossAoeEffects.push({ x: data.x, y: data.y, radius: radius, state: "detonate", type: data.type });
                 setTimeout(() => { bossAoeEffects.pop(); }, 300);
                 audio.spellBlast();
@@ -294,35 +324,7 @@ else if (data.action === "spell_anim") {
                 activeSpells.push({ startTime: Date.now(), sx: data.sx, sy: data.sy, tx: data.tx, ty: data.ty, type: data.type });
                 audio.spellBlast();
             }
-            else if (data.action === "spell_anim") {
-                // Epic AoE Spell Visuals
-                if (data.type === "meteor_strike") {
-                    for(let i=0; i<80; i++) {
-                        let angle = Math.random() * Math.PI * 2;
-                        let speed = 2 + Math.random() * 6;
-                        particles.push({ 
-                            x: data.x + 16, y: data.y + 16, 
-                            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
-                            life: 1.0, maxLife: 1.0, gravity: 0,
-                            color: Math.random() > 0.5 ? "#f97316" : "#dc2626", size: 4 
-                        });
-                    }
-                    audio.spellBlast();
-                }
-                else if (data.type === "holy_nova") {
-                    for(let i=0; i<80; i++) {
-                        let angle = Math.random() * Math.PI * 2;
-                        let speed = 2 + Math.random() * 6;
-                        particles.push({ 
-                            x: data.x + 16, y: data.y + 16, 
-                            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
-                            life: 1.0, maxLife: 1.0, gravity: 0,
-                            color: Math.random() > 0.5 ? "#fef08a" : "#fef9c3", size: 4 
-                        });
-                    }
-                    audio.spellBlast();
-                }
-            }
+
             else if (data.action === "ground_sync") { groundItemsLocal = data.items; }
             else if (data.action === "your_id") { myId = data.id; myName = data.name; }
             else if (data.action === "force_position") { player.x = data.x; player.y = data.y; }

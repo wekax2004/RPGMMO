@@ -97,6 +97,11 @@
 
             ctx.fillStyle = "#111"; ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
             ctx.save();
+            if (window.screenShake > 0) {
+                ctx.translate((Math.random() - 0.5) * window.screenShake, (Math.random() - 0.5) * window.screenShake);
+                window.screenShake *= 0.8;
+                if (window.screenShake < 1) window.screenShake = 0;
+            }
             ctx.translate(-cameraX, -cameraY);
 
             // Background color base
@@ -139,7 +144,15 @@
                 if (grassImg) {
                     const offscreen = document.createElement('canvas');
                     offscreen.width = 256; offscreen.height = 256;
-                    offscreen.getContext('2d').drawImage(grassImg, 0, 0, 256, 256);
+                    const oCtx = offscreen.getContext('2d');
+                    oCtx.drawImage(grassImg, 0, 0, 256, 256);
+                    
+                    // Stage 2: Terrain variations (flowers, pebbles)
+                    oCtx.fillStyle = "#ff69b4"; oCtx.fillRect(45, 60, 4, 4); // Pink flower
+                    oCtx.fillStyle = "#ffffff"; oCtx.fillRect(150, 190, 3, 3); // White flower
+                    oCtx.fillStyle = "#888888"; oCtx.fillRect(210, 80, 5, 4); // Pebble
+                    oCtx.fillStyle = "#ffff00"; oCtx.fillRect(90, 220, 4, 4); // Yellow flower
+                    
                     const grassPattern = ctx.createPattern(offscreen, 'repeat');
                     ctx.fillStyle = grassPattern;
                     ctx.fillRect(0, 0, 800, 800); // City pattern
@@ -537,6 +550,22 @@
             }
 
             if (window.particleSetting !== false) {
+                // --- Weather Engine ---
+                if (Math.random() < 0.3) {
+                    let biome = "";
+                    if (player.x > 1600 && player.y > 1600 && player.y < 2600) biome = "snow";
+                    else if (player.x < 1600 && player.y > 1800) biome = "desert";
+                    else if (player.x < 1600 && player.y > 800 && player.y < 1800) biome = "swamp";
+                    
+                    if (biome === "snow") {
+                        particles.push({ x: cameraX + Math.random() * SCREEN_W, y: cameraY - 10, vx: (Math.random()-0.5)*2, vy: 2+Math.random(), life: 1.0, color: "rgba(255,255,255,0.8)", size: 2, gravity: 0.02 });
+                    } else if (biome === "desert") {
+                        particles.push({ x: cameraX + SCREEN_W + 10, y: cameraY + Math.random() * SCREEN_H, vx: -6 - Math.random()*4, vy: (Math.random()-0.5)*2, life: 1.0, color: "rgba(212,184,114,0.6)", size: 3, gravity: 0 });
+                    } else if (biome === "swamp") {
+                        particles.push({ x: cameraX + Math.random() * SCREEN_W, y: cameraY + SCREEN_H + 10, vx: (Math.random()-0.5), vy: -1, life: 1.0, color: "rgba(74,222,128,0.3)", size: 4, gravity: -0.01 });
+                    }
+                }
+
                 for (let i = particles.length - 1; i >= 0; i--) {
                     let p = particles[i];
                     ctx.globalAlpha = p.life;
@@ -560,15 +589,26 @@
                 let offsetY = (1 - Math.pow(f.life, 3)) * 40;
                 let offsetX = f.driftX * (1 - f.life);
                 
+                let fontSize = 16;
+                let color = f.color;
+                if (f.text.includes("CRIT")) {
+                    fontSize = 22;
+                    color = "#fbbf24";
+                } else if (f.text.startsWith("+") && !f.text.includes("Gold") && !f.text.includes("XP")) {
+                    color = "#4ade80";
+                    fontSize = 18;
+                } else if (f.text.includes("MISS") || f.text.includes("BLOCKED")) {
+                    color = "#94a3b8";
+                }
+
                 ctx.globalAlpha = alpha;
-                ctx.font = "800 16px 'Inter', sans-serif";
+                ctx.font = `800 ${fontSize}px 'Inter', sans-serif`;
                 
                 // Text shadow for pop
                 ctx.fillStyle = "rgba(0,0,0,0.8)";
-                ctx.fillText(f.text, f.x - cameraX + offsetX + 1, f.y - cameraY - offsetY + 1);
-                ctx.fillText(f.text, f.x - cameraX + offsetX - 1, f.y - cameraY - offsetY - 1);
+                ctx.fillText(f.text, f.x - cameraX + offsetX + 2, f.y - cameraY - offsetY + 2);
                 
-                ctx.fillStyle = f.color; 
+                ctx.fillStyle = color; 
                 ctx.fillText(f.text, f.x - cameraX + offsetX, f.y - cameraY - offsetY);
                 ctx.globalAlpha = 1.0;
                 

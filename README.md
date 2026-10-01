@@ -52,7 +52,7 @@ Everything is environment variables. Nothing needs to be set to run locally.
 ## Tests
 
 ```powershell
-npm test                # 207 unit tests
+npm test                # 212 unit tests
 npm run test:baseline   # harness self-checks, 50-bot load
 npm run test:acceptance # 7 acceptance criteria
 npm run test:browser    # AC1-AC5 in a real browser
@@ -82,14 +82,16 @@ node tools/selftest_check_doc_paths.js   # proves the check above actually fires
 node tools/mutate_zlevels.js             # 21 mutations, must all be caught
 node tools/mutate_ac5.js                 # 11 mutations, must all be caught
 node tools/mutate_keybindings.js          # 12 mutations, must all be caught
+node tools/mutate_xss.js                  # 8 mutations, must all be caught
 python tools/audit_unreferenced_assets.py  # what in client/assets loads nothing
 node tools/pack_source.js out.zip        # source-only archive, no secrets or art
 ```
 
 The mutation harnesses are the ones worth running after any change to
-traversal, floors, boss targeting, or the keyboard. They re-inject each bug that
-was found and fixed and fail if the suite does not catch it — a green suite on
-its own proves nothing, because a decorative assertion is also green.
+traversal, floors, boss targeting, the keyboard, or the client DOM. They re-inject
+each bug that was found and fixed and fail if the suite does not catch it — a
+green suite on its own proves nothing, because a decorative assertion is also
+green.
 
 ## Project layout
 
@@ -98,7 +100,7 @@ client/                 Browser client: HTML, CSS, three JS modules
 client/assets/          Sprites and tiles, 149 files, 97.7 MB (83% unused)
 server/                 Entry point plus 22 flat domain modules
 server/data/            Live database (gitignored)
-tests/unit/             207 unit tests
+tests/unit/             212 unit tests
 tests/browser/          Puppeteer acceptance tests, AC1-AC5
 tests/bots/             Headless WebSocket clients
 tools/                  Mutation harnesses, sprite pipeline, integrity guards

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tibia MMO - Patch Notes</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📜</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@600;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #1e293b;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            color: #fbbf24;
+            font-size: 42px;
+            margin-top: 0;
+            text-align: center;
+            text-shadow: 0 4px 15px rgba(251,191,36,0.2);
+        }
+        h2 {
+            font-family: 'Outfit', sans-serif;
+            color: #38bdf8;
+            border-bottom: 2px solid rgba(255,255,255,0.1);
+            padding-bottom: 10px;
+            margin-top: 40px;
+        }
+        .date {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 20px;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            margin-bottom: 10px;
+            padding-left: 25px;
+            position: relative;
+        }
+        li::before {
+            content: "✦";
+            position: absolute;
+            left: 0;
+            color: #fbbf24;
+        }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-right: 8px;
+            text-transform: uppercase;
+        }
+        .tag-ui { background: #3b82f6; color: white; }
+        .tag-combat { background: #ef4444; color: white; }
+        .tag-content { background: #10b981; color: white; }
+        .tag-engine { background: #8b5cf6; color: white; }
+        .back-btn {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #94a3b8;
+            text-decoration: none;
+            font-weight: bold;
+            transition: color 0.2s;
+        }
+        .back-btn:hover {
+            color: #fbbf24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/test_client.html" class="back-btn">← Back to Game</a>
+        
+        <h1>Tibia MMO Patch Notes</h1>
+        
+        <h2>v0.3.0 - The Polish Update</h2>
+        <div class="date">October 1, 2026</div>
+        <ul>
+            <li><span class="tag tag-ui">UI</span> Added a dynamic Settings Menu with Volume Slider, Chat Filters, and Graphics toggle!</li>
+            <li><span class="tag tag-ui">UI</span> Target info panel now appears when you select a mob, tracking its exact health dynamically.</li>
+            <li><span class="tag tag-ui">UI</span> Added a full-screen "Level Up" celebration overlay with animations.</li>
+            <li><span class="tag tag-ui">UI</span> You can now press "M" to open the World Map overlay.</li>
+            <li><span class="tag tag-combat">Combat</span> Damage numbers are now much clearer! Critical hits appear in huge gold text, and heals appear in green.</li>
+            <li><span class="tag tag-content">Content</span> Terrain variation! Biomes like the Forest and City now feature random flowers and pebbles to break up the grass repeating pattern.</li>
+            <li><span class="tag tag-content">Content</span> Dynamic Weather system! You will now encounter snowfall in the mountains, toxic mist in the swamps, and sandstorms in the desert.</li>
+            <li><span class="tag tag-engine">Engine</span> Added intense screen shake effects when massive boss AoE spells like Meteor Strike are cast!</li>
+            <li><span class="tag tag-engine">Engine</span> Fixed duplicate keybindings causing abilities to cast twice.</li>
+        </ul>
+
+        <h2>v0.2.0 - The Graphics Overhaul</h2>
+        <div class="date">September 29, 2026</div>
+        <ul>
+            <li><span class="tag tag-content">Content</span> Replaced grey boxes with distinct sprites for all playable classes and mobs!</li>
+            <li><span class="tag tag-ui">UI</span> Completely redesigned the user interface with a sleek dark mode theme, CSS grids, and a stylized paperdoll equipment screen.</li>
+            <li><span class="tag tag-ui">UI</span> Tooltips have been converted to a custom floating styled box.</li>
+        </ul>
+        
+        <h2>v0.1.0 - The Prototype</h2>
+        <div class="date">September 25, 2026</div>
+        <ul>
+            <li><span class="tag tag-content">Content</span> Initial release with 2 dungeon floors, 13 mobs, and basic crafting/quest systems.</li>
+        </ul>
+    </div>
+</body>
+</html>

@@ -113,5 +113,15 @@ history, not after.
 The remaining sprites in `client/assets/` — the four character classes, the
 gather nodes, the terrain tiles, and the non-boss creatures — were generated
 for this project and are covered by the repository's own licence. They are
-produced by keying a magenta background to transparency; see the
-`*_magenta_*` intermediates and `process_all_magenta.py`.
+produced by keying a magenta background to transparency; the `*_magenta_*`
+files kept beside them are the sources that were keyed.
+
+The script that did the keying, `process_all_magenta.py`, was one of six
+root-level background-removal scripts and has been removed as superseded. Two of
+the six hardcoded a path inside an IDE scratch directory and could never run
+again; the other four were runnable but operated on `warrior.jpg`, `mage.jpg`
+and siblings in `client/assets/`, which the client stopped loading once the
+processed sprites were committed. `tools/slice_sprite.py` supersedes all six,
+and it does flood-fill keying from the tile edge rather than a global colour
+threshold — which is what keeps magenta *inside* a creature's outline from
+being punched out as a hole.
