@@ -169,10 +169,15 @@ function main() {
     const prose = proseAll.filter(p => !notBuilt.includes(p));
     const proseIgnored = prose.filter(isIgnored);
     const proseTracked = prose.filter(p => !isIgnored(p));
+    // Exempt gitignored paths from BOTH sources. The tree is where this bites
+    // first: server/data/ is drawn in the tree, and an exemption that covered
+    // only prose left it failing in every clone.
+    const ignoredAll = [...new Set([...tree, ...prose])].filter(isIgnored);
         // The tree's own root line (`tibia_mmo/`) and bare names that only make sense
     // as part of a tree (`assets`, `unit`, `browser`, `bots`, `lib`) are resolved
     // against the tree, not the filesystem root.
-    const all = [...new Set([...tree, ...proseTracked])]
+    const all = [...new Set([...tree, ...prose])]
+        .filter(p => !isIgnored(p))
         .filter(p => !/^[a-z_]+$/i.test(p))     // bare directory names from the tree
         .filter(p => !p.startsWith('tibia_mmo/'))  // the tree root is not on disk
         .sort();
@@ -180,7 +185,8 @@ function main() {
     console.log('PROJECT.md');
     console.log(`  ${tree.length} tree entries, ${proseAll.length} path mentions, ${all.length} checked`);
     console.log(`  ${proseAll.length - prose.length} mention(s) exempted as "Not Built"`);
-    console.log(`  ${proseIgnored.length} mention(s) exempted as gitignored (deliberately untracked)`);
+    console.log(`  ${ignoredAll.length} path(s) exempted as gitignored (deliberately untracked)`);
+    if (ignoredAll.length) console.log(`      ${ignoredAll.join(', ')}`);
     console.log('');
 
     if (!tree.length) {
