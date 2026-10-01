@@ -59,6 +59,39 @@ function extractFromSource(files) {
         // Inbound: data.action === 'name'
         const inRe = /data\.action\s*===\s*'([a-z0-9_]+)'/g;
         while ((m = inRe.exec(src)) !== null) fromClient.add(m[1]);
+
+        // Inbound, declared action set: TEST_ACTIONS = new Set([...]).
+        //   server/testing.js dispatches with a switch, and the switch body's braces
+        //   defeat any regex that tries to find where it ends -- a first attempt
+        //   recovered one of the nine and looked like it had worked.
+        //
+        //   Read from the exported list instead, which is the authoritative
+        //   declaration of what the module answers to. Matching only a
+        //   name ending in ACTIONS keeps this from sweeping up unrelated Sets.
+        const actionSet = /\b[A-Z_]*ACTIONS[A-Z_]*\s*=\s*new Set\(\[([\s\S]*?)\]\)/g;
+        while ((m = actionSet.exec(src)) !== null) {
+            const nameRe = /'([a-z0-9_]+)'/g;
+            let n;
+            while ((n = nameRe.exec(m[1])) !== null) fromClient.add(n[1]);
+        }
+
+        // Inbound, switch form: case 'name': inside `switch (data.action)`.
+        //   Retained as a second source, since a module that dispatches by switch but
+        //   does not declare its actions should still be visible to the contract.
+        //   Scoped to a switch on data.action so an unrelated switch over a string
+        //   enum elsewhere in the server is not mistaken for protocol.
+        const switchRe = /switch\s*\(\s*data\.action\s*\)/g;
+        while ((m = switchRe.exec(src)) !== null) {
+            // From the switch to the end of the file is safe here: case labels after
+            // it are still case labels of that switch until another switch appears,
+            // and `data.action ===` elsewhere is caught by the pattern above.
+            const rest = src.slice(m.index);
+            const nextSwitch = rest.slice(1).search(/switch\s*\(/);
+            const body = nextSwitch > -1 ? rest.slice(0, nextSwitch + 1) : rest;
+            const caseRe = /\bcase\s+'([a-z0-9_]+)'\s*:/g;
+            let c;
+            while ((c = caseRe.exec(body)) !== null) fromClient.add(c[1]);
+        }
     }
     toClient.delete('undefined');
     return { toClient, fromClient };

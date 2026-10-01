@@ -109,6 +109,7 @@ tests/bots/             Headless WebSocket clients
 tools/                  Mutation harnesses, sprite pipeline, integrity guards
 docs/PROTOCOL.md        The implemented wire contract
 PROJECT.md              Architecture, design decisions, and known debt
+ROADMAP.md              Roadmap status: what is done, partial, or still open
 CREDITS.md              Asset licences and provenance
 ```
 

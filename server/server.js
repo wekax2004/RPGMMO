@@ -55,6 +55,7 @@ function sweepAuthAttempts() {
     }
 }
 const RATELIMIT = require('./ratelimit');
+const TESTING = require('./testing');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -1319,108 +1320,17 @@ wss.on('connection', (ws) => {
             // Explicit test-only fixtures keep acceptance tests deterministic
             // without exposing progression or inventory mutations in normal
             // production servers.
-            if (TEST_MODE && data.action === 'attack_boss') {
-                const boss = Array.from(bosses.values()).find(candidate =>
-                    candidate.id === data.bossId || candidate.type === data.bossId ||
-                    (typeof data.bossId === 'string' && candidate.id.startsWith(data.bossId))
-                );
-                if (boss) player.targetId = boss.id;
-                return;
-            }
-            if (TEST_MODE && data.action === 'test_spawn_mob') {
-                // Deterministic melee/gather testing: normal mob spawning is
-                // randomised across the whole map, so a test can never
-                // reliably reach a mob on foot.
-                const type = typeof data.type === 'string' ? data.type : 'spider';
-                // Reject an unknown type instead of letting spawnMobAt quietly
-                // substitute a spider. It used to: the log said "Spawned
-                // ice_dragon", the floor was told about a spider, and a test
-                // waiting for a boss to appear waited forever for something that
-                // was never going to be sent.
-                if (!KNOWN_MOB_TYPES.includes(type)) {
-                    sendProtocolError(player, `Unknown mob type '${type}'. Known: ${KNOWN_MOB_TYPES.join(', ')}.`);
-                    return;
-                }
-                const x = Number.isInteger(data.x) ? data.x : player.x + CFG.TILE_SIZE;
-                const y = Number.isInteger(data.y) ? data.y : player.y;
-                if (!isInBounds(x, y) || !isWalkable(x, y)) {
-                    sendProtocolError(player, 'Spawn point is not walkable.');
-                    return;
-                }
-                const id = spawnMobAt(x, y, type, broadcast);
-                sendTo(player, { action: 'log', message: `Spawned ${type} at ${x},${y} (${id}).` });
-                return;
-            }
-            if (TEST_MODE && data.action === 'test_spawn_boss') {
-                // Bosses are not in KNOWN_MOB_TYPES -- they are a separate roster
-                // with their own lairs -- so they need their own affordance.
-                // spawnBoss otherwise picks a random tile inside the boss's
-                // quadrant, which is no use to a test that wants to look at it.
-                const type = typeof data.type === 'string' ? data.type : 'spider_queen';
-                if (!BOSS_TYPES[type]) {
-                    sendProtocolError(player, `Unknown boss type '${type}'. Known: ${Object.keys(BOSS_TYPES).join(', ')}.`);
-                    return;
-                }
-                const x = Number.isInteger(data.x) ? data.x : player.x + CFG.TILE_SIZE * 2;
-                const y = Number.isInteger(data.y) ? data.y : player.y;
-                // Floor-aware, because a boss placed on the caller's floor must be
-                // checked against that floor's geometry. The surface's walkable
-                // set and a dungeon's barely overlap.
-                if (!isInBounds(x, y) || !isWalkable(x, y, player.z)) {
-                    sendProtocolError(player, 'Spawn point is not walkable.');
-                    return;
-                }
-                const boss = spawnBoss(type, broadcast, {
-                    at: { x, y }, z: player.z, broadcastToFloor
+            // Test-only fixtures. Extracted to server/testing.js; see that file for why
+            // each of these exists and what it is for. The TEST_MODE gate stays here, at
+            // the one place that decides whether this server offers them at all.
+            if (TEST_MODE && TESTING.TEST_ACTIONS.has(data.action)) {
+                TESTING.handleTestAction({
+                    data, player, players, bosses,
+                    sendTo, sendProtocolError, broadcast, broadcastToFloor,
+                    spawnMobAt, spawnBoss, triggerBossAoe, addXp,
+                    isInBounds, isWalkable,
+                    knownMobTypes: KNOWN_MOB_TYPES, bossTypes: BOSS_TYPES, tileSize: CFG.TILE_SIZE
                 });
-                if (!boss) {
-                    sendProtocolError(player, 'Boss failed to spawn.');
-                    return;
-                }
-                sendTo(player, { action: 'log', message: `Spawned boss ${type} at ${boss.x},${boss.y} (${boss.id}).` });
-                return;
-            }
-            if (TEST_MODE && data.action === 'trigger_boss_aoe') {
-                const spellId = triggerBossAoe(data.bossType || 'spider_queen', players, broadcast, player, broadcastToFloor);
-                if (!spellId) sendProtocolError(player, 'Boss not found.');
-                return;
-            }
-            if (TEST_MODE && data.action === 'test_grant_xp') {
-                const amount = Number(data.amount);
-                if (Number.isFinite(amount) && amount > 0) addXp(player, Math.floor(amount));
-                return;
-            }
-            if (TEST_MODE && data.action === 'test_grant_item') {
-                const item = typeof data.item === 'string' ? data.item.slice(0, 100) : '';
-                if (item) player.inventory.push(item);
-                sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
-                return;
-            }
-            if (TEST_MODE && data.action === 'test_grant_mana') {
-                const amount = Number(data.amount);
-                if (Number.isFinite(amount) && amount > 0) {
-                    player.mana = Math.min(player.maxMana, player.mana + Math.floor(amount));
-                    sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
-                }
-            }
-            if (TEST_MODE && data.action === 'test_heal') {
-                // Restores the character to full. A dungeon populated with
-                // tier-scaled mobs is lethal to a level 1 character on contact,
-                // which is correct for the game but makes any harness that has
-                // to stand still underground -- to verify traversal, not combat --
-                // fail for the wrong reason. TEST_MODE only, alongside the other
-                // grant actions.
-                player.hp = player.maxHp;
-                player.mana = player.maxMana;
-                player.poisonStacks = 0;
-                player.bleedStacks = 0;
-                player.stunUntil = 0;
-                sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
-            }
-            if (TEST_MODE && data.action === 'test_grant_gold') {
-                const amount = Number(data.amount);
-                if (Number.isSafeInteger(amount) && amount >= 0) player.gold = amount;
-                sendTo(player, { action: 'status', hp: player.hp, maxHp: player.maxHp, mana: player.mana, maxMana: player.maxMana, level: player.level, xp: player.xp, nextXp: player.nextXp, gold: player.gold, inventory: player.inventory, equipment: player.equipment, classType: player.classType, subclass: player.subclass, speedBonus: 0 });
                 return;
             }
 
