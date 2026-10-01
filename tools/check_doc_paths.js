@@ -59,6 +59,20 @@ const IS_TREE_LINE = /^\s*[|│├└]/.test.bind(/^\s*[|│├└]/);
 // Commands inside a fenced block are commands, not tree entries.
 const COMMAND = /^\s*(?:[$>]|\$ )?\s*(?:npm|node|python|py|git|npx|yarn|bash|sh)\s/;
 
+/*
+ * Collapse a path to one comparable form.
+ *
+ * Tree entries carry their own trailing slash -- the block writes `server/` and
+ * `data/` -- so joining them yields `server//data/`, and the report showed that
+ * verbatim as "/server//data/". Two consequences: the message named something
+ * that does not exist in any form a reader would type, and the .gitignore match
+ * for `server/data/` silently failed to apply, because the comparison was
+ * literal. A gitignored path was therefore reported missing in a fresh clone.
+ */
+function normalisePath(p) {
+    return p.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
 function treeEntries(md) {
     const blocks = [...md.matchAll(/```[a-z]*\r?\n([\s\S]*?)```/g)];
     const out = [];
@@ -78,7 +92,7 @@ function treeEntries(md) {
             const depth = Math.floor(before.match(/^[\s|│├└─]*/)[0].length / 4);
             stack.length = depth;
             stack.push(name);
-            out.push(stack.join('/'));
+            out.push(normalisePath(stack.join('/')));
         }
     }
     return out;
