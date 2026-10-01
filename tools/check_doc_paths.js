@@ -112,18 +112,53 @@ function notBuiltSection(md) {
     return next ? rest.slice(0, next.index) : rest;
 }
 
+/*
+ * Paths the repository deliberately does not track.
+ *
+ * A document is allowed to name a gitignored path -- CREDITS.md and PROJECT.md
+ * both discuss client/assets/rpg-import/ and the held-back King Arthur sprite,
+ * and they must keep discussing them. Requiring those to resolve would invert
+ * their meaning, the same way the "Not Built" exemption does.
+ *
+ * This was not hypothetical. PROJECT.md gained a mention of the untracked
+ * king_arthur_sprite.jpg, the check passed in the working tree because the file
+ * happened to be on disk, and the same commit failed in a fresh clone. A guard
+ * that is only true because of untracked local state is not a guard.
+ */
+function gitignoreMatchers() {
+    const file = path.join(__dirname, '..', '.gitignore');
+    if (!fs.existsSync(file)) return [];
+    return fs.readFileSync(file, 'utf8')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('#'))
+        .map(pattern => {
+            if (pattern.includes('*')) {
+                const re = new RegExp('^' + pattern
+                    .split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+                return p => re.test(p);
+            }
+            const base = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
+            return p => p === base || p.startsWith(base + '/');
+        });
+}
+
 function main() {
     const md = fs.readFileSync(DOC, 'utf8');
 
     const tree = [...new Set(treeEntries(md))];
     const notBuilt = notBuiltSection(md);
     const proseAll = prosePaths(md);
+    const ignored = gitignoreMatchers();
+    const isIgnored = p => ignored.some(m => m(p));
     // A path mentioned only inside "Not Built" is expected not to exist.
     const prose = proseAll.filter(p => !notBuilt.includes(p));
+    const proseIgnored = prose.filter(isIgnored);
+    const proseTracked = prose.filter(p => !isIgnored(p));
         // The tree's own root line (`tibia_mmo/`) and bare names that only make sense
     // as part of a tree (`assets`, `unit`, `browser`, `bots`, `lib`) are resolved
     // against the tree, not the filesystem root.
-    const all = [...new Set([...tree, ...prose])]
+    const all = [...new Set([...tree, ...proseTracked])]
         .filter(p => !/^[a-z_]+$/i.test(p))     // bare directory names from the tree
         .filter(p => !p.startsWith('tibia_mmo/'))  // the tree root is not on disk
         .sort();
@@ -131,6 +166,7 @@ function main() {
     console.log('PROJECT.md');
     console.log(`  ${tree.length} tree entries, ${proseAll.length} path mentions, ${all.length} checked`);
     console.log(`  ${proseAll.length - prose.length} mention(s) exempted as "Not Built"`);
+    console.log(`  ${proseIgnored.length} mention(s) exempted as gitignored (deliberately untracked)`);
     console.log('');
 
     if (!tree.length) {
