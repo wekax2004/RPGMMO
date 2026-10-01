@@ -34,6 +34,7 @@
             stairs_up: "stairs_up_sprite.jpg",
             merchant: "merchant_sprite.jpg",
             banker: "banker_sprite.jpg",
+            king_arthur: "king_arthur_sprite.jpg",
             // Bosses, from the OpenTibia sprite pack (CC BY 4.0). These three
             // were the only mob types with no art at all and fell through to a
             // grey box. Sliced out of the pack's own sheets by
@@ -251,6 +252,12 @@
                     let spr;
                     if (npc.name === "Merchant Bob") spr = getSprite("merchant");
                     else if (npc.name === "Banker Vault") spr = getSprite("banker");
+                    else if (npc.name === "King Arthur") spr = getSprite("king_arthur");
+                    else if (npc.name === "Trainer Aria") spr = getSprite("warrior");
+                    else if (npc.name === "Scout Elara") spr = getSprite("ranger");
+                    else if (npc.name === "Hermit Frost") spr = getSprite("healer");
+                    else if (npc.name === "Sage Mordecai") spr = getSprite("mage");
+                    else if (npc.name === "Mayor Joe") spr = getSprite("banker");
                     else {
                         const npcSprite = getSprite("npc");
                         const npc2Sprite = getSprite("npc2");
@@ -529,20 +536,22 @@
                 ctx.fillStyle = gradient; ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
             }
 
-            for (let i = particles.length - 1; i >= 0; i--) {
-                let p = particles[i];
-                ctx.globalAlpha = p.life;
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.arc(p.x - cameraX, p.y - cameraY, p.size || 2, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-                
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vy += (p.gravity !== undefined ? p.gravity : 0.2); // gravity
-                p.life -= 0.02;
-                if (p.life <= 0) particles.splice(i, 1);
+            if (window.particleSetting !== false) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    let p = particles[i];
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x - cameraX, p.y - cameraY, p.size || 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                    
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += (p.gravity !== undefined ? p.gravity : 0.2); // gravity
+                    p.life -= 0.02;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
             }
 
             for (let i = fcts.length - 1; i >= 0; i--) {

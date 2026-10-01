@@ -281,6 +281,8 @@
 
         let chatMessages = [];
         let activeChatTab = "all";
+        window.chatFilterSetting = "all";
+        window.particleSetting = true;
 
         function setChatTab(tab) {
             activeChatTab = tab;
@@ -295,6 +297,9 @@
             const c = document.getElementById("log-container");
             c.innerHTML = "";
             chatMessages.forEach(msg => {
+                if (window.chatFilterSetting === "none" && msg.channel !== "system") return;
+                if (window.chatFilterSetting === "local" && msg.channel === "global") return;
+                
                 if (activeChatTab === "all" || msg.channel === activeChatTab || (activeChatTab==="system" && msg.channel==="system")) {
                     const d = document.createElement("div");
                     d.innerText = msg.text;
@@ -770,3 +775,117 @@
             });
             listDiv.innerHTML = html;
         };
+
+        // === Custom Tooltip ===
+        window.showTooltip = function(e, title, content, clickNote) {
+            const tt = document.getElementById("custom-tooltip");
+            if (!tt) return;
+            let html = "<div class='tooltip-title'>" + escapeHtml(title) + "</div>";
+            if (content) html += "<div style='margin-bottom: 4px;'>" + escapeHtml(content) + "</div>";
+            if (clickNote) html += "<em style='color:#64748b; font-size: 10px;'>" + escapeHtml(clickNote) + "</em>";
+            tt.innerHTML = html;
+            tt.style.display = "block";
+            window.moveTooltip(e);
+        };
+
+        window.hideTooltip = function() {
+            const tt = document.getElementById("custom-tooltip");
+            if (tt) tt.style.display = "none";
+        };
+
+        window.moveTooltip = function(e) {
+            const tt = document.getElementById("custom-tooltip");
+            if (!tt || tt.style.display === "none") return;
+            let x = e.pageX + 15;
+            let y = e.pageY + 15;
+            
+            // Keep on screen
+            const rect = tt.getBoundingClientRect();
+            if (x + rect.width > window.innerWidth) x = e.pageX - rect.width - 10;
+            if (y + rect.height > window.innerHeight) y = e.pageY - rect.height - 10;
+            
+            tt.style.left = x + "px";
+            tt.style.top = y + "px";
+        };
+
+        // === Level Up Celebration ===
+        window.showLevelUpCelebration = function(newLevel) {
+            const cel = document.getElementById("levelup-celebration");
+            if (!cel) return;
+            document.getElementById("levelup-text").innerText = "You reached Level " + newLevel;
+            
+            // Trigger animation
+            cel.style.opacity = "1";
+            cel.style.transform = "translate(-50%, -50%) scale(1.2)";
+            
+            // Add some particle flash overlay
+            const flash = document.createElement("div");
+            flash.style.position = "fixed";
+            flash.style.top = "0"; flash.style.left = "0";
+            flash.style.width = "100%"; flash.style.height = "100%";
+            flash.style.backgroundColor = "rgba(251, 191, 36, 0.3)";
+            flash.style.pointerEvents = "none";
+            flash.style.zIndex = "4999";
+            flash.style.transition = "opacity 1s ease-out";
+            document.body.appendChild(flash);
+            
+            // Fade out
+            setTimeout(() => {
+                cel.style.opacity = "0";
+                cel.style.transform = "translate(-50%, -50%) scale(1.5)";
+                flash.style.opacity = "0";
+            }, 2500);
+            
+            setTimeout(() => {
+                cel.style.transform = "translate(-50%, -50%) scale(0.5)"; // reset
+                flash.remove();
+            }, 3500);
+        };
+
+        // === World Map ===
+        window.openWorldMap = function() {
+            document.getElementById("overlay").style.display = "block";
+            const m = document.getElementById("world-map-modal");
+            m.style.display = "block";
+            m.classList.add("active");
+            
+            if (window.player) {
+                const dot = document.getElementById("map-player-dot");
+                dot.style.left = (window.player.x / 8) + "px";
+                dot.style.top = (window.player.y / 8) + "px";
+            }
+        };
+
+        window.closeWorldMap = function() {
+            const m = document.getElementById("world-map-modal");
+            m.style.display = "none";
+            m.classList.remove("active");
+            document.getElementById("overlay").style.display = "none";
+        };
+
+        // === Settings ===
+        window.openSettingsModal = function() {
+            document.getElementById("overlay").style.display = "block";
+            const m = document.getElementById("settings-modal");
+            m.style.display = "block";
+            m.classList.add("active");
+        };
+
+        window.updateVolumeSetting = function() {
+            const v = document.getElementById("setting-volume").value;
+            document.getElementById("volume-val-display").innerText = v;
+            if (window.audio && window.audio.setVolume) window.audio.setVolume(v / 100);
+        };
+
+        window.saveSettings = function() {
+            window.chatFilterSetting = document.getElementById("setting-chat-filter").value;
+            window.particleSetting = document.getElementById("setting-particles").checked;
+            
+            const m = document.getElementById("settings-modal");
+            m.style.display = "none";
+            m.classList.remove("active");
+            document.getElementById("overlay").style.display = "none";
+            
+            renderChat(); // Re-render chat based on new filter
+        };
+

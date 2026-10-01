@@ -378,3 +378,37 @@
         }
         #audio-toggle:hover { border-color: #fbbf24; transform: scale(1.05); }
         #audio-toggle.muted { color: #64748b; }
+
+        /* Custom Tooltip */
+        #custom-tooltip {
+            position: absolute;
+            display: none;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            padding: 8px 12px;
+            border-radius: 8px;
+            pointer-events: none;
+            z-index: 1000;
+            color: #e2e8f0;
+            font-size: 12px;
+            text-align: left;
+            min-width: 120px;
+            white-space: pre-line;
+            line-height: 1.4;
+        }
+        .tooltip-title {
+            font-weight: bold;
+            color: #fbbf24;
+            font-size: 14px;
+            margin-bottom: 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 4px;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; text-shadow: 0 0 10px rgba(255,255,255,0.3); }
+            100% { opacity: 0.6; }
+        }

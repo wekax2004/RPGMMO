@@ -107,7 +107,14 @@ async function runTradeTest(options = {}) {
     // 3. Staging phase through the inventory and gold controls.
     console.log(`[*] Staging trade offers through the UI...`);
     await agentA.page.evaluate((item) => {
-      const node = Array.from(document.querySelectorAll('#inventory-list .inv-item'))
+      // Selected by structure, not by class name. This used to query
+      // `#inventory-list .inv-item`, and when the inventory was restyled and
+      // that class became `inv-cell` the selector silently matched nothing --
+      // AC4 failed with "Inventory item not found: Health Potion" and the
+      // restyle looked unrelated to the test. A layout class is a presentation
+      // detail that is free to change; the contract worth pinning is "there is
+      // one element per stack in #inventory-list".
+      const node = Array.from(document.querySelectorAll('#inventory-list > div'))
         .find(element => element.textContent.includes(item));
       if (!node) throw new Error(`Inventory item not found: ${item}`);
       node.click();
@@ -117,7 +124,8 @@ async function runTradeTest(options = {}) {
     }, 'Health Potion');
 
     await agentB.page.evaluate((item) => {
-      const node = Array.from(document.querySelectorAll('#inventory-list .inv-item'))
+      // Structural selector, for the same reason as agent A above.
+      const node = Array.from(document.querySelectorAll('#inventory-list > div'))
         .find(element => element.textContent.includes(item));
       if (!node) throw new Error(`Inventory item not found: ${item}`);
       node.click();

@@ -6,8 +6,18 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 
-</head>
 <body>
+    <div id="loading-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#0f172a; z-index:9999; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#fbbf24;">
+        <h1 style="font-family:'Outfit', sans-serif; font-size:48px; margin:0 0 10px 0; text-shadow:0 0 20px rgba(251,191,36,0.5);">TIBIA MMO</h1>
+        <div style="font-size:16px; color:#94a3b8; animation: pulse 1.5s infinite;">Connecting to server...</div>
+    </div>
+    
+    <div id="levelup-celebration" style="position:fixed; top:30%; left:50%; transform:translate(-50%, -50%) scale(0.5); opacity:0; pointer-events:none; z-index:5000; text-align:center; transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+        <h1 style="font-family:'Outfit', sans-serif; font-size:64px; color:#fbbf24; margin:0; text-shadow: 0 0 30px rgba(251,191,36,1), 0 0 10px #fff;">LEVEL UP!</h1>
+        <div id="levelup-text" style="font-size:24px; color:#fff; font-weight:bold; text-shadow: 0 0 10px rgba(0,0,0,0.8);">You reached Level 2</div>
+    </div>
+
+    <div id="custom-tooltip"></div>
     <div id="overlay"></div>
     
     <div id="auth-modal" class="modal" style="width: 350px;">
@@ -29,6 +39,36 @@
         <div class="class-card" onclick="login('mage')"><h3 style="color:#00aaff; margin:0">Mage</h3><p style="font-size:11px; color:#aaa">High Mana, Ranged Fireball</p></div>
         <div class="class-card" onclick="login('ranger')"><h3 style="color:#55ff55; margin:0">Ranger</h3><p style="font-size:11px; color:#aaa">Balanced, Ranged Snipe</p></div>
         <div class='class-card' onclick='login("healer")'><h3 style='color:#44ff88; margin:0'>Healer</h3><p style='font-size:11px; color:#aaa'>High Mana, Heal Spells</p></div>
+    </div>
+
+    <div id="world-map-modal" class="modal" style="width: 500px; padding: 20px;">
+        <h2 style="color:#fbbf24; margin-top:0; text-align:center;">World Map</h2>
+        <div style="position:relative; width:400px; height:400px; background:#1e1e2f; margin:0 auto; border:2px solid rgba(255,255,255,0.2); border-radius:8px;">
+            <div style="position:absolute; top:0; left:0; width:100px; height:100px; background:#4a5d4e; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">City</div>
+            </div>
+            <div style="position:absolute; top:0; left:100px; width:150px; height:150px; background:#2c4021; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Forest</div>
+            </div>
+            <div style="position:absolute; top:0; left:250px; width:150px; height:200px; background:#6b5b40; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Eastern Ruins</div>
+            </div>
+            <div style="position:absolute; top:100px; left:0; width:200px; height:125px; background:#2a3b32; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Swamp</div>
+            </div>
+            <div style="position:absolute; top:200px; left:200px; width:200px; height:125px; background:#e0f7fa; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#000; font-size:12px; font-weight:bold;">Snow Mountain</div>
+            </div>
+            <div style="position:absolute; top:225px; left:0; width:200px; height:175px; background:#d4b872; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#000; font-size:12px; font-weight:bold;">Desert</div>
+            </div>
+            <div style="position:absolute; top:325px; left:200px; width:200px; height:75px; background:#111118; border:1px solid rgba(0,0,0,0.5);">
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Crypt</div>
+            </div>
+            
+            <div id="map-player-dot" style="position:absolute; width:8px; height:8px; background:red; border-radius:50%; transform:translate(-50%,-50%); z-index:10; border:1px solid white; box-shadow: 0 0 5px rgba(255,0,0,0.8);"></div>
+        </div>
+        <button onclick="closeWorldMap()" style="margin-top:15px; width:100%; background:#334155; color:white; border:none; padding:10px; border-radius:6px; cursor:pointer; font-weight:bold;">Close (M)</button>
     </div>
 
     <div id="subclass-modal" class="modal">
@@ -126,6 +166,27 @@
         <button onclick="closeGuildModal()" style="margin-top:15px; background:#444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%; border-radius:4px;">Close</button>
     </div>
 
+    <div id="settings-modal" class="modal" style="width:300px;">
+        <h2 style="color:#fbbf24; margin-top:0; text-align:center;">⚙️ Settings</h2>
+        <div style="margin-bottom: 15px;">
+            <label style="color:#fff; font-weight:bold; display:block; margin-bottom:5px;">Master Volume: <span id="volume-val-display">100</span>%</label>
+            <input type="range" id="setting-volume" min="0" max="100" value="100" style="width:100%; cursor:pointer;" onchange="updateVolumeSetting()">
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label style="color:#fff; font-weight:bold; display:block; margin-bottom:5px;">Chat Filter</label>
+            <select id="setting-chat-filter" style="width:100%; padding:8px; background:#222; color:#fff; border:1px solid #555; border-radius:4px;">
+                <option value="all">Show All Messages</option>
+                <option value="local">Hide Global Chat</option>
+                <option value="none">Mute All Chat</option>
+            </select>
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label style="color:#fff; font-weight:bold; display:block; margin-bottom:5px;">Graphics</label>
+            <label style="color:#aaa; font-size:12px;"><input type="checkbox" id="setting-particles" checked> Enable Particles/Weather</label>
+        </div>
+        <button onclick="saveSettings()" style="margin-top:10px; width:100%; background:#10b981; color:white; border:none; padding:10px; border-radius:4px; cursor:pointer; font-weight:bold;">Save & Close</button>
+    </div>
+
     <div id="bank-modal" class="modal" style="width:450px;">
         <h2 style="margin-top:0; color:#fbbf24; text-align:center;">🏦 Royal Bank</h2>
         
@@ -164,7 +225,7 @@
     </div>
 
     <h2>⚔️ Tibia MMO - V2</h2>
-    <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">Move: WASD | Attack: Click | Talk/Shop: 'E' or Click | Spells: '1','2' | Potions: '3','4'</div>
+    <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">Move: WASD | Attack: Click | Talk/Shop: 'E' or Click | Spells: '1','2' | Epic: 'R' | Purify: 'P' | Potions: '3','4' | Mount: 'Z' | Fish: 'F' | Map: 'M'</div>
     
     
     <div id="minimap-container">
@@ -172,7 +233,10 @@
         <div id="zone-indicator" style="text-align: center; font-weight: bold; padding: 2px; font-size: 11px; background: rgba(0,0,0,0.5);">Safe Zone</div>
     </div>
 
-    <button id="audio-toggle" onclick="toggleAudio()" title="Toggle sound (M)" aria-label="Toggle sound">&#128266;</button>
+    <div style="position: absolute; top: 20px; right: 184px; display: flex; gap: 10px; z-index: 3;">
+        <button id="audio-toggle" onclick="toggleAudio()" title="Toggle sound" aria-label="Toggle sound" style="position:relative; top:0; right:0;">&#128266;</button>
+        <button id="settings-toggle" onclick="openSettingsModal()" title="Settings" style="width:40px; height:40px; border-radius:50%; background:rgba(15,23,42,0.8); backdrop-filter:blur(8px); border:2px solid rgba(255,255,255,0.1); box-shadow:0 4px 15px rgba(0,0,0,0.5); color:#fff; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;">⚙️</button>
+    </div>
 
     <div id="game-wrapper">
         <div id="left-panel">
@@ -184,8 +248,8 @@
             <div style="margin: 8px 0;">💰 <span id="gold-val" style="color:#ffd700; font-weight:bold;">0</span> Gold</div>
             <div id="status-val" style="color:#aaa; font-size:12px; margin-bottom:8px;">Status: Normal</div>
             
-            <button class="btn-spell" onclick="castPurify()">✨ Purify (Press '1') - 20 MP</button>
-            <button class="btn-spell btn-skill" id="btn-skill" onclick="castSkill()">⚔️ Class Skill (Press '2') - 30 MP</button>
+            <button class="btn-spell" onclick="castPurify()" title="Clears poison and bleeding. 20 mana.">✨ Purify (Press 'P') - 20 MP</button>
+            <button class="btn-spell btn-skill" id="btn-skill" onclick="castSkill()" title="Your class's secondary spell — the same thing as pressing '2'. A healer instead casts Flash Heal on a target.">⚔️ Class Skill (Press '2') - 30 MP</button>
             <button class="btn-spell" id="btn-evolve" onclick="requestEvolve()" disabled>✨ Evolve (Level 10)</button>
             <div style="display:flex; gap:4px;">
                 <button class="btn-spell btn-item" onclick="useItem('Health Potion')">❤️ HP Potion ('3')</button>
@@ -194,24 +258,34 @@
             
             <div class="panel-box">
                 <h4>👕 Equipment</h4>
-                <div id="equip-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px;">
-                    <div id="equip-helmet" class="inv-item" onclick="unequip('helmet')" style="cursor:pointer; background:#334">Helmet: None</div>
-                    <div id="equip-amulet" class="inv-item" onclick="unequip('amulet')" style="cursor:pointer; background:#433">Amulet: None</div>
-                    <div id="equip-weapon" class="inv-item" onclick="unequip('weapon')" style="cursor:pointer; background:#422">Weapon: None</div>
-                    <div id="equip-shield" class="inv-item" onclick="unequip('shield')" style="cursor:pointer; background:#242">Shield: None</div>
-                    <div id="equip-armor" class="inv-item" onclick="unequip('armor')" style="cursor:pointer; background:#224">Armor: None</div>
-                    <div id="equip-legs" class="inv-item" onclick="unequip('legs')" style="cursor:pointer; background:#333">Legs: None</div>
-                    <div id="equip-boots" class="inv-item" onclick="unequip('boots')" style="cursor:pointer; background:#443; grid-column: span 2; text-align:center;">Boots: None</div>
+                <div id="equip-grid" class="paperdoll">
+                    <div id="equip-amulet" class="eq-slot eq-amulet" onclick="unequip('amulet')" title="Amulet">None</div>
+                    <div id="equip-helmet" class="eq-slot eq-helmet" onclick="unequip('helmet')" title="Helmet">None</div>
+                    <div class="eq-slot eq-empty"></div>
+                    <div id="equip-weapon" class="eq-slot eq-weapon" onclick="unequip('weapon')" title="Weapon">None</div>
+                    <div id="equip-armor" class="eq-slot eq-armor" onclick="unequip('armor')" title="Armor">None</div>
+                    <div id="equip-shield" class="eq-slot eq-shield" onclick="unequip('shield')" title="Shield">None</div>
+                    <div class="eq-slot eq-ring1"></div>
+                    <div id="equip-legs" class="eq-slot eq-legs" onclick="unequip('legs')" title="Legs">None</div>
+                    <div class="eq-slot eq-ring2"></div>
+                    <div id="equip-boots" class="eq-slot eq-boots" onclick="unequip('boots')" title="Boots">None</div>
                 </div>
             </div>
             
             <div class="panel-box">
                 <h4>🎒 Inventory</h4>
-                <div id="inventory-list" style="max-height: 200px; overflow-y: auto; padding-right: 4px;"><em style="color:#666">Empty</em></div>
+                <div id="inventory-list" class="inv-grid"><em style="color:#666; grid-column: span 4; text-align: center; padding: 10px;">Empty</em></div>
             </div>
         </div>
 
-        <div>
+        <div style="position: relative;">
+            <div id="target-info-panel" style="display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); background:rgba(15, 23, 42, 0.8); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:6px 12px; width:200px; text-align:center; z-index:10; backdrop-filter:blur(4px); box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+                <div id="target-name" style="color:#fbbf24; font-weight:bold; font-size:14px; margin-bottom:4px; text-shadow:1px 1px 2px #000;">Target</div>
+                <div class="bar-container" style="height:12px; margin-bottom:0; background:rgba(0,0,0,0.6);">
+                    <div id="target-hp-fill" class="bar-fill hp-fill" style="width:100%;"></div>
+                    <div id="target-hp-text" class="bar-text" style="font-size:9px; top:1px;">100%</div>
+                </div>
+            </div>
             <canvas id="gameCanvas" width="640" height="480" ondragover="event.preventDefault()" ondrop="window.dropOnGround(event)"></canvas>
         </div>
         

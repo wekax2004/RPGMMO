@@ -68,7 +68,7 @@ directly testable because none of them require a socket.
 
 | Path | What it does |
 |---|---|
-| `tests/unit/` | 200 unit tests across 11 files. `npm test` |
+| `tests/unit/` | 207 unit tests across 12 files. `npm test` |
 | `tests/e2e_runner.js` | Master runner: `--suite=baseline\|acceptance\|browser\|bots` |
 | `tests/browser/` | Puppeteer acceptance tests, AC1–AC5 |
 | `tests/bots/` | Headless WebSocket clients: 50-bot load, party chat, persistence |
@@ -82,6 +82,7 @@ directly testable because none of them require a socket.
 | `tests/adversarial_challenge.js` | Adversarial white-box probes |
 | `tools/mutate_zlevels.js` | 21 mutations against the Z-level suite |
 | `tools/mutate_ac5.js` | 11 mutations against the browser descent test |
+| `tools/mutate_keybindings.js` | 12 mutations against the keybinding suite |
 
 Harnesses whose name starts `*_probe.js` — `traversal_probe.js`,
 `spell_xp_rate_probe.js`, `wal_checkpoint_probe.js`, `auction_restart_probe.js` —
@@ -92,7 +93,7 @@ are small diagnostics run individually rather than as suite members.
 ```
 npm install
 npm start          # server on :8080
-npm test           # 200 unit tests
+npm test           # 207 unit tests
 ```
 
 `server/` has its own `package.json` and needs `npm install` in that directory
@@ -164,7 +165,7 @@ tibia_mmo/
 │   └── assets/                # 149 files, 97.7 MB (81.1 MB loaded by nothing)
 ├── tests/
 │   ├── e2e_runner.js          # master runner for all four suites
-│   ├── unit/                  # 200 tests across 11 files
+│   ├── unit/                  # 207 tests across 12 files
 │   ├── browser/               # AC1-AC5, driver, canvas inspector
 │   ├── bots/                  # bot client, 50-bot load, party chat, persistence
 │   └── lib/                   # server controller, preload, test framework

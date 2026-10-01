@@ -27,8 +27,8 @@
         let floorTransitions = [];
         window.currentZ = 0;
 
-        function getItemTooltip(name) {
-            let tooltip = name + "\n";
+        function getItemStats(name) {
+            let tooltip = "";
             if (itemDict.materials && itemDict.materials[name]) {
                 tooltip += "[Crafting Material] Tier " + itemDict.materials[name].tier + "\n";
             }
@@ -99,6 +99,7 @@
                 addLog("❌ " + (data.message || "Unable to log in."));
             }
             else if (data.action === "auth_required") {
+                const ls = document.getElementById("loading-screen"); if(ls) ls.style.display = "none";
                 document.getElementById("overlay").style.display = "block";
                 document.getElementById("auth-modal").style.display = "block";
             }
@@ -112,6 +113,7 @@
                 }
             }
             else if (data.action === "show_class_select") {
+                const ls = document.getElementById("loading-screen"); if(ls) ls.style.display = "none";
                 document.getElementById("overlay").style.display = "block";
                 document.getElementById("class-modal").style.display = "block";
             }
@@ -467,7 +469,10 @@ else if (data.action === "spell_anim") {
                 if (data.isMounted !== undefined) player.isMounted = data.isMounted;
                 player.classType = data.classType;
                 // Level-up fanfare fires on the transition, not every tick.
-                if (lastKnownLevel && data.level > lastKnownLevel) audio.levelUp();
+                if (lastKnownLevel && data.level > lastKnownLevel) {
+                    audio.levelUp();
+                    if (window.showLevelUpCelebration) window.showLevelUpCelebration(data.level);
+                }
                 if (lastKnownHp && data.hp < lastKnownHp) audio.hurt();
                 lastKnownLevel = data.level;
                 lastKnownHp = data.hp;
@@ -497,11 +502,17 @@ else if (data.action === "spell_anim") {
                             if (data.equipment[slot]) {
                                 el.innerText = data.equipment[slot];
                                 el.classList.add("filled");
-                                el.title = getItemTooltip(data.equipment[slot]) + "\n(Click to unequip)";
+                                el.removeAttribute("title");
+                                el.onmouseenter = (e) => window.showTooltip(e, data.equipment[slot], getItemStats(data.equipment[slot]), "Click to unequip");
+                                el.onmouseleave = window.hideTooltip;
+                                el.onmousemove = window.moveTooltip;
                             } else {
                                 el.innerText = slot.charAt(0).toUpperCase() + slot.slice(1);
                                 el.classList.remove("filled");
                                 el.removeAttribute("title");
+                                el.onmouseenter = null;
+                                el.onmouseleave = null;
+                                el.onmousemove = null;
                             }
                         }
                     });
@@ -557,11 +568,13 @@ else if (data.action === "spell_anim") {
                     if (myInventoryData.length > 0) {
                         const counts = {};
                         myInventoryData.forEach(i => counts[i] = (counts[i] || 0) + 1);
-                        invEl.innerHTML = Object.keys(counts).map(k =>
-                            "<div class='inv-item' draggable='true' ondragstart='window.dragStart(event, \"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='" + escapeHtml(getItemTooltip(k)).replace(/'/g, "&#39;") + "\n(Click to equip/use)'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
-                        ).join("");
+                        invEl.innerHTML = Object.keys(counts).map(k => {
+                            const escK = escapeHtml(k).replace(/'/g, "&#39;");
+                            const escS = escapeHtml(getItemStats(k)).replace(/'/g, "&#39;").replace(/\n/g, "<br>");
+                            return `<div class='inv-cell' draggable='true' ondragstart='window.dragStart(event, "${escK}")' onclick='clickItem("${escK}")' onmouseenter='window.showTooltip(event, "${escK}", "${escS}", "Click to equip/use")' onmouseleave='window.hideTooltip()' onmousemove='window.moveTooltip(event)'><span>${escapeHtml(k)}</span><div class='inv-count'>${counts[k]}</div></div>`;
+                        }).join("");
                     } else {
-                        invEl.innerHTML = "<em style=\"color:#666\">Empty</em>";
+                        invEl.innerHTML = "<em style=\"color:#666; grid-column: span 4; text-align: center; padding: 10px;\">Empty</em>";
                     }
                 }
                 audio.questUpdate();
@@ -590,11 +603,13 @@ else if (data.action === "spell_anim") {
             if (myInventoryData.length > 0) {
                 const counts = {};
                 myInventoryData.forEach(i => counts[i] = (counts[i] || 0) + 1);
-                invEl.innerHTML = Object.keys(counts).map(k =>
-                    "<div class='inv-item' draggable='true' ondragstart='window.dragStart(event, \"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' style='cursor:pointer' onclick='clickItem(\"" + escapeHtml(k).replace(/'/g, "&#39;") + "\")' title='" + escapeHtml(getItemTooltip(k)).replace(/'/g, "&#39;") + "\n(Click to equip/use)'>" + escapeHtml(k) + " x" + counts[k] + "</div>"
-                ).join("");
+                invEl.innerHTML = Object.keys(counts).map(k => {
+                    const escK = escapeHtml(k).replace(/'/g, "&#39;");
+                    const escS = escapeHtml(getItemStats(k)).replace(/'/g, "&#39;").replace(/\n/g, "<br>");
+                    return `<div class='inv-cell' draggable='true' ondragstart='window.dragStart(event, "${escK}")' onclick='clickItem("${escK}")' onmouseenter='window.showTooltip(event, "${escK}", "${escS}", "Click to equip/use")' onmouseleave='window.hideTooltip()' onmousemove='window.moveTooltip(event)'><span>${escapeHtml(k)}</span><div class='inv-count'>${counts[k]}</div></div>`;
+                }).join("");
             } else {
-                invEl.innerHTML = "<em style=\"color:#666\">Empty</em>";
+                invEl.innerHTML = "<em style=\"color:#666; grid-column: span 4; text-align: center; padding: 10px;\">Empty</em>";
             }
         }
 
@@ -811,8 +826,23 @@ else if (data.action === "spell_anim") {
             }
         }, 50);
 
+        // --- Target Info Update Loop ---
+        setInterval(() => {
+            const tip = document.getElementById("target-info-panel");
+            if (!tip) return;
+            if (currentTargetId && typeof mobs !== 'undefined' && mobs[currentTargetId]) {
+                const target = mobs[currentTargetId];
+                tip.style.display = "block";
+                document.getElementById("target-name").innerText = target.name || "Target";
+                const hpPct = Math.max(0, Math.min(100, (target.hp / target.maxHp) * 100));
+                document.getElementById("target-hp-fill").style.width = hpPct + "%";
+                document.getElementById("target-hp-text").innerText = target.hp + " / " + target.maxHp;
+            } else {
+                tip.style.display = "none";
+            }
+        }, 100);
+
         document.addEventListener("keydown", (e) => {
-            if (document.getElementById("overlay").style.display === "block") return;
             if (document.activeElement === chatInput) {
                 if (e.key === "Enter" && chatInput.value.trim() !== "") {
                     let text = chatInput.value.trim();
@@ -826,6 +856,18 @@ else if (data.action === "spell_anim") {
                 return;
             }
 
+            if (e.key.toLowerCase() === 'm') {
+                const mapModal = document.getElementById("world-map-modal");
+                if (mapModal && mapModal.style.display === "block") {
+                    window.closeWorldMap();
+                } else if (document.getElementById("overlay").style.display !== "block") {
+                    window.openWorldMap();
+                }
+                return;
+            }
+
+            if (document.getElementById("overlay").style.display === "block") return;
+
             if (!myId) return;
             const now = Date.now();
             let dx = 0, dy = 0;
@@ -834,9 +876,22 @@ else if (data.action === "spell_anim") {
             else if (e.key === "ArrowLeft" || e.key === "a") dx = -32;
             else if (e.key === "ArrowRight" || e.key === "d") dx = 32;
             else if (e.key === "Enter") chatInput.focus();
-if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 1 })); return; }
+// Spell keys. These are the canonical bindings and they send a
+            // spellIndex, because COMBAT.castSpell dispatches on it: index 1 is
+            // the class's primary, index 2 the secondary, index 3 the epic. The
+            // server's comment above castEpic says index 3 was chosen *because*
+            // the client already binds "1" and "2", so these three lines are
+            // what the server expects to receive. Changing them is not a
+            // refactor, it is a protocol change.
+            if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 1 })); return; }
             if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); return; }
             if (e.key === "r" || e.key === "R") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 3 })); return; }
+            // Purify used to be wired to "1" as well, which made it unreachable:
+            // the cast_spell line above returned first, so pressing 1 cast the
+            // class's primary spell while the button below it advertised
+            // "Purify (Press '1')". The dead binding has been removed and
+            // Purify now owns P, so the label tells the truth.
+            if (e.key === "p" || e.key === "P") { castPurify(); return; }
             if (e.key === "z" || e.key === "Z") { socket.send(JSON.stringify({ action: "toggle_mount" })); return; }
             if (e.key === "f" || e.key === "F") { socket.send(JSON.stringify({ action: "fish" })); return; }
             
@@ -860,9 +915,32 @@ if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellInd
                 }
             }
 
-            if (e.key === "1") castPurify();
-            if (e.key === "2") castSkill();
-            if (e.key === "m" || e.key === "M") toggleAudio();
+            // Removed: `if (e.key === "1") castPurify();` and
+            // `if (e.key === "2") castSkill();`.
+            //
+            // Both were unreachable. The cast_spell bindings above return on the
+            // way out of the handler, so control never reached this block for
+            // either key -- pressing 1 cast the class primary spell and pressing
+            // 2 cast the secondary, never Purify and never castSkill. The
+            // duplicate made the HUD labels wrong and hid the fact that neither
+            // function had a keyboard binding at all.
+            //
+            // castSkill() is still reachable: the HUD button calls it. Its label
+            // says "Press '2'", and for every class except healer that is now
+            // true, because castSkill() sends a spellIndex-less cast_spell and
+            // the server treats a missing index as the secondary spell. A
+            // healer is the exception and is called out in the button's title.
+            // Removed: `if (e.key === "m" || e.key === "M") toggleAudio();`
+            //
+            // Dead on arrival. The world-map binding near the top of this
+            // handler tests `e.key.toLowerCase() === 'm'` and returns, so this
+            // line was never reached: M opened the map and nothing else, and
+            // mute was reachable only by clicking the HUD button.
+            //
+            // The button's tooltip claimed "Toggle sound (M)", which was the
+            // same false label as the old "Purify (Press '1')" button. It has
+            // been corrected. M now belongs to the world map and is documented
+            // in the help bar.
             if (e.key === "Tab") { 
                 e.preventDefault(); 
                 toggleMinimap(); 

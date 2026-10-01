@@ -89,6 +89,25 @@ added to this project or to anything it publishes: modifying or recolouring
 CipSoft's sprites produces a derivative work that remains their copyright, and
 is not made permissive by being altered.
 
+### One uncredited asset, held out of history
+
+The sentence above is true of everything committed as of this writing. It was
+nearly untrue, and the near-miss is worth recording.
+
+`client/assets/king_arthur_sprite.jpg` appeared in the working tree on
+2026-10-01 alongside a new King Arthur NPC sprite binding in `renderer.js`. It is
+magenta-keyed and drawn in Tibia's pixel style as the recognisable King Arthur
+NPC. Nothing in this repository records where it came from.
+
+Because its provenance is unknown it is **not committed** — see the matching
+`.gitignore` entry — rather than published on the strength of nobody's memory.
+If it turns out to be original art, or to come from a licensed pack, record the
+source and licence here and remove that ignore line.
+
+The general rule this leaves behind: an asset with no recorded origin does not
+get committed on the assumption that it is fine. Provenance is checked before
+history, not after.
+
 ## Original art
 
 The remaining sprites in `client/assets/` — the four character classes, the
