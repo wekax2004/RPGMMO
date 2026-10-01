@@ -44,20 +44,3 @@ tmp_shots/
 # silently staged by `git add`.
 client/assets/rpg-import/
 
-# Uncredited asset found in the working tree on 2026-10-01, added alongside a
-# King Arthur NPC sprite binding but with no provenance recorded anywhere.
-#
-#   client/assets/king_arthur_sprite.jpg   115 KB, referenced by renderer.js
-#
-# It is magenta-keyed and drawn in Tibia's pixel style as the recognisable King
-# Arthur NPC. If it was taken from CipSoft's art it cannot be distributed at all,
-# and committing it would contradict the statement in CREDITS.md that no asset
-# under client/assets/ is derived from the CipSoft collections. Provenance is
-# unknown, so it is held out of history until the owner confirms where it came
-# from -- same treatment, and for the same reason, as the import above.
-#
-# This is not a claim that it is infringing. It is a refusal to publish an asset
-# whose origin nobody has recorded, which is the one position that cannot be
-# wrong. To include it: record the source and licence in CREDITS.md, then delete
-# this line.
-client/assets/king_arthur_sprite.jpg

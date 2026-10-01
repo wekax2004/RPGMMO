@@ -283,12 +283,6 @@ Ordered roughly by cost to fix.
    and removing it from the working tree would not unpublish it — that needs a
    history rewrite. See [Known Licence Issues](#known-licence-issues).
 
-   A second asset is held out for a different reason.
-   `client/assets/king_arthur_sprite.jpg` arrived with a UI change, is
-   referenced by `renderer.js`, and has no recorded provenance. It is
-   magenta-keyed Tibia-style art of a recognisable Tibia NPC, so it is
-   gitignored rather than published on nobody's memory. See CREDITS.md.
-
 3. **The magenta sources are not provably disposable.** Seven of the "timestamped
    duplicate" files are *not* byte-identical to the plain file they sit beside,
    so "duplicate" in the audit's output means superseded, not identical. Some of
