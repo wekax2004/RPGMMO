@@ -15,13 +15,19 @@ const { runBossAoETest } = require('./test_boss_aoe');
 const { runNpcQuestTest } = require('./test_npc_quest');
 const { runTradeTest } = require('./test_trade');
 const { runDescentTest } = require('./test_descent');
+const { runClassPreviewTest } = require('./test_class_preview');
 
 const SUITE_TESTS = {
   subclass: { name: 'AC1: Sub-Class Progression', fn: runSubclassTest },
   boss_aoe: { name: 'AC2: Boss AoE Ground Indicator', fn: runBossAoETest },
   npc_quest: { name: 'AC3: NPC Dialogue & Quest UI', fn: runNpcQuestTest },
   trade: { name: 'AC4: 2-Player Secure Trade Flow', fn: runTradeTest },
-  descent: { name: 'AC5: Z-Level Descent in the Real Client', fn: runDescentTest }
+  descent: { name: 'AC5: Z-Level Descent in the Real Client', fn: runDescentTest },
+  // Not an acceptance criterion and not numbered. Here because these two features
+  // are pure frontend work, which is exactly the kind that passes review on the
+  // strength of a plausible drawImage call and then renders as an empty canvas.
+  // Asserting on painted pixels needs a real browser.
+  class_preview: { name: 'UI: Class Previews & Death Screen', fn: runClassPreviewTest }
 };
 
 /**

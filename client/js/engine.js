@@ -121,19 +121,78 @@
                     document.addEventListener("keydown", titleListener);
                 }
             }
-            else if (data.action === "auth_success") {
-                authToken = data.token;
-                document.getElementById("auth-modal").style.display = "none";
+            else if (data.action === "auth_success" || data.action === "show_class_select") {
+                if (data.action === "auth_success") {
+                    authToken = data.token;
+                    document.getElementById("auth-modal").style.display = "none";
+                } else {
+                    const ls = document.getElementById("loading-screen"); if(ls) ls.style.display = "none";
+                }
+                document.getElementById("overlay").style.display = "block";
                 document.getElementById("class-modal").style.display = "block";
+                
                 if (data.account && data.account.username) {
                     document.getElementById("char-name").value = data.account.username;
                     document.getElementById("char-name").readOnly = true;
                 }
-            }
-            else if (data.action === "show_class_select") {
-                const ls = document.getElementById("loading-screen"); if(ls) ls.style.display = "none";
-                document.getElementById("overlay").style.display = "block";
-                document.getElementById("class-modal").style.display = "block";
+
+                // Class-select sprite previews.
+                //
+                // Drawn by polling rather than on a fixed delay. The original
+                // version waited 100ms after the show_class_select packet and drew
+                // once, which silently produced four blank canvases: a sprite is
+                // not ready 100ms after connect, because readiness is a two-stage
+                // load. The JPEG decodes, is re-keyed through a canvas in
+                // renderer.js, and the result is handed to a *second* Image via
+                // toDataURL which must itself finish loading before getSprite
+                // returns anything. That is four large decodes in sequence, and
+                // nothing in the packet handler knows when it finished.
+                //
+                // Polling for the value that is actually needed is the fix, and it
+                // gives up eventually so a genuinely missing sprite shows as a
+                // placeholder rather than spinning forever. The canvases are 32x32
+                // and the sprite is drawn to fit, because these files are 1024x1024
+                // sources and drawImage(img, 0, 0) would have clipped to the corner.
+                const PREVIEW_CLASSES = ['warrior', 'mage', 'ranger', 'healer'];
+                const drawPreviews = () => {
+                    let pending = 0;
+                    for (const cls of PREVIEW_CLASSES) {
+                        const c = document.getElementById('preview-' + cls);
+                        if (!c || !window.getSprite) continue;
+                        const img = window.getSprite(cls);
+                        if (!img || !img.width) { pending++; continue; }
+
+                        const ctx = c.getContext('2d');
+                        ctx.clearRect(0, 0, c.width, c.height);
+                        // Letterbox to the canvas: fit whole, centred, nearest-neighbour
+                        // so the pixel art stays hard rather than being smoothed.
+                        const scale = Math.min(c.width / img.width, c.height / img.height);
+                        const w = Math.max(1, Math.floor(img.width * scale));
+                        const h = Math.max(1, Math.floor(img.height * scale));
+                        const dx = Math.floor((c.width - w) / 2);
+                        const dy = c.height - h;
+                        ctx.imageSmoothingEnabled = false;
+                        ctx.drawImage(img, dx, dy, w, h);
+                    }
+                    return pending;
+                };
+
+                let previewAttempts = 0;
+                const previewTimer = setInterval(() => {
+                    previewAttempts++;
+                    const pending = drawPreviews();
+                    if (pending === 0 || previewAttempts > 100) {
+                        clearInterval(previewTimer);
+                        if (pending > 0) {
+                            // Say so rather than leaving an empty box that reads as
+                            // a styling problem.
+                            for (const cls of PREVIEW_CLASSES) {
+                                const c = document.getElementById('preview-' + cls);
+                                if (c && !window.getSprite(cls)) c.dataset.previewFailed = 'true';
+                            }
+                        }
+                    }
+                }, 120);
             }
             else if (data.action === "show_subclass_select") {
                 document.getElementById("overlay").style.display = "block";
@@ -352,7 +411,7 @@
             }
 
             else if (data.action === "ground_sync") { groundItemsLocal = data.items; }
-            else if (data.action === "your_id") { myId = data.id; myName = data.name; }
+            else if (data.action === "your_id") { myId = data.id; myName = data.name; window.myName = data.name; }
             else if (data.action === "force_position") { player.x = data.x; player.y = data.y; }
             else if (data.action === "mob_update") {
                 if (data.alive) { 
@@ -501,7 +560,20 @@
                     audio.levelUp();
                     if (window.showLevelUpCelebration) window.showLevelUpCelebration(data.level);
                 }
-                if (lastKnownHp && data.hp < lastKnownHp) audio.hurt();
+                
+                if (data.hp <= 0 && (!lastKnownHp || lastKnownHp > 0)) {
+                    document.getElementById("overlay").style.display = "block";
+                    const dm = document.getElementById("death-modal");
+                    if (dm) dm.style.display = "block";
+                } else if (data.hp > 0 && lastKnownHp <= 0) {
+                    const dm = document.getElementById("death-modal");
+                    if (dm && dm.style.display !== "none") {
+                        dm.style.display = "none";
+                        document.getElementById("overlay").style.display = "none";
+                    }
+                }
+                
+                if (lastKnownHp && data.hp < lastKnownHp && data.hp > 0) audio.hurt();
                 lastKnownLevel = data.level;
                 lastKnownHp = data.hp;
                 myLevel = data.level;

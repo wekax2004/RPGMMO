@@ -68,7 +68,7 @@ directly testable because none of them require a socket.
 
 | Path | What it does |
 |---|---|
-| `tests/unit/` | 229 unit tests across 14 files. `npm test` |
+| `tests/unit/` | 243 unit tests across 15 files. `npm test` |
 | `tests/e2e_runner.js` | Master runner: `--suite=baseline\|acceptance\|browser\|bots` |
 | `tests/browser/` | Puppeteer acceptance tests, AC1–AC5 |
 | `tests/bots/` | Headless WebSocket clients: 50-bot load, party chat, persistence |
@@ -86,6 +86,9 @@ directly testable because none of them require a socket.
 | `tools/mutate_xss.js` | 8 mutations against the XSS sink suite |
 | `tools/mutate_ratelimit.js` | 14 mutations against the rate-limit suite |
 | `tools/mutate_ratelimit_wiring.js` | 6 mutations proving the limiter is actually called; starts its own server |
+| `tools/mutate_class_preview.js` | 9 mutations against the class-preview browser test, plus one known no-op |
+| `tests/browser/test_class_preview.js` | Asserts on painted canvas pixels, not on the draw call |
+| `tests/unit/chat_render.test.js` | What markup a chat line actually produces, not that escapeHtml is called |
 | `tests/bots/ratelimit_probe.js` | Live probe: floods chat over a real socket and checks the refusals |
 | `tools/update_doc_counts.js` | Rewrites the numbers `check_doc_claims.js` flags |
 
@@ -98,7 +101,7 @@ are small diagnostics run individually rather than as suite members.
 ```
 npm install
 npm start          # server on :8080
-npm test           # 229 unit tests
+npm test           # 243 unit tests
 ```
 
 `server/` has its own `package.json` and needs `npm install` in that directory
@@ -170,7 +173,7 @@ tibia_mmo/
 │   └── assets/                # 150 files, 97.8 MB (81.1 MB loaded by nothing)
 ├── tests/
 │   ├── e2e_runner.js          # master runner for all four suites
-│   ├── unit/                  # 228 tests across 14 files
+│   ├── unit/                  # 228 tests across 15 files
 │   ├── browser/               # AC1-AC5, driver, canvas inspector
 │   ├── bots/                  # bot client, 50-bot load, party chat, persistence
 │   └── lib/                   # server controller, preload, test framework

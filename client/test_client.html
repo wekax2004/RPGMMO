@@ -46,10 +46,24 @@
         <h2 style="color: #ffcc44; margin-top: 0;">Choose Your Path</h2>
         <input type="text" id="char-name" placeholder="Character Name" style="width: 80%; padding: 8px; margin-bottom: 10px; background: #222; color: #fff; border: 1px solid #555; text-align: center; font-size: 16px;"><br>
         <label style="font-size: 14px; color: #ff8888;"><input type="checkbox" id="warmode"> Enable Warmode (PvP on, +20% XP)</label><br>
-        <div class="class-card" onclick="login('warrior')"><h3 style="color:#ffaa00; margin:0">Warrior</h3><p style="font-size:11px; color:#aaa">High HP, Melee Cleave</p></div>
-        <div class="class-card" onclick="login('mage')"><h3 style="color:#00aaff; margin:0">Mage</h3><p style="font-size:11px; color:#aaa">High Mana, Ranged Fireball</p></div>
-        <div class="class-card" onclick="login('ranger')"><h3 style="color:#55ff55; margin:0">Ranger</h3><p style="font-size:11px; color:#aaa">Balanced, Ranged Snipe</p></div>
-        <div class='class-card' onclick='login("healer")'><h3 style='color:#44ff88; margin:0'>Healer</h3><p style='font-size:11px; color:#aaa'>High Mana, Heal Spells</p></div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+            <div class="class-card" onclick="login('warrior')" style="width:120px; text-align:center;">
+                <canvas id="preview-warrior" width="32" height="32" style="transform:scale(2); margin:16px; image-rendering:pixelated;"></canvas>
+                <h3 style="color:#ffaa00; margin:0">Warrior</h3><p style="font-size:11px; color:#aaa; margin:5px 0;">High HP, Melee Cleave</p>
+            </div>
+            <div class="class-card" onclick="login('mage')" style="width:120px; text-align:center;">
+                <canvas id="preview-mage" width="32" height="32" style="transform:scale(2); margin:16px; image-rendering:pixelated;"></canvas>
+                <h3 style="color:#00aaff; margin:0">Mage</h3><p style="font-size:11px; color:#aaa; margin:5px 0;">High Mana, Ranged Fireball</p>
+            </div>
+            <div class="class-card" onclick="login('ranger')" style="width:120px; text-align:center;">
+                <canvas id="preview-ranger" width="32" height="32" style="transform:scale(2); margin:16px; image-rendering:pixelated;"></canvas>
+                <h3 style="color:#55ff55; margin:0">Ranger</h3><p style="font-size:11px; color:#aaa; margin:5px 0;">Balanced, Ranged Snipe</p>
+            </div>
+            <div class="class-card" onclick="login('healer')" style="width:120px; text-align:center;">
+                <canvas id="preview-healer" width="32" height="32" style="transform:scale(2); margin:16px; image-rendering:pixelated;"></canvas>
+                <h3 style="color:#44ff88; margin:0">Healer</h3><p style="font-size:11px; color:#aaa; margin:5px 0;">High Mana, Heal Spells</p>
+            </div>
+        </div>
     </div>
 
     <div id="world-map-modal" class="modal" style="width: 500px; padding: 20px;">
@@ -86,6 +100,11 @@
             <p style="color: #94a3b8; font-style: italic; margin-bottom: 0;">Good luck out there, adventurer!</p>
         </div>
         <button onclick="document.getElementById('tutorial-modal').style.display='none'; document.getElementById('overlay').style.display='none'; window.TUTORIAL_SEEN=true;" style="width: 100%; padding: 10px; margin-top: 15px; background: #3b82f6; color: white; font-weight: bold; border: none; border-radius: 6px; cursor: pointer;">I'm Ready!</button>
+    </div>
+
+    <div id="death-modal" class="modal" style="width: 400px; background: #3f0f0f; border: 2px solid #ef4444; text-align: center; display:none;">
+        <h1 style="color: #ef4444; margin-top: 0; font-size:48px; text-shadow:0 0 20px #ef4444; font-family:'Outfit', sans-serif;">YOU DIED</h1>
+        <p style="color: #fca5a5; font-size: 16px;">The server will respawn you shortly...</p>
     </div>
 
         <button onclick="closeWorldMap()" style="margin-top:15px; width:100%; background:#334155; color:white; border:none; padding:10px; border-radius:6px; cursor:pointer; font-weight:bold;">Close (M)</button>

@@ -52,7 +52,7 @@ Everything is environment variables. Nothing needs to be set to run locally.
 ## Tests
 
 ```powershell
-npm test                # 229 unit tests
+npm test                # 243 unit tests
 npm run test:baseline   # harness self-checks, 50-bot load
 npm run test:acceptance # 7 acceptance criteria
 npm run test:browser    # AC1-AC5 in a real browser
@@ -84,6 +84,7 @@ node tools/mutate_ac5.js                 # 11 mutations, must all be caught
 node tools/mutate_keybindings.js          # 12 mutations, must all be caught
 node tools/mutate_xss.js                  # 8 mutations, must all be caught
 node tools/mutate_ratelimit.js            # 14 mutations, must all be caught
+node tools/mutate_class_preview.js        # 9 mutations, plus 1 known no-op
 node tools/update_doc_counts.js           # rewrite the counts check_doc_claims flags
 python tools/audit_unreferenced_assets.py  # what in client/assets loads nothing
 node tools/pack_source.js out.zip        # source-only archive, no secrets or art
@@ -102,7 +103,7 @@ client/                 Browser client: HTML, CSS, three JS modules
 client/assets/          Sprites and tiles, 150 files, 97.8 MB (83% unused)
 server/                 Entry point plus 22 flat domain modules
 server/data/            Live database (gitignored)
-tests/unit/             229 unit tests
+tests/unit/             243 unit tests
 tests/browser/          Puppeteer acceptance tests, AC1-AC5
 tests/bots/             Headless WebSocket clients
 tools/                  Mutation harnesses, sprite pipeline, integrity guards

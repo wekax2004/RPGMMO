@@ -263,8 +263,15 @@ test('the concatenation sinks that carry player names stay escaped', () => {
 });
 
 test('the auction renderer escapes the seller name, item and id', () => {
-    // Pinned individually because it is the sink that was exploitable, and
+    // Pinned individually because it is the sink this file was written for, and
     // because "some other escapeHtml elsewhere in the file" is not a defence.
+    //
+    // Accurate severity, after the correction above: the seller name cannot
+    // currently carry markup because the login charset forbids it. The item name
+    // comes from the server's item table and the id is generated, so neither is
+    // attacker-controlled today either. This is defence in depth on a persisted
+    // escrow field, not a patch for a live hole -- kept because escrow outlives
+    // any single login, and because the cost of being wrong here is total.
     const ui = FILES.find(f => f.name === 'ui.js').src;
     const fn = /window\.renderAuctionUI[\s\S]*?\n        \};/.exec(ui);
     assert.ok(fn, 'could not find renderAuctionUI in ui.js');
@@ -279,26 +286,88 @@ test('the auction renderer escapes the seller name, item and id', () => {
         'the price should be coerced with Number(), not interpolated raw');
 });
 
-test('chat is rendered as text, not markup', () => {
-    // Chat carries the most player-controlled text of anything on screen --
-    // combat.js and bosses.js interpolate charName into log messages. It is
-    // safe only because renderChat assigns innerText. One innerHTML here would
-    // turn every kill message into an injection point.
+test('chat is escaped before it becomes markup', () => {
+    // Chat carries the most player-influenced text on screen: combat.js and
+    // bosses.js interpolate charName into log messages, and players type their
+    // own text into the channel.
+    //
+    // renderChat used to assign innerText, which is why chat was safe without an
+    // escaper. It now assigns innerHTML so that timestamps and mention
+    // highlighting can be rendered as elements, which means the escaping is load
+    // bearing and has to be asserted rather than assumed.
     const ui = FILES.find(f => f.name === 'ui.js').src;
     const fn = /function renderChat\(\)[\s\S]*?\n        \}/.exec(ui);
     assert.ok(fn, 'could not find renderChat in ui.js');
-    assert.match(fn[0], /\.innerText\s*=/,
-        'chat lines must be written with innerText');
+
+    assert.match(fn[0], /d\.innerHTML\s*=/,
+        'renderChat is expected to build markup for timestamps and mentions; ' +
+        'if this went back to innerText the mention feature would have to change');
     assert.ok(!/\.innerHTML\s*\+=/.test(fn[0]),
         'chat must not accumulate markup across lines');
+
+    // Every dynamic piece going into that markup must be escaped. The message
+    // body is the one that can contain arbitrary player text; the name and the
+    // timestamp are constrained, but escaping them costs nothing and makes the
+    // rule "escape everything" rather than "escape the one you remember".
+    assert.match(fn[0], /escapeHtml\(msg\.text\)/,
+        'the chat body must go through escapeHtml before reaching innerHTML');
+    assert.match(fn[0], /escapeHtml\(myName\)/,
+        'the mention name must go through escapeHtml before reaching innerHTML');
+    assert.match(fn[0], /escapeHtml\(msg\.time\)/,
+        'the timestamp must go through escapeHtml before reaching innerHTML');
+
+    // And it must use the file's own escaper, which covers quotes as well as the
+    // angle brackets. A second, weaker escaper next to the real one is how a
+    // future attribute-context injection gets introduced.
+    assert.ok(!/\.replace\(\/&\/g/.test(fn[0]),
+        'renderChat must not define its own partial escaper; use escapeHtml');
 });
 
-test('character names are not validated beyond being non-empty', () => {
-    // This is the root cause behind the auction finding, recorded here so that
-    // closing the client sink does not quietly look like closing the hole. The
-    // client escape is the defence that matters; the missing server validation
-    // is why the string was dangerous in the first place.
+test('character names cannot contain markup, and that is enforced at login', () => {
+    // CORRECTION. An earlier version of this file asserted the opposite: that
+    // character names were validated only as non-empty strings, citing
+    // database.js:186. That was wrong -- it is the storage-layer guard, and it
+    // was never the only one. The login path validates the name before a player
+    // object is ever built:
+    //
+    //   server.js  requestedName.length > 32
+    //            || !/^[A-Za-z][A-Za-z0-9 _-]*$/.test(requestedName)
+    //
+    // That charset excludes <, >, &, ' and ", so a character name cannot inject
+    // markup anywhere it is interpolated. The claim that the auction sink was
+    // "stored XSS reachable by anyone who can make a character" overstated it.
+    //
+    // The escaping in the client is still correct and is still what should be
+    // relied on -- sellerName is persisted escrow that outlives any one login,
+    // and a client is not a trust boundary just because the server currently
+    // validates its input. But the reason it is defence in depth, not the fix
+    // for a live hole, is now recorded accurately.
+    const server = fs.readFileSync(path.join(ROOT, 'server', 'server.js'), 'utf8');
+
+    assert.match(server, /const charName = requestedName \|\| playerId;/,
+        'charName is either the validated requested name or a generated id');
+
+    // The charset itself, pinned. If this is ever widened to allow a quote or an
+    // angle bracket, the client-side escapes become load-bearing rather than
+    // precautionary, and that has to be a deliberate decision.
+    assert.match(server, /\^\[A-Za-z\]\[A-Za-z0-9 _-\]\*\$/,
+        'the character-name charset must stay [A-Za-z][A-Za-z0-9 _-]*');
+    assert.match(server, /requestedName\.length > 32/,
+        'the character-name length cap must stay in place');
+
+    // And prove the charset actually excludes the characters that matter, rather
+    // than trusting the regex to still mean what the comment says.
+    const allowed = /^[A-Za-z][A-Za-z0-9 _-]*$/;
+    for (const hostile of ['<img', "o'brien", 'a"b', 'a&b', '<script>', 'x<y']) {
+        assert.equal(allowed.test(hostile), false,
+            `${JSON.stringify(hostile)} must be rejected by the character-name charset`);
+    }
+    assert.equal(allowed.test('Bob Smith'), true, 'an ordinary name must still be accepted');
+    assert.equal(allowed.test('Bob_Smith-2'), true, 'underscores, dashes and digits must be accepted');
+
+    // The storage-layer guard is still worth having, for rows that predate the
+    // login validation or arrive from a backup.
     const db = fs.readFileSync(path.join(ROOT, 'server', 'database.js'), 'utf8');
-    const guard = /charName\.trim\(\)\.length === 0/.test(db);
-    assert.ok(guard, 'expected the non-empty character-name guard to still be present');
+    assert.match(db, /charName\.trim\(\)\.length === 0/,
+        'expected the non-empty character-name guard in database.js to still be present');
 });

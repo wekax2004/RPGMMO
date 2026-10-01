@@ -326,6 +326,22 @@
             }[character]));
         }
 
+        /*
+         * Escapes a string for literal use inside a RegExp.
+         *
+         * The mention highlight builds its pattern from the player's own name, so
+         * without this a name is a pattern rather than a word. A name is currently
+         * limited to [A-Za-z][A-Za-z0-9 _-]* by the server, which contains nothing
+         * a RegExp treats specially except '-', so this is not currently
+         * reachable. It is here because that limit lives on the server, the name
+         * is echoed back to every client on the floor, and the day the charset is
+         * widened this silently becomes a name that matches the wrong message --
+         * or none. Cheaper than debugging that later.
+         */
+        function escapeRegExp(value) {
+            return String(value ?? "").replace(/[.*+?^${}()|[\]\\\-]/g, "\\$&");
+        }
+
         let chatMessages = [];
         let activeChatTab = "all";
         window.chatFilterSetting = "all";
@@ -349,7 +365,39 @@
                 
                 if (activeChatTab === "all" || msg.channel === activeChatTab || (activeChatTab==="system" && msg.channel==="system")) {
                     const d = document.createElement("div");
-                    d.innerText = msg.text;
+
+                    // Everything below goes into innerHTML, because the timestamp
+                    // and the mention highlight are real elements. That makes the
+                    // escaping load-bearing rather than precautionary, so all three
+                    // dynamic values go through the file's own escapeHtml --
+                    // including quotes, which a hand-rolled &/<//> replacement
+                    // would have let through.
+                    let myName = window.myName;
+                    let escapedMsg = escapeHtml(msg.text);
+
+                    // Mention highlighting. The name is escaped before it reaches
+                    // the markup, and the pattern is built with a literal match so
+                    // a name is matched as typed rather than interpreted as a
+                    // pattern -- without it, a name containing a metacharacter
+                    // would either match the wrong text or match nothing at all.
+                    if (myName && escapedMsg.includes("@" + myName)) {
+                        // Anchored with a negative lookahead rather than \b. \b is a
+                        // *word* boundary, so a name ending in a non-word character
+                        // never matches: the pattern ends on "-", the message has a
+                        // space next, and there is no boundary between two non-word
+                        // characters. "B-" is a legal name under the server charset
+                        // [A-Za-z][A-Za-z0-9 _-]*, so its mentions would silently
+                        // never light up. This asks the question that was meant:
+                        // "is the next character another word character?"
+                        escapedMsg = escapedMsg.replace(
+                            new RegExp(escapeRegExp("@" + myName) + "(?![A-Za-z0-9_])", "g"),
+                            `<span style="background:rgba(251,191,36,0.3); color:#fbbf24; padding:0 4px; border-radius:3px; font-weight:bold;">@${escapeHtml(myName)}</span>`
+                        );
+                    }
+
+                    let timeSpan = msg.time ? `<span style="color:#64748b; font-size:10px; margin-right:4px;">[${escapeHtml(msg.time)}]</span>` : "";
+
+                    d.innerHTML = timeSpan + escapedMsg;
                     d.style.color = msg.color;
                     c.appendChild(d);
                 }
@@ -368,7 +416,8 @@
             else if(channel === "zone" || msg.startsWith("[Zone]")) { color = "#00ffff"; channel = "zone"; }
             else if(channel === "global") { color = "#ffffff"; }
             
-            chatMessages.push({ text: msg, channel: channel, color: color });
+            let timeStr = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            chatMessages.push({ text: msg, channel: channel, color: color, time: timeStr });
             if (chatMessages.length > 100) chatMessages.shift();
             renderChat();
         }
