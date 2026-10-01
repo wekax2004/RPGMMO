@@ -52,7 +52,7 @@ Everything is environment variables. Nothing needs to be set to run locally.
 ## Tests
 
 ```powershell
-npm test                # 212 unit tests
+npm test                # 229 unit tests
 npm run test:baseline   # harness self-checks, 50-bot load
 npm run test:acceptance # 7 acceptance criteria
 npm run test:browser    # AC1-AC5 in a real browser
@@ -83,6 +83,8 @@ node tools/mutate_zlevels.js             # 21 mutations, must all be caught
 node tools/mutate_ac5.js                 # 11 mutations, must all be caught
 node tools/mutate_keybindings.js          # 12 mutations, must all be caught
 node tools/mutate_xss.js                  # 8 mutations, must all be caught
+node tools/mutate_ratelimit.js            # 14 mutations, must all be caught
+node tools/update_doc_counts.js           # rewrite the counts check_doc_claims flags
 python tools/audit_unreferenced_assets.py  # what in client/assets loads nothing
 node tools/pack_source.js out.zip        # source-only archive, no secrets or art
 ```
@@ -97,10 +99,10 @@ green.
 
 ```text
 client/                 Browser client: HTML, CSS, three JS modules
-client/assets/          Sprites and tiles, 149 files, 97.7 MB (83% unused)
+client/assets/          Sprites and tiles, 150 files, 97.8 MB (83% unused)
 server/                 Entry point plus 22 flat domain modules
 server/data/            Live database (gitignored)
-tests/unit/             212 unit tests
+tests/unit/             229 unit tests
 tests/browser/          Puppeteer acceptance tests, AC1-AC5
 tests/bots/             Headless WebSocket clients
 tools/                  Mutation harnesses, sprite pipeline, integrity guards
@@ -151,7 +153,7 @@ Not done, and worth knowing before you rely on any of it:
   full roster every 200 ms. Fine at the tested scale of 50 bots; it is the first
   thing that will need to change for more.
 - **Sessions are in-memory.** One process only, and tokens need TLS.
-- **`client/assets/` is 83% unused** — 81.1 MB of 97.7 MB that nothing loads.
+- **`client/assets/` is 83% unused** — 81.1 MB of 97.8 MB that nothing loads.
   Most of it is harmless (sprite-pipeline sources and duplicates), but
   **`rpg-import/` (56.3 MB) is a licensing problem, not clutter.** This project's
   own `docs/ASSET_IMPORT.md` says those files must not be published, and they

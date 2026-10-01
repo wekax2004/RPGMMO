@@ -11,7 +11,7 @@
  * which is exactly what happened when the list was maintained by hand: it
  * listed actions the server never handled and missed every feature added since.
  *
- * Generated: 58 inbound, 66 outbound.
+ * Generated: 58 inbound, 67 outbound.
  */
 
 const PACKET = {
@@ -129,6 +129,7 @@ const PACKET = {
         PLAYER_UPDATE: 'player_update',
         PLAYERS_SYNC: 'players_sync',
         QUEST_JOURNAL: 'quest_journal',
+        RATE_LIMITED: 'rate_limited',
         SERVER_SHUTDOWN: 'server_shutdown',
         SHOP_SYNC: 'shop_sync',
         SHOW_CLASS_SELECT: 'show_class_select',

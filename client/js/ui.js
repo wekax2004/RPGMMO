@@ -139,6 +139,30 @@
                 this.noise({ duration: 0.3, gain: 0.18, filter: 900 });
             }
 
+            fireball() {
+                if (!this.throttled('fireball', 90)) return;
+                this.noise({ duration: 0.4, gain: 0.3, filter: 400, type: 'lowpass' });
+                this.tone({ freq: 300, slideTo: 50, type: 'sawtooth', duration: 0.3, gain: 0.15 });
+            }
+
+            heal() {
+                if (!this.throttled('heal', 90)) return;
+                this.tone({ freq: 400, slideTo: 800, type: 'sine', duration: 0.4, gain: 0.15 });
+                this.tone({ freq: 600, slideTo: 1200, type: 'sine', duration: 0.5, gain: 0.1, delay: 0.1 });
+            }
+
+            freeze() {
+                if (!this.throttled('freeze', 90)) return;
+                this.noise({ duration: 0.3, gain: 0.2, filter: 3000, type: 'highpass' });
+                this.tone({ freq: 1200, slideTo: 800, type: 'triangle', duration: 0.2, gain: 0.1 });
+            }
+
+            shoot() {
+                if (!this.throttled('shoot', 90)) return;
+                this.noise({ duration: 0.1, gain: 0.2, filter: 2000, type: 'highpass' });
+                this.tone({ freq: 600, slideTo: 200, type: 'triangle', duration: 0.1, gain: 0.1 });
+            }
+
             coin() {
                 // Two quick high notes read as a "cha-ching".
                 this.tone({ freq: 1180, type: 'triangle', duration: 0.09, gain: 0.16 });
@@ -185,10 +209,27 @@
             // --- Background music ---
             // A slow drifting arpeggio over a soft drone. Scheduled with
             // setInterval so it keeps time regardless of render frames.
-            startMusic() {
+            startMusic(biome = "city") {
                 if (!this.started || this.musicTimer) return;
-                const bass = [110, 130.81, 98, 146.83];
-                const arp = [440, 523.25, 659.25, 523.25, 587.33, 440, 659.25, 523.25];
+                this.currentBiome = biome;
+                let bass = [110, 130.81, 98, 146.83];
+                let arp = [440, 523.25, 659.25, 523.25, 587.33, 440, 659.25, 523.25];
+                let ms = 420;
+                
+                if (biome === "snow") {
+                    bass = [130.81, 155.56, 116.54, 174.61];
+                    arp = [523.25, 622.25, 783.99, 622.25, 698.46, 523.25, 783.99, 622.25];
+                    ms = 480;
+                } else if (biome === "desert") {
+                    bass = [98, 110, 92.50, 123.47];
+                    arp = [392, 493.88, 587.33, 493.88, 554.37, 392, 587.33, 493.88];
+                    ms = 400;
+                } else if (biome === "swamp") {
+                    bass = [82.41, 98, 73.42, 110];
+                    arp = [329.63, 392, 493.88, 392, 440, 329.63, 493.88, 392];
+                    ms = 500;
+                }
+
                 this.musicTimer = setInterval(() => {
                     if (!this.started || this.muted || !this.ctx || this.ctx.state !== 'running') return;
                     const bar = Math.floor(this.step / 8) % bass.length;
@@ -196,7 +237,13 @@
                     const note = arp[this.step % arp.length];
                     this.tone({ freq: note, type: 'triangle', duration: 0.5, gain: 0.08, dest: this.musicGain, delay: 0.02 });
                     this.step++;
-                }, 420);
+                }, ms);
+            }
+
+            changeMusic(biome) {
+                if (this.currentBiome === biome) return;
+                this.stopMusic();
+                this.startMusic(biome);
             }
 
             stopMusic() {

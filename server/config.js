@@ -183,6 +183,47 @@ module.exports = {
     FISHING_RANGE: 32,               // one tile; must stand within reach of water
     FISHING_CATCH_CHANCE: 0.65,      // otherwise you pull up an Old Boot
 
+    // Per-player, per-class packet budgets. Token bucket: `burst` tokens held
+    // at full, one token regained every `refillMs`. See server/ratelimit.js for
+    // why this is a bucket and not a fixed window.
+    //
+    // These are abuse controls, not gameplay rules. Movement and attacks are
+    // limited by their own cooldowns and are deliberately NOT budgeted here --
+    // double-limiting them would make the existing tuning unobservable.
+    //
+    // Every value is server-side and overridable by environment variable, so a
+    // load test or a busy shard can be tuned without a code change.
+    RATE_LIMITS: {
+        // Chat is broadcast to the whole floor, so one client multiplies the
+        // traffic for everyone else. A human types in bursts; 6 immediately and
+        // one per 1.2s covers that without letting anyone be a broadcast relay.
+        chat:      { burst: 6,  refillMs: 1200 },
+
+        // `/ask` starts a local LLM inference, which is orders of magnitude more
+        // expensive than anything else a client can ask for. Deliberately
+        // awkward: enough to use the feature, not enough to queue a GPU.
+        llm:       { burst: 1,  refillMs: 15_000 },
+
+        // Mana is validated server-side already; this bounds the request rate.
+        spell:     { burst: 3,  refillMs: 1000 },
+
+        // Each rewrites and persists the character row.
+        item:      { burst: 8,  refillMs: 800 },
+        economy:   { burst: 10, refillMs: 2000 },
+
+        // Relayed to another player, so the cost lands on someone else's client.
+        social:    { burst: 6,  refillMs: 2000 },
+
+        // Everything else. The 60/s flood guard is the backstop.
+        other:     { burst: 60, refillMs: 17 }
+    },
+
+    // Told to the client when it is throttled, so being rate limited is visible
+    // rather than looking like a dropped packet. Re-sent at most this often, so
+    // a client stuck in a spam loop is not told off 60 times a second.
+    RATE_LIMIT_MESSAGE: 'Slow down.',
+    RATE_LIMIT_NOTICE_COOLDOWN_MS: 1500,
+
     // Auction house.
     AUCTION_MIN_PRICE: 1,
     AUCTION_MAX_PRICE: 1000000,

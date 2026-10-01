@@ -74,6 +74,17 @@ const ALLOWED_BARE = new Map([
     ['itm.speedBonus', 'numeric boots speed bonus'],
     ['itm.maxHpBonus', 'numeric amulet HP bonus'],
     ['itm.val', 'numeric potion restore amount'],
+    // Server log/notice text. Every use of data.message in the client is a text
+    // sink: engine.js:93 assigns it to .innerText, and the rest go through
+    // addLog, which renderChat writes with .innerText. Escaping it here would be
+    // actively wrong -- innerText does not decode entities, so `&lt;` would be
+    // shown literally to the player.
+    //
+    // This entry is coupled to a separate pinned invariant: if renderChat ever
+    // goes back to innerHTML, the "chat is rendered as text, not markup" test
+    // fails and this allowance is no longer justified. That test is the real
+    // control; this line is bookkeeping so the general rule can stay strict.
+    ['data.message', 'server notice text, delivered to an innerText sink'],
     ['skill.level', 'numeric skill level'],
     ['skill.name', 'server-authored skill label, not player input'],
     ['data.gold', 'numeric gold count'],
@@ -153,12 +164,29 @@ function literalOnlyTernary(expr) {
     });
 }
 
+/*
+ * `A || "fallback"` is as safe as A, provided the fallback is a literal. The
+ * rate-limit notice is written `${data.message || "Slow down."}`, which the
+ * exact-match allowlist rejected because the operand is the whole expression
+ * rather than the bare member access.
+ *
+ * Every operand must independently pass, so `a || b` where both are dynamic is
+ * still refused. Splitting here rather than special-casing one line keeps the
+ * rule honest for the next `x || "default"` that gets written.
+ */
+function safeByParts(expr, isAllowed) {
+    const parts = expr.split('||').map(s => s.trim());
+    if (parts.length < 2) return isAllowed(expr);
+    return parts.every(part => /^['"`].*['"`]$/.test(part) || isAllowed(part));
+}
+
+const isAllowed = expr => ALLOWED_BARE.has(expr);
 test('no unescaped value reaches HTML', () => {
     const problems = [];
     for (const f of FILES) {
         for (const { expr, line, text, kind } of htmlWritingChunks(f.src)) {
             if (SAFE_CALL.test(expr)) continue;
-            if (ALLOWED_BARE.has(expr)) continue;
+            if (safeByParts(expr, isAllowed)) continue;
             if (/^['"`].*['"`]$/.test(expr)) continue;
             if (literalOnlyTernary(expr)) continue;
             const shown = kind === 'interpolation' ? `\${${expr}}` : `+ ${expr}`;

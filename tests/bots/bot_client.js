@@ -84,6 +84,9 @@ class BotClient extends EventEmitter {
     this.activeQuests = {};
     this.lastNpcId = null;
     this.chatHistory = [];
+    // Every rate_limited packet this bot has been sent. Kept so a test can assert
+    // on throttling rather than inferring it from missing traffic.
+    this.rateLimited = [];
 
     // Combat Loop
     this.combatIntervalId = null;
@@ -288,6 +291,16 @@ class BotClient extends EventEmitter {
       case 'chat':
         this.chatHistory.push(packet);
         this.emit('chat', packet);
+        break;
+
+      case 'rate_limited':
+        // The server is refusing this client's packets over budget. Recorded and
+        // emitted rather than ignored: it is a real protocol packet, and the
+        // rate-limit probe needs to observe it. Without a case here it fell
+        // through every branch and vanished, which made the probe report a
+        // working limiter as a silent one.
+        this.rateLimited.push(packet);
+        this.emit('rate_limited', packet);
         break;
 
       case 'party_invited':

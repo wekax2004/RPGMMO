@@ -54,6 +54,37 @@ function sweepAuthAttempts() {
         if (entry.windowStart < cutoff) authAttempts.delete(ip);
     }
 }
+const RATELIMIT = require('./ratelimit');
+
+// Per-class packet budgets. One limiter per class, each keying on player id, so
+// one client spending its whole budget cannot cost anyone else theirs.
+//
+// Env overrides exist so a load test or a busy shard can be tuned without a code
+// change: TIBIA_RATECHAT_BURST, TIBIA_RATECHAT_REFILL_MS, and so on. The comment
+// in config.js claims they exist, so they do.
+function budgetFromEnv(name, fallback) {
+    const burst = Number(process.env[`TIBIA_RATE${name.toUpperCase()}_BURST`]);
+    const refill = Number(process.env[`TIBIA_RATE${name.toUpperCase()}_REFILL_MS`]);
+    return {
+        burst: Number.isFinite(burst) && burst > 0 ? burst : fallback.burst,
+        refillMs: Number.isFinite(refill) && refill > 0 ? refill : fallback.refillMs
+    };
+}
+const rateLimiters = {};
+for (const [cls, budget] of Object.entries(CFG.RATE_LIMITS)) {
+    rateLimiters[cls] = RATELIMIT.createLimiter(budgetFromEnv(cls, budget));
+}
+
+// Bounded so a long-lived server cannot accumulate a bucket per player per class
+// forever. Called on the same cadence as the auth sweep.
+function sweepRateLimits() {
+    const at = Date.now();
+    for (const limiter of Object.values(rateLimiters)) {
+        limiter.sweep(at);
+        limiter.enforceCeiling(at);
+    }
+}
+
 const { bosses, spawnBoss, bossAI, triggerBossAoe, BOSS_TYPES } = require('./bosses');
 const PARTY = require('./party');
 const GUILDS = require('./guilds');
@@ -185,6 +216,7 @@ function scheduleServerInterval(callback, delay) {
 
 // Reap the per-IP login counters so the map cannot grow without bound.
 scheduleServerInterval(() => sweepAuthAttempts(), 60_000);
+    scheduleServerInterval(() => sweepRateLimits(), 60_000);
 
 let isDay = true;
 scheduleServerInterval(() => {
@@ -1251,6 +1283,39 @@ wss.on('connection', (ws) => {
             }
             const now = Date.now();
 
+            // Per-class packet budgets. This sits after the flood guard and
+            // after the action is known to be a usable string, so it can key on
+            // the action, and before any handler does work -- a throttled packet
+            // must cost a Map lookup, not an inference or a database write.
+            //
+            // `/ask` arrives as a chat packet but starts a local LLM request, so
+            // it is charged to the llm budget instead of the chat one. Otherwise
+            // a client could spend the generous chat budget on the most
+            // expensive thing a client can ask for.
+            let budgetClass = RATELIMIT.classFor(data.action);
+            if (budgetClass === 'chat'
+                && typeof data.text === 'string'
+                && data.text.startsWith('/ask ')) {
+                budgetClass = 'llm';
+            }
+            const verdict = rateLimiters[budgetClass].consume(player.id);
+            if (!verdict.allowed) {
+                // Told at most every RATE_LIMIT_NOTICE_COOLDOWN_MS, so a client
+                // stuck in a loop is not notified 60 times a second. Silence
+                // would be worse: a dropped packet looks like a bug.
+                if (now - (player.lastRateLimitNotice || 0) >= CFG.RATE_LIMIT_NOTICE_COOLDOWN_MS) {
+                    player.lastRateLimitNotice = now;
+                    sendTo(player, {
+                        action: 'rate_limited',
+                        packetAction: data.action,
+                        budgetClass,
+                        retryAfterMs: verdict.retryAfterMs,
+                        message: CFG.RATE_LIMIT_MESSAGE
+                    });
+                }
+                return;
+            }
+
             // Explicit test-only fixtures keep acceptance tests deterministic
             // without exposing progression or inventory mutations in normal
             // production servers.
@@ -1363,10 +1428,14 @@ wss.on('connection', (ws) => {
                 if (data.text.startsWith('/ask ')) {
                     const prompt = data.text.substring(5).trim();
                     sendTo(player, { action: 'chat', name: 'Gemma', sender: 'Gemma', channel: 'zone', text: 'Thinking...' });
-                    OLLAMA.generateOllamaResponse(prompt).then(reply => {
-                        sendTo(player, { action: 'chat', name: 'Gemma', sender: 'Gemma', channel: 'zone', text: reply });
-                    }).catch(err => {
-                        sendTo(player, { action: 'chat', name: 'System', sender: 'System', channel: 'zone', text: 'Ollama is unavailable: ' + err.message });
+                    OLLAMA.generateOllamaResponse(prompt).then(result => {
+                        sendTo(player, {
+                            action: 'chat',
+                            name: result.ok ? 'Gemma' : 'System',
+                            sender: result.ok ? 'Gemma' : 'System',
+                            channel: 'zone',
+                            text: result.ok ? result.value : result.reason
+                        });
                     });
                     return;
                 }

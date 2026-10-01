@@ -99,9 +99,27 @@
                 addLog("❌ " + (data.message || "Unable to log in."));
             }
             else if (data.action === "auth_required") {
-                const ls = document.getElementById("loading-screen"); if(ls) ls.style.display = "none";
-                document.getElementById("overlay").style.display = "block";
-                document.getElementById("auth-modal").style.display = "block";
+                const ls = document.getElementById("loading-screen"); 
+                if(ls) {
+                    ls.innerHTML = `
+                        <h1 style="font-family:'Outfit', sans-serif; font-size:64px; margin:0 0 10px 0; text-shadow:0 0 30px rgba(251,191,36,0.8); transform:translateY(-20px);">TIBIA MMO</h1>
+                        <div style="font-size:24px; color:#fff; font-weight:bold; animation: pulse 1.5s infinite; cursor:pointer; padding:20px;" onclick="window.showAuthModal()">Press Any Key or Click to Start</div>
+                    `;
+                    window.showAuthModal = () => {
+                        ls.style.display = "none";
+                        document.getElementById("overlay").style.display = "block";
+                        document.getElementById("auth-modal").style.display = "block";
+                        if (window.audio && window.audio.init) window.audio.init(); // Requires user interaction
+                    };
+                    
+                    const titleListener = (e) => {
+                        if(ls.style.display !== "none") {
+                            window.showAuthModal();
+                            document.removeEventListener("keydown", titleListener);
+                        }
+                    };
+                    document.addEventListener("keydown", titleListener);
+                }
             }
             else if (data.action === "auth_success") {
                 authToken = data.token;
@@ -312,17 +330,25 @@
                             });
                         }
                     }
-                    audio.spellBlast();
+                    if (data.type === 'meteor_strike') audio.fireball();
+                    else audio.heal();
                     return; // skip bossAoeEffects push for these
                 }
                 
                 bossAoeEffects.push({ x: data.x, y: data.y, radius: radius, state: "detonate", type: data.type });
                 setTimeout(() => { bossAoeEffects.pop(); }, 300);
-                audio.spellBlast();
+                
+                if (data.type === 'fireball') audio.fireball();
+                else if (data.type === 'heal' || data.type === 'smite') audio.heal();
+                else if (data.type === 'frostnova') audio.freeze();
+                else if (data.type === 'multishot') audio.shoot();
+                else audio.spellBlast();
             }
             else if (data.action === "spell") {
                 activeSpells.push({ startTime: Date.now(), sx: data.sx, sy: data.sy, tx: data.tx, ty: data.ty, type: data.type });
-                audio.spellBlast();
+                if (data.type === 'fireball') audio.fireball();
+                else if (data.type === 'snipe') audio.shoot();
+                else audio.spellBlast();
             }
 
             else if (data.action === "ground_sync") { groundItemsLocal = data.items; }
@@ -487,6 +513,13 @@
                 document.getElementById("mana-bar").style.width = (data.mana/data.maxMana*100)+"%"; document.getElementById("mana-text").innerText = "Mana: "+data.mana+"/"+data.maxMana;
                 document.getElementById("xp-bar").style.width = (data.xp/data.nextXp*100)+"%"; document.getElementById("xp-text").innerText = "XP: "+data.xp+"/"+data.nextXp;
                 
+                if (!window.TUTORIAL_SEEN && data.level === 1 && data.xp === 0) {
+                    window.TUTORIAL_SEEN = true;
+                    document.getElementById("overlay").style.display = "block";
+                    const tut = document.getElementById("tutorial-modal");
+                    if (tut) tut.style.display = "block";
+                }
+
                 applyGold(data.gold);
                 
                 const btnSkill = document.getElementById("btn-skill");
@@ -541,6 +574,15 @@
                 if (msg.includes("[QUEST]")) audio.questUpdate();
                 else if (msg.includes("cannot") || msg.includes("Cannot") || msg.includes("must be near")) audio.error();
                 else if (msg.includes("Received:")) audio.loot();
+            }
+            else if (data.action === "rate_limited") {
+                // The server is throttling this client. Shown as a normal log
+                // line so it reads as feedback rather than as a dropped packet,
+                // which is what an unhandled packet would look like. The server
+                // already limits how often this arrives, so there is no need to
+                // throttle it again here.
+                addLog(`⏳ ${data.message || "Slow down."}`);
+                audio.error();
             }
             else if (data.action === "open_shop") {
                 document.getElementById("overlay").style.display = "block";

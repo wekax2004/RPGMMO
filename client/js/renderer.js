@@ -550,12 +550,15 @@
             }
 
             if (window.particleSetting !== false) {
-                // --- Weather Engine ---
+                // --- Weather & Music Engine ---
+                let biome = "city";
+                if (player.x > 1600 && player.y > 1600 && player.y < 2600) biome = "snow";
+                else if (player.x < 1600 && player.y > 1800) biome = "desert";
+                else if (player.x < 1600 && player.y > 800 && player.y < 1800) biome = "swamp";
+                
+                if (window.audio && window.audio.changeMusic) window.audio.changeMusic(biome);
+
                 if (Math.random() < 0.3) {
-                    let biome = "";
-                    if (player.x > 1600 && player.y > 1600 && player.y < 2600) biome = "snow";
-                    else if (player.x < 1600 && player.y > 1800) biome = "desert";
-                    else if (player.x < 1600 && player.y > 800 && player.y < 1800) biome = "swamp";
                     
                     if (biome === "snow") {
                         particles.push({ x: cameraX + Math.random() * SCREEN_W, y: cameraY - 10, vx: (Math.random()-0.5)*2, vy: 2+Math.random(), life: 1.0, color: "rgba(255,255,255,0.8)", size: 2, gravity: 0.02 });
