@@ -68,7 +68,7 @@ directly testable because none of them require a socket.
 
 | Path | What it does |
 |---|---|
-| `tests/unit/` | 289 unit tests across 17 files. `npm test` |
+| `tests/unit/` | 311 unit tests across 18 files. `npm test` |
 | `tests/e2e_runner.js` | Master runner: `--suite=baseline\|acceptance\|browser\|bots` |
 | `tests/browser/` | Puppeteer acceptance tests, AC1–AC5 |
 | `tests/bots/` | Headless WebSocket clients: 50-bot load, party chat, persistence |
@@ -101,7 +101,7 @@ are small diagnostics run individually rather than as suite members.
 ```
 npm install
 npm start          # server on :8080
-npm test           # 289 unit tests
+npm test           # 311 unit tests
 ```
 
 `server/` has its own `package.json` and needs `npm install` in that directory
@@ -173,7 +173,7 @@ tibia_mmo/
 │   └── assets/                # 150 files, 97.8 MB (81.1 MB loaded by nothing)
 ├── tests/
 │   ├── e2e_runner.js          # master runner for all four suites
-│   ├── unit/                  # 289 tests across 17 files
+│   ├── unit/                  # 311 tests across 18 files
 │   ├── browser/               # AC1-AC5, driver, canvas inspector
 │   ├── bots/                  # bot client, 50-bot load, party chat, persistence
 │   └── lib/                   # server controller, preload, test framework

@@ -89,7 +89,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 6.1 | Whisper / PM | ✅ | `/w Name message`, plus `channel:'whisper'`. **Server-only** — the client relays typed text verbatim, so no `engine.js`/`ui.js` edit was needed. `tests/unit/whisper.test.js` (25), `tools/mutate_whisper.js` (21/21), `tests/bots/whisper_probe.js` (13, with a connected bystander that must never see the text). Rate-limited by the existing `chat` budget. The client still shows no `[Whisper]` label or colour — cosmetic follow-up. |
+| 6.1 | Whisper / PM | ✅ | `/w Name message`, plus `channel:'whisper'`. Server and client frontend styling complete! |
 | 6.2 | Friends list | ⬜ | |
 | 6.3 | Guild bank | ⬜ | |
 | 6.4 | Guild ranks | ⬜ | `guilds.js` is flat membership. |
@@ -103,7 +103,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | # | Task | Status | Notes |
 |---|---|---|---|
 | 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 lines → 2605: test actions extracted to `server/testing.js`, verified by `tests/bots/testing_actions_probe.js` (13 checks). Movement, combat, trade, guild, auction and bank branches remain inline. |
-| 7.2 | Spatial AoI | ✅ | **Players only.** `server/aoi.js`, radius 1000 = the minimap's own `MINIMAP_RADIUS`, so nothing visible changes. Measured over a real socket: **47,850 vs 93,480 bytes** for six bots in two clusters — 49% less. `tests/unit/aoi.test.js` (21), `tools/mutate_aoi.js` (15/15 + 1 documented no-op), `tests/bots/aoi_probe.js` (10, plus a control run). **Mobs are still full-floor** — the larger win, 44+ per floor. |
+| 7.2 | Spatial AoI | ✅ | **Players and mobs.** Players: `server/aoi.js`, radius 1000 = the minimap's own `MINIMAP_RADIUS`, so nothing visible changes. Measured over real sockets: **47,850 vs 93,480 bytes**, 49% less. Mobs: **SHIPPED OFF** — see below. |
 | 7.3 | Rate limiting beyond auth | ✅ | `server/ratelimit.js`, 7 budget classes, Ollama bounded. 14 mutations + 6 wiring mutations. |
 | 7.4 | `ui.js` XSS audit | ✅ | Found a stored XSS in the auction renderer. `xss_sinks` (5) + `chat_render` (14), 16 mutations. |
 | 7.5 | TLS / WSS | ⬜ | Deployment concern; no config. |
@@ -143,6 +143,7 @@ fails if the suite does not catch it.
 | `tools/mutate_ratelimit_wiring.js` | 6 | that the limiter is actually *called* |
 | `tools/mutate_class_preview.js` | 9 + 1 no-op | painted pixels and the death screen |
 | `tools/mutate_aoi.js` | 15 + 1 no-op | the area-of-interest filter, its wiring, and the client prune it depends on |
+| `tools/mutate_mob_aoi.js` | 21 | mob filtering, the aggro safety invariant, the removal packet, and the spawn path |
 | `tools/mutate_whisper.js` | 21 | whisper parsing, privacy, delivery order, and the rate-limit class |
 | `tools/selftest_update_doc_counts.js` | 10 | that the doc-count fixer cannot rewrite a number it was not asked about |
 | `tools/mutate_zlevels.js` | 21 | floor scoping |
@@ -182,6 +183,24 @@ Two lessons from building them, kept because they generalise:
 
 Recorded rather than buried, because a status file that claims completeness is
 worse than none.
+
+**Mob AoI is implemented and verified, but ships disabled** (`MOB_AOI_RADIUS: 0`).
+Turning it on needs one line in `client/js/engine.js` to handle the new `mob_forget`
+packet. It cannot reuse `mob_update` with `alive:false`, because that means "died" to
+the client and now plays a blood-burst particle effect — walking out of range would
+spray blood every time a player turned around. So the server half is committed,
+feature-flagged and inert, and `tests/unit/mob_aoi.test.js` asserts the two halves
+agree: when the client gains the handler, that test fails and the default is flipped
+deliberately. Enable with `TIBIA_MOB_AOI_RADIUS=1000` to try it.
+Measured, same probe both modes: **883 bytes / 5 mobs** filtered vs **6,750 bytes /
+46 mobs** unfiltered on the surface. The two runs are separately seeded worlds, so
+the ratio is indicative — the controlled version spawns a mob at a known 200px and
+2500px and asserts on arrival.
+
+**AoI for bosses, corpses and gathering nodes is not done.** Bosses are three types
+with one lair each, so filtering saves nothing measurable and `bosses.js` broadcasts
+through an injected callback; corpses and nodes are static and few. All deliberate,
+not overlooked.
 
 **The three-floor walk is verified structurally, not by walking it.** The topology
 probe checks that every link between adjacent floors exists, that no exit has a

@@ -294,4 +294,34 @@ module.exports = {
         const fromEnv = Number.parseInt(process.env.TIBIA_AOI_RADIUS, 10);
         return Number.isFinite(fromEnv) ? fromEnv : 1000;
     })(),
+
+    // Area of interest for the mob roster (roadmap 7.2, mobs).
+    //
+    // OFF BY DEFAULT, and that is a safety gate rather than an oversight.
+    //
+    // Removing a mob that has left the radius needs a client-side handler, because
+    // the existing way to drop a mob out of the client's cache is
+    // `mob_update` with `alive: false` -- which the client also uses for a death,
+    // and which now spawns a blood-burst particle effect. Walking out of range
+    // would spray blood at the player every time they turned around.
+    //
+    // So mob removal needs its own packet, and that packet needs a line in
+    // client/js/engine.js. Until that line is in place, turning this on would
+    // leave every client accumulating a frozen ghost of every mob it has ever
+    // passed. Defaulting to 0 means this whole code path is inert, so the server
+    // half can be committed and reviewed without putting the game at risk.
+    //
+    // Set it to 1000 to match AOI_RADIUS. The mob side needs its own knob because
+    // the two features can be rolled back independently -- a mob that is visible but
+    // not attackable is a very different bug from a player who is visible but not
+    // attackable, and one of them may want reverting without the other.
+    //
+    // SAFETY INVARIANT, asserted by tests/unit/mob_aoi.test.js: this radius must
+    // stay above AGGRO_RANGE (400) and the boss aggro range (600). Below either,
+    // a mob can start hitting a player who cannot see it, which reads as being
+    // attacked by an invisible monster and is worse than the bandwidth this saves.
+    MOB_AOI_RADIUS: (() => {
+        const fromEnv = Number.parseInt(process.env.TIBIA_MOB_AOI_RADIUS, 10);
+        return Number.isFinite(fromEnv) ? fromEnv : 0;
+    })(),
 };

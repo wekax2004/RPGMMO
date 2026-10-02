@@ -279,7 +279,33 @@ function syncFloorRoster(player) {
         width: CFG.MAP_WIDTH, height: CFG.MAP_HEIGHT, safeZone: CFG.SAFE_ZONE
     });
 
-    mobs.forEach((mob, id) => { if (MAP.normalizeZ(mob.z) === pz) sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, z: pz, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite }); });
+    // Mobs, filtered to the radius this player can actually see.
+    //
+    // The viewer's own x/y is used rather than the tile being described, because
+    // what matters is whether the player can see it. With MOB_AOI_RADIUS at 0 both
+    // loops send the whole floor exactly as they always have, so this is inert
+    // until the feature is switched on.
+    const mobR = CFG.MOB_AOI_RADIUS;
+    const canSeeMob = (m) => mobR <= 0 || (Math.abs(m.x - player.x) <= mobR && Math.abs(m.y - player.y) <= mobR);
+
+    // Written as a positive `=== pz` condition rather than `!== pz` with an early
+    // return, because that is the shape tests/unit/zlevels.test.js:363 pins when it
+    // reads back the guard in front of each mob_update. The filter is on the same
+    // line as the floor test, which keeps the two conditions together and readable
+    // -- a reader can see at a glance that "on my floor" and "in my view" are one
+    // question, not two.
+    const visibleMobs = [];
+    mobs.forEach((mob, id) => {
+        if (MAP.normalizeZ(mob.z) === pz && canSeeMob(mob)) {
+            visibleMobs.push(id);
+            sendTo(player, { action: 'mob_update', id, type: mob.type, name: mob.name, x: mob.x, y: mob.y, z: pz, hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite });
+        }
+    });
+    // Bosses are deliberately not filtered. There are three types with one lair each,
+    // so filtering them saves nothing measurable, and bosses.js broadcasts through
+    // an injected callback that would have to be threaded through a filter for no
+    // gain. A boss you cannot see is also the thing a player most wants warning
+    // about.
     bosses.forEach((boss, id) => { if (MAP.normalizeZ(boss.z) === pz) sendTo(player, { action: 'mob_update', id, type: boss.type, name: boss.name, x: boss.x, y: boss.y, z: pz, hp: boss.hp, maxHp: boss.maxHp, alive: true, isElite: false, isBoss: true, phase: boss.phase }); });
     chests.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'chest_update', id, x: c.x, y: c.y, z: pz, active: true }); });
     corpses.forEach((c, id) => { if (MAP.normalizeZ(c.z) === pz) sendTo(player, { action: 'corpse_spawn', corpse: c }); });
@@ -292,6 +318,9 @@ function syncFloorRoster(player) {
     // future drops. Filtered to this floor, so a drop on another level is not
     // drawn on this one.
     sendTo(player, { action: 'ground_sync', items: groundItemPayload(pz) });
+    // Seed the reconciliation set with whatever was just sent, so the periodic mob
+    // membership check does not immediately re-send it as "entered".
+    mobAoiSets.set(player.id, new Set(visibleMobs));
     syncNpcs(player);
     // The skill panel is not floor-scoped -- a character's skills travel with
     // them -- but it is sent here so a player who descends does not come back
@@ -833,6 +862,107 @@ function dist3D(x1, y1, z1, x2, y2, z2) {
     return dist(x1, y1, x2, y2);
 }
 
+/*
+ * Mob area of interest (roadmap 7.2, mobs).
+ *
+ * The set of mob ids each player has been told about, keyed by player id. Held here
+ * rather than on the player object because the player object is serialised on every
+ * save and reload, and a Set is not part of the saved shape -- putting it there
+ * would either be silently dropped or quietly break persistence depending on how
+ * serializePlayer happened to be written that day.
+ *
+ * mobAoiSets is also the only thing that makes mob AoI correct rather than merely
+ * cheaper. Players are re-told their whole roster every 200ms and the client drops
+ * whoever is absent, so membership needs no bookkeeping. Mobs are sent once at spawn
+ * and afterwards only when they move or take damage, so without a record of what a
+ * client was last told, a mob that was out of range when a player arrived would
+ * never appear no matter how long the player stood beside it.
+ */
+const mobAoiSets = new Map();
+
+/**
+ * Send a mob-related packet only to the players who can see where it happened.
+ *
+ * With MOB_AOI_RADIUS at 0 this is exactly broadcastToFloor, so the pre-AoI
+ * behaviour is reachable by configuration and no caller has to branch.
+ *
+ * @param {number} z    floor the event happened on
+ * @param {object} packet
+ * @param {number} x    world x the event happened at
+ * @param {number} y    world y the event happened at
+ */
+function broadcastToFloorNear(z, packet, x, y) {
+    const radius = CFG.MOB_AOI_RADIUS;
+    if (radius <= 0) { broadcastToFloor(z, packet); return; }
+    const floor = MAP.normalizeZ(z);
+    players.forEach((p) => {
+        if (MAP.normalizeZ(p.z) !== floor) return;
+        if (AOI.canSee(p, x, y, radius)) sendTo(p, packet);
+    });
+}
+
+/**
+ * Reconcile each player's known mob set against what is now in range.
+ *
+ * Mobs that came into range are announced with the ordinary mob_update packet, so
+ * the client needs no new handler to *see* a mob. Only leaving uses a new packet,
+ * `mob_forget`, because the existing way to drop a mob is `alive: false` -- which
+ * also means "died" and now sprays a blood-burst particle effect. Reusing it here
+ * would burst blood every time a player walked away from a mob.
+ *
+ * Runs on the existing roster tick rather than a new interval: the work is a set
+ * comparison per player, and it only sends when something actually crossed.
+ */
+function reconcileMobVisibility() {
+    const radius = CFG.MOB_AOI_RADIUS;
+    if (radius <= 0) return;
+    players.forEach((player, pid) => {
+        const floor = MAP.normalizeZ(player.z);
+        const inRange = [];
+        mobs.forEach((mob, id) => {
+            if (MAP.normalizeZ(mob.z) !== floor) return;
+            if (!AOI.canSee(player, mob.x, mob.y, radius)) return;
+            inRange.push({ id, mob });
+        });
+
+        const { entered, left } = AOI.membershipChange(mobAoiSets.get(pid), inRange);
+
+        for (const e of entered) {
+            sendTo(player, {
+                action: 'mob_update', id: e.id, type: e.mob.type, name: e.mob.name,
+                x: e.mob.x, y: e.mob.y, z: floor, hp: e.mob.hp, maxHp: e.mob.maxHp,
+                alive: true, isElite: e.mob.isElite
+            });
+        }
+        for (const id of left) {
+            sendTo(player, { action: 'mob_forget', id });
+        }
+
+        if (entered.length || left.length) mobAoiSets.set(pid, new Set(inRange.map(e => e.id)));
+    });
+}
+
+/** Forget a player's mob set when they disconnect, so the map cannot grow without bound. */
+function dropMobAoiSet(playerId) {
+    mobAoiSets.delete(playerId);
+}
+
+/**
+ * Announce a mob event -- a spawn, most often -- to whoever can see it.
+ *
+ * Takes x/y from the packet rather than as arguments, so a caller cannot announce a
+ * mob at one position while scoping the send to another.
+ *
+ * This exists because the test-only spawn action was handing spawnMobAt the global
+ * `broadcast`, which sent every spawn to every player on every floor. Two bugs in
+ * one: mob AoI did not apply to spawns at all, and a surface mob was being announced
+ * to players standing in the crypt. tests/bots/mob_aoi_probe.js found the first by
+ * spawning a mob 2500px away and watching it arrive anyway.
+ */
+function sendMobEvent(z, packet) {
+    broadcastToFloorNear(z, packet, packet.x, packet.y);
+}
+
 function recalcPlayerStats(player) {
     let baseMaxHp = 0; let baseMaxMana = 0;
     if (player.classType === 'warrior') { baseMaxHp = 150; baseMaxMana = 30; }
@@ -1329,6 +1459,9 @@ wss.on('connection', (ws) => {
                 TESTING.handleTestAction({
                     data, player, players, bosses,
                     sendTo, sendProtocolError, broadcast, broadcastToFloor,
+                    // Scoped, unlike broadcast: a spawn is a mob event and must respect
+                    // both the floor and the area of interest. See sendMobEvent.
+                    spawnBroadcast: (packet) => sendMobEvent(player.z, packet),
                     spawnMobAt, spawnBoss, triggerBossAoe, addXp,
                     isInBounds, isWalkable,
                     knownMobTypes: KNOWN_MOB_TYPES, bossTypes: BOSS_TYPES, tileSize: CFG.TILE_SIZE
@@ -2275,6 +2408,10 @@ wss.on('connection', (ws) => {
             });
             if (!shuttingDown) persistPlayer(p);
             players.delete(playerId);
+            // Otherwise the mob reconciliation set for this id is never read again
+            // and never freed, so it grows by one entry per connection for the life
+            // of the process.
+            dropMobAoiSet(playerId);
             broadcast({ action: 'player_left', id: playerId });
         }
     });
@@ -2390,6 +2527,9 @@ scheduleServerInterval(() => {
     // Ground loot rides along with the same periodic broadcast so a client
     // that missed an earlier ground_sync resynchronises on its own.
     if (groundItems.size > 0) broadcastGroundSync();
+    // And the same reasoning for mob visibility: a mob the player has walked up to
+    // must appear even though nothing about it changed and no packet was due.
+    reconcileMobVisibility();
 }, CFG.PLAYER_BROADCAST_INTERVAL);
 
 scheduleServerInterval(() => {
@@ -2450,7 +2590,7 @@ scheduleServerInterval(() => {
                 // because the packet had no z the client filed it under "no
                 // floor" -- so a mob was simultaneously known to the surface
                 // roster and unclassifiable.
-                broadcastToFloor(mob.z, { action: 'mob_update', id: mobId, x: mob.x, y: mob.y, z: MAP.normalizeZ(mob.z), hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type });
+                broadcastToFloorNear(mob.z, { action: 'mob_update', id: mobId, x: mob.x, y: mob.y, z: MAP.normalizeZ(mob.z), hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type }, mob.x, mob.y);
             }
         }
     });

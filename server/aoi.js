@@ -33,19 +33,20 @@
  */
 
 /**
- * The players `viewer` should be sent.
+ * The entries `viewer` should be sent, from any roster.
  *
- * A viewer is always included, even though its own distance from itself is zero
- * and it would qualify anyway: including it explicitly means the rule reads as
- * "everyone nearby, plus you" rather than relying on the reader to notice that
- * |x - x| is 0. It also keeps the self-inclusion correct if a future caller
- * passes a negative radius alongside a viewer, where the disabled path returns
- * the roster unchanged.
+ * Same square test and the same self-inclusion rule as the player roster, because
+ * mobs must agree with players for the same reason: both are drawn by the same
+ * camera and filtered by the same minimap radius, so anything one of them hides is
+ * something the player was never going to see anyway.
  *
- * @param {object} viewer          a roster entry (needs id, x, y)
- * @param {Array<object>} roster   every entry on the viewer's floor
- * @param {number} radius          in world pixels; <= 0 disables filtering
- * @returns {Array<object>}        the subset to send, in roster order
+ * A mob is not in its own roster, so self-inclusion never fires for one. It is kept
+ * because this function is now used for both kinds and the rule should not depend
+ * on which kind it was handed.
+ *
+ * @param {object} viewer       a roster entry or a player (needs id, x, y)
+ * @param {Array<object>} roster every entry on the viewer's floor
+ * @param {number} radius       in world pixels; <= 0 disables filtering
  */
 function visibleTo(viewer, roster, radius) {
     // Disabled. Return the array itself rather than a copy: the caller only ever
@@ -55,6 +56,44 @@ function visibleTo(viewer, roster, radius) {
     return roster.filter(other =>
         other.id === viewer.id ||
         (Math.abs(other.x - viewer.x) <= radius && Math.abs(other.y - viewer.y) <= radius));
+}
+
+/**
+ * Whether `viewer` can see something at (x, y), on the radius rule above.
+ *
+ * For sending a single event to whoever should receive it -- a mob taking a step, a
+ * floating damage number -- rather than for building a roster. Building a roster
+ * with visibleTo and sending the whole thing is cheaper when there are many
+ * candidates; this is for the one-off.
+ */
+function canSee(viewer, x, y, radius) {
+    if (!(radius > 0)) return true;
+    return Math.abs(viewer.x - x) <= radius && Math.abs(viewer.y - y) <= radius;
+}
+
+/**
+ * Which ids changed between what a viewer was last sent and what it should be sent.
+ *
+ * The mob side needs this because -- unlike players -- there is no periodic mob
+ * sync the client reconciles against. Players are re-told the full roster every
+ * 200ms and the client drops anyone absent. Mobs are sent once at spawn and
+ * afterwards only when they move or take damage, so a mob that was out of range
+ * when a player arrived would stay invisible for good, however long the player
+ * stood next to it. Something has to notice the crossing, and this is it.
+ *
+ * @param {Set|Array|null} previous  ids last sent
+ * @param {Array<object>} current    the roster entries that should be sent now
+ * @returns {{entered: Array<object>, left: *[]}}
+ */
+function membershipChange(previous, current) {
+    const before = previous instanceof Set ? previous : new Set(previous || []);
+    const now = new Set(current.map(e => e.id));
+    const entered = current.filter(e => !before.has(e.id));
+    const left = [];
+    for (const id of before) {
+        if (!now.has(id)) left.push(id);
+    }
+    return { entered, left };
 }
 
 /**
@@ -105,4 +144,7 @@ function measure(roster, radius) {
     };
 }
 
-module.exports = { visibleTo, buildRosters, measure, AOI_RADIUS_DISABLED: 0 };
+module.exports = {
+    visibleTo, buildRosters, measure, canSee, membershipChange,
+    AOI_RADIUS_DISABLED: 0
+};

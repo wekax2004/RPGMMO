@@ -28,7 +28,7 @@ function handleTestAction(ctx) {
     const {
         data, player, players, bosses,
         sendTo, sendProtocolError, broadcast, broadcastToFloor,
-        spawnMobAt, spawnBoss, triggerBossAoe, addXp,
+        spawnBroadcast, spawnMobAt, spawnBoss, triggerBossAoe, addXp,
         isInBounds, isWalkable, knownMobTypes, bossTypes, tileSize
     } = ctx;
 
@@ -56,11 +56,19 @@ function handleTestAction(ctx) {
             }
             const x = Number.isInteger(data.x) ? data.x : player.x + tileSize;
             const y = Number.isInteger(data.y) ? data.y : player.y;
-            if (!isInBounds(x, y) || !isWalkable(x, y)) {
+            // The caller's own floor, for the same reason the boss case below does:
+            // the surface's walkable set and a dungeon's barely overlap, and a player
+            // in the crypt who asks for a mob would otherwise have it validated
+            // against the city and placed in the city.
+            const floor = player.z;
+            if (!isInBounds(x, y) || !isWalkable(x, y, floor)) {
                 sendProtocolError(player, 'Spawn point is not walkable.');
                 return true;
             }
-            const id = spawnMobAt(x, y, type, broadcast);
+            // Announced through the scoped sender, so a spawn respects both the floor
+            // and the area of interest. It used to be handed `broadcast`, which sent
+            // every spawn to every player on every floor regardless of either.
+            const id = spawnMobAt(x, y, type, spawnBroadcast, floor);
             sendTo(player, { action: 'log', message: `Spawned ${type} at ${x},${y} (${id}).` });
             return true;
         }
