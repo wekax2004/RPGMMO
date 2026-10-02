@@ -249,6 +249,7 @@ test('a save round trip preserves the floor, including x=0 and y=0', () => {
     const AUCTION = require(path.join(SERVER_DIR, 'auction'));
     const ITEMS = require(path.join(SERVER_DIR, 'items'));
     const SC = require(path.join(SERVER_DIR, 'subclasses'));
+    const FRIENDS = require(path.join(SERVER_DIR, 'friends'));
     const SKULL_DROP_RATIO = 1, NORMAL_DROP_RATIO = 0.5, corpseIdCounter = { v: 0 };
     let corpses = new Map();
 
@@ -265,11 +266,15 @@ test('a save round trip preserves the floor, including x=0 and y=0', () => {
     );
     const body = [extractDeclaration(src, 'serializePlayer'), skullConsts, normalizeBlock].join('\n\n');
 
+    // FRIENDS joins the injected dependencies because normalizePlayerData now
+    // sanitises the friend list. It arrived as a ReferenceError -- the sandbox
+    // evaluates the function body in isolation, so a module it references must be
+    // supplied here or the whole round-trip test dies before asserting anything.
     const { normalizePlayerData, serializePlayer } = new Function(
-        'CFG', 'Q', 'SKILLS', 'CRAFTING', 'AUCTION', 'ITEMS', 'MAP', 'SC',
+        'CFG', 'Q', 'SKILLS', 'CRAFTING', 'AUCTION', 'ITEMS', 'MAP', 'SC', 'FRIENDS',
         `${body}
      return { normalizePlayerData, serializePlayer };`
-    )(CFG, Q, SKILLS, CRAFTING, AUCTION, ITEMS, MAP, SC);
+    )(CFG, Q, SKILLS, CRAFTING, AUCTION, ITEMS, MAP, SC, FRIENDS);
 
     // Every legal floor must survive normalizePlayerData. This is the assertion
     // the original `safeInteger(data.z, 0)` form failed: its `minimum` defaulted

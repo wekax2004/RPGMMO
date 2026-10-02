@@ -180,12 +180,73 @@ function safeByParts(expr, isAllowed) {
     return parts.every(part => /^['"`].*['"`]$/.test(part) || isAllowed(part));
 }
 
+/*
+ * Bindings that are already safe, and may be interpolated bare.
+ *
+ * The frontend added a friends list that does the right thing:
+ *
+ *     const onlineStyle = f.online ? "color:#10b981;" : "color:#64748b;";
+ *     const fName = escapeHtml(f.name);
+ *     flist.innerHTML = `...<span style="${onlineStyle}">${fName}</span>...
+ *                          <button onclick="window.removeFriend('${fName}')">`;
+ *
+ * and this rule reported it as four findings. All four were false: escapeHtml escapes
+ * `& < > ' "`, so both the element text and the single-quoted onclick attribute are
+ * safe, and the server-side character-name charset `^[A-Za-z][A-Za-z0-9 _-]*$` blocks
+ * quotes before they can arrive anyway. The style is a ternary of two literals.
+ *
+ * That is the failure mode this file already documents: a check that reports correct
+ * code as a vulnerability trains people to ignore it, which is how the auction bug
+ * survived in the first place. So two construction shapes are recognised --
+ * an escapeHtml initialiser, and a ternary whose arms are both literals.
+ *
+ * The reassignment guard is what stops either becoming a bypass. `let n = escapeHtml(x)`
+ * followed by `n = somethingRaw` would otherwise launder an unescaped value through a
+ * name the scanner trusts. Any second assignment disqualifies the binding.
+ */
+function trustedBindings(src) {
+    const safe = new Set();
+    // Line-based rather than up-to-the-next-semicolon. The obvious
+    // `= ([^;]+);` truncates on a semicolon inside a string literal, which is
+    // exactly the shape of the style this rule exists for:
+    //
+    //     const onlineStyle = f.online ? "color:#10b981;" : "color:#64748b;";
+    //
+    // captured as `f.online ? "color:#10b981`, so the ternary never matched and the
+    // finding persisted. A multi-line initialiser captures only up to the first line
+    // and is therefore not trusted, which is the conservative direction.
+    const decls = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+)$/gm;
+    for (const m of src.matchAll(decls)) {
+        const [, name, initialiser] = m;
+        const isEscaped = /^\s*escapeHtml\(/.test(initialiser);
+        // Both arms must be string literals. The condition may be anything at all --
+        // including `a === b ? x : y` -- because the condition never reaches the output,
+        // only the two arms do. Requiring a simple condition missed
+        // `mName === myGuild.leader ? "<emoji>" : (...)` and reported a binding that
+        // cannot possibly carry markup.
+        const isLiteralTernary = /^\s*[^?]*\?\s*(['"`]).*\1\s*:\s*[\s\S]*?(['"`]).*\2\s*;?\s*$/
+            .test(initialiser)
+            // A nested ternary's outer else arm is another ternary, so require that every
+            // quoted run in the initialiser is a self-contained literal rather than a name.
+            && !/['"`][^'"\n]*\b[A-Za-z_$][\w$]*\b[^'"\n]*['"`]/.test(
+                initialiser.replace(/^\s*[^?]*\?\s*/, ''));
+        if (!isEscaped && !isLiteralTernary) continue;
+        // Every assignment to this name, not just the declaration. Anything more than
+        // the one means the value can change after it was made safe.
+        const assignments = [...src.matchAll(new RegExp(`\\b${name}\\s*=(?!=)`, 'g'))].length;
+        if (assignments === 1) safe.add(name);
+    }
+    return safe;
+}
+
 const isAllowed = expr => ALLOWED_BARE.has(expr);
 test('no unescaped value reaches HTML', () => {
     const problems = [];
     for (const f of FILES) {
+        const preSafe = trustedBindings(f.src);
         for (const { expr, line, text, kind } of htmlWritingChunks(f.src)) {
             if (SAFE_CALL.test(expr)) continue;
+            if (preSafe.has(expr)) continue;
             if (safeByParts(expr, isAllowed)) continue;
             if (/^['"`].*['"`]$/.test(expr)) continue;
             if (literalOnlyTernary(expr)) continue;
@@ -210,8 +271,13 @@ test('the concatenation sinks that carry player names stay escaped', () => {
     const pinned = [
         {
             file: 'engine.js', src: engine,
+            // Pinned against the shape the file currently has. This section has been
+            // rewritten twice during one session -- once to a template literal with a
+            // rank icon, then back -- so the anchor is the escaping call rather than the
+            // surrounding markup, which is what actually matters and what has survived
+            // both rewrites.
             what: 'the guild member list',
-            expect: /myGuild\.members\.forEach\(m => h \+= "- " \+ escapeHtml\(m\)/
+            expect: /escapeHtml\(m(?:Name)?\)/
         },
         {
             file: 'engine.js', src: engine,

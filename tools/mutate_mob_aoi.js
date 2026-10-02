@@ -33,6 +33,22 @@ const TEST = 'tests/unit/mob_aoi.test.js';
 // is caught by neither suite in isolation and survives.
 const TEST2 = 'tests/unit/zlevels.test.js';
 
+// A unique anchor for the mob radius line.
+//
+// AOI_RADIUS and MOB_AOI_RADIUS are written identically:
+//
+//     return Number.isFinite(fromEnv) ? fromEnv : 1000;
+//
+// and String.replace takes the FIRST match, so anchoring on that line alone mutated
+// the *players'* radius three times over and every mutation passed -- the mob
+// assertions read MOB_AOI_RADIUS, which had not changed. A harness that quietly edits
+// the wrong code is worse than one that skips, because the skip is visible.
+//
+// The env var name is unique to the mob radius and sits two lines above.
+const MOB_RADIUS_ANCHOR =
+    "const fromEnv = Number.parseInt(process.env.TIBIA_MOB_AOI_RADIUS, 10);\n" +
+    '        return Number.isFinite(fromEnv) ? fromEnv : 1000;';
+
 const MUTATIONS = [
     // --- the safety invariant ----------------------------------------------
     {
@@ -40,8 +56,8 @@ const MUTATIONS = [
         // radius for bandwidth without noticing mobs engage from further out.
         name: 'the radius is set below the aggro range, so mobs hit unseen players',
         file: CONFIG,
-        from: 'return Number.isFinite(fromEnv) ? fromEnv : 0;',
-        to: 'return Number.isFinite(fromEnv) ? fromEnv : 200;'
+        from: MOB_RADIUS_ANCHOR,
+        to: MOB_RADIUS_ANCHOR.replace(': 1000;', ': 200;')
     },
     {
         name: 'the aggro range is widened past the radius, with the same effect',
@@ -52,16 +68,19 @@ const MUTATIONS = [
     {
         name: 'the radius is made larger than the map, so it filters nothing',
         file: CONFIG,
-        from: 'return Number.isFinite(fromEnv) ? fromEnv : 0;',
-        to: 'return Number.isFinite(fromEnv) ? fromEnv : 999999;'
+        from: MOB_RADIUS_ANCHOR,
+        to: MOB_RADIUS_ANCHOR.replace(': 1000;', ': 999999;')
     },
 
     // --- the switch ---------------------------------------------------------
     {
-        name: 'the feature is switched on by default while the client cannot remove mobs',
+        // The gate has flipped: the client now handles mob_forget, so the feature is
+        // enabled. Turning it back off is the dangerous direction again, because it
+        // means paying full-floor cost while believing the optimisation is on.
+        name: 'the feature is switched back off while the client keeps forgetting mobs',
         file: CONFIG,
-        from: 'return Number.isFinite(fromEnv) ? fromEnv : 0;',
-        to: 'return Number.isFinite(fromEnv) ? fromEnv : 1000;'
+        from: MOB_RADIUS_ANCHOR,
+        to: MOB_RADIUS_ANCHOR.replace(': 1000;', ': 0;')
     },
     {
         name: 'the mob scope reads the player radius, coupling two independent switches',
@@ -180,12 +199,25 @@ const MUTATIONS = [
 
     // --- the client contract ------------------------------------------------
     {
-        // Flipping the default without adding the handler. Caught by the agreement
-        // test, which compares the two states directly.
-        name: 'the client starts handling mob_forget, which should now allow enabling it',
+        // The gate that used to be a disabled default is now this agreement test. If
+        // the handler is ever removed, mob AoI keeps running and every client
+        // accumulates a frozen ghost of every mob it has passed -- so removing this
+        // branch must break the build.
+        //
+        // The earlier version of this mutation added the handler, and survived: by
+        // then the handler already existed, so adding a second copy changed nothing.
+        name: 'the client stops handling mob_forget, leaving every client with ghost mobs',
         file: ENGINE,
-        from: 'else if (data.action === "player_left") { delete otherPlayers[data.id]; }',
-        to: 'else if (data.action === "mob_forget") { delete mobs[data.id]; }\n            else if (data.action === "player_left") { delete otherPlayers[data.id]; }'
+        from: '            else if (data.action === "mob_forget") {\n                delete mobs[data.id];\n                if (currentTargetId === data.id) currentTargetId = null;\n            }',
+        to: '            // mob_forget handler removed'
+    },
+    {
+        // The other half of the gate: the handler must delete, not mark dead, or it
+        // is the blood-burst path this packet was written to avoid.
+        name: 'mob_forget is routed through the death branch, restoring the blood burst',
+        file: ENGINE,
+        from: '            else if (data.action === "mob_forget") {\n                delete mobs[data.id];',
+        to: '            else if (data.action === "mob_update" && data.alive === false) {\n                delete mobs[data.id];'
     }
 ];
 

@@ -297,19 +297,27 @@ test('leaving the radius uses mob_forget, not a death', () => {
         'seeing a mob must not require the new packet -- only leaving may');
 });
 
-test('the client does not yet handle mob_forget, which is why the default is off', () => {
-    // Not an assertion that the client is correct. An assertion that the known state
-    // of the two halves is the one the config comment describes, so that flipping the
-    // default without adding the handler -- or adding the handler without flipping it
-    // -- breaks a build instead of shipping silently.
+test('mob AoI is enabled only while the client can forget a mob', () => {
+    // An assertion that the two halves agree, not that either is correct alone.
     //
-    // The pairing is: the default is off exactly while the client cannot handle the
-    // removal packet. Both false, or both true. The first version compared the client
-    // flag against `MOB_AOI_RADIUS === 0` and so required them to disagree.
+    // This gate has already fired once in the direction that matters. The handler was
+    // added, the default was flipped to 1000, and then a later frontend rewrite of the
+    // packet handler removed it -- leaving the feature enabled with no way for a client
+    // to drop a mob that walked away, which is a ghost per mob per client, with nothing
+    // in any log. Enabling it without checking here would have shipped that.
+    //
+    // So: the client can forget a mob, or the radius is off. Both false, or both true.
     const engine = read(ENGINE_JS);
     const clientHandlesForget = /action\s*===?\s*["']mob_forget["']/.test(engine);
     assert.strictEqual(clientHandlesForget, CFG.MOB_AOI_RADIUS > 0,
         `client handles mob_forget: ${clientHandlesForget}, MOB_AOI_RADIUS: ${CFG.MOB_AOI_RADIUS}. ` +
-        'If the client now handles mob_forget the default should be 1000; if it does ' +
-        'not, the default must stay 0 or clients accumulate frozen ghost mobs.');
+        'Enable one without the other and either clients accumulate frozen ghost mobs ' +
+        '(handler missing) or the optimisation is silently inert (default left at 0).');
+
+    if (!clientHandlesForget) {
+        // The stronger half when it is off: the handler must not be re-routed through
+        // the death branch, which is the blood-burst path this packet exists to avoid.
+        assert.ok(!/mob_forget/.test(engine) || !/mob_update" && data\.alive === false/.test(engine),
+            'mob_forget must not be routed through the death branch');
+    }
 });

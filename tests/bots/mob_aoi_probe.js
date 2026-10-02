@@ -60,6 +60,10 @@ function watch(bot) {
     const rec = {
         bytes: 0, upserts: 0, forgets: 0, deaths: 0,
         known: new Set(),
+        // Most recent known position per mob id. The postcondition check is stated
+        // against this rather than against packet counts: whatever the client still
+        // holds must be inside the radius.
+        latest: new Map(),
         // Where the viewer was when each mob was announced, for the leak check.
         announced: [],
         // A short rolling history of sightings with coordinates.
@@ -76,6 +80,7 @@ function watch(bot) {
             rec.bytes += n; rec.upserts++;
             if (p.alive) {
                 rec.known.add(p.id);
+                rec.latest.set(p.id, { x: p.x, y: p.y, isBoss: p.isBoss === true });
                 // Always keep a short history of the most recent sightings with their
                 // coordinates, so the controlled spawn experiment can find a mob by
                 // where it appeared rather than by guessing an id.
@@ -97,6 +102,7 @@ function watch(bot) {
         } else if (p.action === 'mob_forget') {
             rec.bytes += n; rec.forgets++;
             rec.known.delete(p.id);
+            rec.latest.delete(p.id);
         }
     };
     if (typeof sock.addEventListener === 'function') sock.addEventListener('message', e => handle(e.data));
@@ -139,26 +145,37 @@ async function main() {
     // Steadily walk east, away from the spawn cluster, and watch what crosses.
     rec.forgets = 0;
     rec.bytes = 0;
-    const walked = await walkTo(bot, 1900, 320);
-    // Only a failure when filtering is on. With it off, how far the bot walked has no
-    // bearing on anything, and the naive axis-first walker reliably gets stuck on an
-    // obstacle partway -- so asserting it here would fail the control run for a reason
-    // that has nothing to do with mob AoI.
+    const START = { x: bot.x, y: bot.y };
+    await walkTo(bot, 1900, 320);
+    // Distance covered, not arrival. The naive axis-first walker gets stuck on
+    // obstacles -- it has done so at 928 of 1900 on several runs -- and demanding
+    // the exact tile asserts that a stub pathfinder exists, which it does not and
+    // does not need to. What matters is that the bot travelled far enough for mobs
+    // at the start to fall outside the radius.
+    const travelled = Math.max(Math.abs(bot.x - START.x), Math.abs(bot.y - START.y));
     if (enabled) {
-        check('the bot walked away from the spawn cluster', walked, `now at ${bot.x},${bot.y}`);
+        check('the bot walked far enough for spawn-cluster mobs to leave the radius',
+            travelled > radius,
+            `moved ${travelled}px from ${START.x},${START.y} to ${bot.x},${bot.y}; needs > ${radius}`);
     } else {
-        console.log(`  (walked to ${bot.x},${bot.y}; not asserted in control mode)`);
+        console.log(`  (moved ${travelled}px to ${bot.x},${bot.y}; not asserted in control mode)`);
     }
 
-    const forgotSome = rec.forgets > 0;
     const stillHasSome = rec.known.size > 0;
-    console.log(`\n  after walking: ${rec.known.size} mob(s) known, ${rec.forgets} mob_forget(s), ${rec.bytes} bytes`);
+    // The stray diagnosis reads rec.rec, the same object as rec -- kept so the
+    // handler closure and the diagnostic cannot drift onto two different records.
+    rec.recent = rec.recent;
 
     if (!enabled) {
         check('with mob AoI off, nothing is ever forgotten', rec.forgets === 0,
             `${rec.forgets} mob_forget(s) -- the control must not emit the packet at all`);
-        check('and the bot still knows every mob on the floor', rec.known.size === rosterEntries,
-            `${rec.known.size} vs ${rosterEntries} at login`);
+        // "Holds at least as many as at login", not "holds exactly as many". With no
+        // filtering the set only ever grows, because packs spawn during the walk and
+        // their announcements are broadcast. Comparing for equality against the login
+        // snapshot therefore fails on a control that is behaving perfectly.
+        check('and the bot holds everything it was told about, plus anything new',
+            rec.known.size >= rosterEntries,
+            `${rec.known.size} held vs ${rosterEntries} at login (more is expected: packs spawn during the walk)`);
         console.log(`\n  roster bytes (control): ${rosterBytes}`);
         console.log('  compare against a filtered run of the same probe on the same build');
         bot.disconnect();
@@ -167,10 +184,50 @@ async function main() {
     }
 
     // --- the filtering is real --------------------------------------------
-    check('walking away sends mob_forget for the mobs left behind', forgotSome,
-        `${rec.forgets} mob_forget(s) after walking to ${bot.x},${bot.y}; ${rec.known.size} still known`);
     check('and the bot still knows the mobs that are near it now', stillHasSome,
         `${rec.known.size} mob(s) in range`);
+
+    /*
+     * The exact invariant: nothing the client still holds may be out of range.
+     *
+     * Excluding bosses, and that exclusion is the point rather than a convenience.
+     * Bosses are deliberately not filtered -- three types with one lair each, so
+     * filtering saves nothing measurable, and a boss you cannot see is the thing a
+     * player most wants warning about. They live in a separate registry that the
+     * reconciliation never walks, so they are delivered at login and never forgotten.
+     *
+     * The first version of this check did not exclude them and reported three strays
+     * at up to 1952px. The diagnostic block printed their ids and they were all
+     * boss_*: the check was asserting something the design had deliberately chosen
+     * not to do, and would have "fixed" it by filtering bosses -- silently reversing a
+     * decision made for a reason, in the name of making a test green.
+     */
+    await sleep(900);
+    const latest = rec.latest;
+    const isStray = (id) => {
+        const m = latest.get(id);
+        if (m.isBoss) return false;
+        return Math.abs(m.x - bot.x) > radius || Math.abs(m.y - bot.y) > radius;
+    };
+    const strays = [...latest.keys()].filter(isStray);
+    const bosses = [...latest.entries()].filter(([, m]) => m.isBoss).length;
+    const nearestStray = strays.length
+        ? Math.min(...strays.map(id => Math.max(
+            Math.abs(latest.get(id).x - bot.x), Math.abs(latest.get(id).y - bot.y))))
+        : 0;
+    check('no ordinary mob the client holds is outside the radius', strays.length === 0,
+        strays.length
+            ? `${strays.length} stray mob(s) held but out of range, nearest ${nearestStray}px (radius ${radius})`
+            : `${latest.size - bosses} ordinary mob(s) held, all within ${radius}px; ${bosses} boss(es) excluded by design`);
+
+    // Pin the decision rather than leaving it implied by an exclusion above, so that
+    // "why are bosses always visible" has an answer in the test output.
+    check('bosses are delivered regardless of range, which is deliberate',
+        bosses > 0,
+        `${bosses} boss(es) held at up to ${bosses ? Math.max(...[...latest.values()].filter(m => m.isBoss).map(m => Math.max(Math.abs(m.x - bot.x), Math.abs(m.y - bot.y)))) : 0}px ` +
+        'away; see syncFloorRoster, which filters mobs and sends every boss');
+
+    console.log(`  mob_forget(s) during the walk: ${rec.forgets} (a world with no crossings legitimately has none)`);
 
     // A mob still in range must be re-announced when the player comes back. The
     // baseline is the roster at login, not the count at the far position: returning
@@ -197,11 +254,18 @@ async function main() {
     // It does not depend on how the world happened to be generated.
     const FAR = 2500, NEAR = 200;
     rec.recording = false;
+    // Cleared, not just left running. `recent` is a rolling history of the last 40
+    // sightings, so without this the far-spawn check can match a mob that was
+    // legitimately in range earlier in the run -- the bot passes within 1000px of
+    // x=2852 on its way east, sees whatever lives there, and the check then reports
+    // a leak from a sighting that was correct at the time. It reported a false
+    // positive on the first run for exactly that reason.
+    rec.recent = [];
     bot.send({ action: 'test_spawn_mob', type: 'spider', x: bot.x + FAR, y: bot.y });
     bot.send({ action: 'test_spawn_mob', type: 'spider', x: bot.x + NEAR, y: bot.y });
     await sleep(1200);
 
-    const announcedNow = (rec.recent || []).map(p => p.id);
+    const announcedNow = rec.recent.map(p => p.id);
     const nearOnes = announcedNow.filter(id => {
         const a = rec.recent.find(p => p.id === id);
         return a && Math.abs(a.x - (bot.x + NEAR)) <= TILE;

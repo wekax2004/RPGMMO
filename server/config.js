@@ -271,6 +271,14 @@ module.exports = {
     STATUS_BROADCAST_INTERVAL: 300,
     PLAYER_BROADCAST_INTERVAL: 200,
 
+    // Friend list (roadmap 6.2).
+    //
+    // A cap rather than no cap, for the same reason the mailbox has one: a friend list
+    // is persisted on the character row, and without a ceiling a player can rewrite
+    // that row on every add until the save is larger than the game state it
+    // describes. 100 is far above what a person uses and far below what hurts.
+    FRIENDS_MAX: 100,
+
     // Area of interest for the player roster (roadmap 7.2).
     //
     // Each client is sent only the players within this radius of itself, on its own
@@ -295,31 +303,19 @@ module.exports = {
         return Number.isFinite(fromEnv) ? fromEnv : 1000;
     })(),
 
-    // Area of interest for the mob roster (roadmap 7.2, mobs).
+    // MOB AOI IS CURRENTLY OFF, because the client's mob_forget handler is missing.
     //
-    // OFF BY DEFAULT, and that is a safety gate rather than an oversight.
+    // It was enabled once, when the handler was added. A later frontend rewrite of the
+    // packet handler in engine.js removed it, and tests/unit/mob_aoi.test.js failed on
+    // exactly that -- which is what the gate was built for. Left enabled, every client
+    // would accumulate a frozen ghost of every mob it had ever passed, with nothing in
+    // any log to say so.
     //
-    // Removing a mob that has left the radius needs a client-side handler, because
-    // the existing way to drop a mob out of the client's cache is
-    // `mob_update` with `alive: false` -- which the client also uses for a death,
-    // and which now spawns a blood-burst particle effect. Walking out of range
-    // would spray blood at the player every time they turned around.
+    // Re-enabling needs two things together: this default back at 1000, AND the
+    // mob_forget branch back in client/js/engine.js. The test compares the two states
+    // directly, so doing only one of them fails the build.
     //
-    // So mob removal needs its own packet, and that packet needs a line in
-    // client/js/engine.js. Until that line is in place, turning this on would
-    // leave every client accumulating a frozen ghost of every mob it has ever
-    // passed. Defaulting to 0 means this whole code path is inert, so the server
-    // half can be committed and reviewed without putting the game at risk.
-    //
-    // Set it to 1000 to match AOI_RADIUS. The mob side needs its own knob because
-    // the two features can be rolled back independently -- a mob that is visible but
-    // not attackable is a very different bug from a player who is visible but not
-    // attackable, and one of them may want reverting without the other.
-    //
-    // SAFETY INVARIANT, asserted by tests/unit/mob_aoi.test.js: this radius must
-    // stay above AGGRO_RANGE (400) and the boss aggro range (600). Below either,
-    // a mob can start hitting a player who cannot see it, which reads as being
-    // attacked by an invisible monster and is worse than the bandwidth this saves.
+    // TIBIA_MOB_AOI_RADIUS=1000 exercises it without changing the default.
     MOB_AOI_RADIUS: (() => {
         const fromEnv = Number.parseInt(process.env.TIBIA_MOB_AOI_RADIUS, 10);
         return Number.isFinite(fromEnv) ? fromEnv : 0;

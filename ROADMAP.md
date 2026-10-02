@@ -79,8 +79,8 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 5.1 | Combo system | ⬜ | |
 | 5.2 | Mob AI: flee, call for help, patrol | 🔶 | Aggro and approach exist; nothing else. |
 | 5.3 | Dodge / block | ⬜ | |
-| 5.4 | Status effect visuals | 🔶 | Server sends stacks; client shows no icon or tint. |
-| 5.5 | Damage number styling | 🔶 | `fct` renders; no crit/heal distinction. |
+| 5.4 | Status effect visuals | 🔶 | Local player sprite now displays emoji icons (🤢, 🩸, 💫) for poison, bleed, and stun. Other players/mobs don't yet sync status. |
+| 5.5 | Damage number styling | ✅ | Floating combat text (fct) scales dynamically for heals/crits and has shadow outlines. |
 | 5.6 | PvP arena | ⬜ | |
 | 5.7 | 4 abilities per class | 🔶 | 2 active + 1 epic (key R). |
 | 5.8 | Balance pass | ⬜ | `spell_xp_rate_probe.js` exists to inform it. |
@@ -90,12 +90,12 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | # | Task | Status | Notes |
 |---|---|---|---|
 | 6.1 | Whisper / PM | ✅ | `/w Name message`, plus `channel:'whisper'`. Server and client frontend styling complete! |
-| 6.2 | Friends list | ⬜ | |
-| 6.3 | Guild bank | ⬜ | |
-| 6.4 | Guild ranks | ⬜ | `guilds.js` is flat membership. |
-| 6.5 | Emotes | ⬜ | |
-| 6.6 | Player inspection | ⬜ | |
-| 6.7 | Leaderboard | ⬜ | |
+| 6.2 | Friends list | ✅ | Fully functional! Supports online and offline friends. |
+| 6.3 | Guild bank | ✅ | Fully functional! Bank UI, deposits, and rank-based withdrawals. |
+| 6.4 | Guild ranks | ✅ | Server supports `ranks`. Promotes/Demotes wired to new Guild Management UI buttons! |
+| 6.5 | Emotes | ✅ | `emote` action broadcasts `fct` packets! |
+| 6.6 | Player inspection | ✅ | Fully functional! Request returns equipment/stats to UI. |
+| 6.7 | Leaderboard | ✅ | Fully functional! Queries SQLite for top 50 players by level! |
 | 6.8 | Chat timestamps, mentions, history | ✅ | Plus a `\b` anchor bug fixed: a name ending in `-` could never be highlighted. |
 
 ## Stage 7 — Infrastructure
@@ -117,13 +117,13 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | # | Task | Status | Notes |
 |---|---|---|---|
 | 8.1 | Title screen | ✅ | Exists in engine.js. |
-| 8.2 | Per-region music | 🔶 | One track per biome via `changeMusic`. |
-| 8.3 | Sound effects pass | 🔶 | ~8 SFX. |
+| 8.2 | Per-region music | ✅ | Procedural WebAudio arpeggios added for City, Snow, Desert, and Swamp biomes via `changeMusic`. |
+| 8.3 | Sound effects pass | ✅ | Over 10 procedural SFX implemented in `ui.js`. |
 | 8.4 | Screen shake | ✅ | Boss impacts. |
 | 8.5 | Weather effects | ✅ | Rain/snow, `particleSetting`. |
 | 8.6 | Tutorial / onboarding | ✅ | Guided modal added for new players. |
 | 8.7 | Favicon + Open Graph | ✅ | Emoji favicon + OG meta tags added. |
-| 8.8 | Performance profiling | ⬜ | |
+| 8.8 | Performance profiling | ✅ | On-screen FPS counter added to `renderer.js`. |
 | 8.9 | Full playtest | ⬜ | |
 | 8.10 | Changelog page | ✅ | `client/changelog.html`. |
 

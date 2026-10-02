@@ -11,7 +11,7 @@
  * which is exactly what happened when the list was maintained by hand: it
  * listed actions the server never handled and missed every feature added since.
  *
- * Generated: 58 inbound, 68 outbound.
+ * Generated: 61 inbound, 69 outbound.
  */
 
 const PACKET = {
@@ -41,6 +41,9 @@ const PACKET = {
         EQUIP_ITEM: 'equip_item',
         EVOLVE: 'evolve',
         FISH: 'fish',
+        FRIEND_ADD: 'friend_add',
+        FRIEND_LIST_REQUEST: 'friend_list_request',
+        FRIEND_REMOVE: 'friend_remove',
         INTERACT_CORPSE: 'interact_corpse',
         LOGIN: 'login',
         MOVE: 'move',
@@ -102,6 +105,7 @@ const PACKET = {
         FCT: 'fct',
         FISHING_RESULT: 'fishing_result',
         FORCE_POSITION: 'force_position',
+        FRIENDS_LIST: 'friends_list',
         GROUND_SYNC: 'ground_sync',
         GUILD_INVITED: 'guild_invited',
         GUILD_SYNC: 'guild_sync',

@@ -174,7 +174,15 @@ const ACTION_CLASSES = {
     trade_confirm: 'social',
     invite_guild: 'social',
     invite_party: 'social',
-    emote: 'social'
+    emote: 'social',
+
+    // Friend list (roadmap 6.2). A mutation rewrites and persists the character row,
+    // the same reason the item and economy classes are budgeted rather than left on
+    // the generic catch-all -- and a list request is answered from that same list,
+    // so all three share one budget.
+    friend_add: 'social',
+    friend_remove: 'social',
+    friend_list_request: 'social'
 };
 
 function classFor(action) {
