@@ -89,7 +89,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 6.1 | Whisper / PM | ⬜ | Absent. `ratelimit.js` reserves a budget class for it. |
+| 6.1 | Whisper / PM | ✅ | `/w Name message`, plus `channel:'whisper'`. **Server-only** — the client relays typed text verbatim, so no `engine.js`/`ui.js` edit was needed. `tests/unit/whisper.test.js` (25), `tools/mutate_whisper.js` (21/21), `tests/bots/whisper_probe.js` (13, with a connected bystander that must never see the text). Rate-limited by the existing `chat` budget. The client still shows no `[Whisper]` label or colour — cosmetic follow-up. |
 | 6.2 | Friends list | ⬜ | |
 | 6.3 | Guild bank | ⬜ | |
 | 6.4 | Guild ranks | ⬜ | `guilds.js` is flat membership. |
@@ -143,6 +143,7 @@ fails if the suite does not catch it.
 | `tools/mutate_ratelimit_wiring.js` | 6 | that the limiter is actually *called* |
 | `tools/mutate_class_preview.js` | 9 + 1 no-op | painted pixels and the death screen |
 | `tools/mutate_aoi.js` | 15 + 1 no-op | the area-of-interest filter, its wiring, and the client prune it depends on |
+| `tools/mutate_whisper.js` | 21 | whisper parsing, privacy, delivery order, and the rate-limit class |
 | `tools/selftest_update_doc_counts.js` | 10 | that the doc-count fixer cannot rewrite a number it was not asked about |
 | `tools/mutate_zlevels.js` | 21 | floor scoping |
 | `tools/mutate_ac5.js` | 11 | the browser descent test |
@@ -158,6 +159,16 @@ Two lessons from building them, kept because they generalise:
 - **A copy cannot test its original.** `chat_render.test.js` mirrors renderChat's
   logic, so deleting `escapeRegExp` from the real source left every test green. The
   source-level assertions were added afterwards for exactly that reason.
+- **A check that passes because nothing happened is worse than no check.** The
+  whisper probe's first run asserted "a bystander never sees the whisper" and got a
+  green tick — while the delivery check beside it was red, because the probe
+  whispered to `"Bob"` when the character was named `WhBob_xxxxx`. Nothing was sent
+  anywhere, so the privacy assertion was vacuous. It now requires proof that the
+  message was in flight first.
+- **A failing guard may be reporting on itself.** The whisper mutations showed a
+  removed dispatch would leave the feature looking healthy while broadcasting every
+  private message on the default channel. The server now refuses a whisper twice, by
+  two independent paths, and a mutation deletes the first to keep the second honest.
 
 ## Two things to decide
 

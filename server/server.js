@@ -57,6 +57,7 @@ function sweepAuthAttempts() {
 const RATELIMIT = require('./ratelimit');
 const TESTING = require('./testing');
 const AOI = require('./aoi');
+const WHISPER = require('./whisper');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -1356,12 +1357,50 @@ wss.on('connection', (ws) => {
                 if (data.text === '/guild accept') { GUILDS.acceptGuild(player); return; }
                 if (data.text.startsWith('/guild kick ')) { GUILDS.kickGuild(player, data.text.substring(12).trim()); return; }
                 if (data.text === '/guild leave') { GUILDS.leaveGuild(player); return; }
-                if (data.channel === 'guild' || data.text.startsWith('/g ')) { 
+                if (data.channel === 'guild' || data.text.startsWith('/g ')) {
                     if (!player.guild) return sendTo(player, { action: 'log', message: 'You are not in a guild.' });
                     const txt = data.text.startsWith('/g ') ? data.text.substring(3) : data.text;
-                    GUILDS.broadcastGuild(GUILDS.guilds.get(player.guild), txt, player.charName); 
-                    return; 
+                    GUILDS.broadcastGuild(GUILDS.guilds.get(player.guild), txt, player.charName);
+                    return;
                 }
+
+                // Private message (roadmap 6.1). Checked after the guild branch and
+                // before the channel whitelist, because /w is a command rather than a
+                // channel and would otherwise be rejected by the channel check.
+                //
+                // Two ways in: the "/w Name text" command, which needs no client
+                // support at all because the client relays typed text verbatim, and an
+                // explicit channel:'whisper' packet with a targetName for clients that
+                // prefer to be explicit.
+                const whisperLine = data.channel === 'whisper'
+                    ? (typeof data.targetName === 'string' ? `/w ${data.targetName} ${typeof data.text === 'string' ? data.text : ''}` : '')
+                    : data.text;
+                const whispered = WHISPER.whisper({
+                    text: whisperLine,
+                    sender: player,
+                    senderName: player.charName,
+                    lookup: findPlayerByName,
+                    sendTo,
+                    notify: (who, message) => sendTo(who, { action: 'log', message })
+                });
+                if (whispered.handled) return;
+
+                // Second barrier, and deliberately not equivalent to the first.
+                //
+                // If the dispatch above is ever removed or reordered, a line the
+                // player typed as private falls through to the ordinary chat path.
+                // The channel whitelist does not stop it: the default channel is
+                // 'global', so "/w Alice my password is hunter2" would be accepted
+                // and broadcast to every connected player. This is not a hypothetical
+                // -- a mutation that disables the dispatch above does exactly this,
+                // and the feature keeps "working", so nothing would report it.
+                //
+                // It reads as unreachable while the dispatch is intact. It is not
+                // dead code; it is the second of two independent guards on a privacy
+                // property, and it exists precisely for the case where the first one
+                // is gone. tools/mutate_whisper.js removes the dispatch to keep this
+                // honest.
+                if (WHISPER.parse(data.text)) return;
                 const text = typeof data.text === 'string' ? data.text.trim().slice(0, 240) : '';
                 const requestedChannel = typeof data.channel === 'string' ? data.channel.toLowerCase() : 'global';
                 const channel = requestedChannel === 'world' ? 'global' : requestedChannel;
