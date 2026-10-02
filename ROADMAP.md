@@ -61,7 +61,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 4.1 | Z=-3 floor | ⬜ | `Z_MIN` is already -3, so this is a `Z_FLOORS` entry. |
+| 4.1 | Z=-3 floor | ✅ | "The Frostmaw Warren", tier 5.5, 0.55 elite. `Z_MIN` already allowed it. Verified by `tests/bots/depth_probe.js` (16 topology checks: contiguous z, terrain, exits, standable tiles, arrival tiles, no oscillation). **The full-stack walk in a real browser is not yet covered** — see below. |
 | 4.2 | 5+ quest chains per region | 🔶 | King Arthur only. |
 | 4.3 | Dialogue trees for all 8 NPCs | 🔶 | King Arthur only; others fall back to a flat list. |
 | 4.4 | More mob types | ✅ | 6 types + 3 bosses + pack spawning. |
@@ -164,3 +164,27 @@ Two lessons from building them, kept because they generalise:
 2. **Cross-floor rules.** Unanswered for weeks: should trade and PvP require the
    same floor? Is chat global? The code currently permits both, and the cross-floor
    guards added for combat were not applied to trade.
+
+## Known gaps in this tracker
+
+Recorded rather than buried, because a status file that claims completeness is
+worse than none.
+
+**The three-floor walk is verified structurally, not by walking it.** The topology
+probe checks that every link between adjacent floors exists, that no exit has a
+matching transition above it, and that every transition tile and arrival tile is
+walkable. It does not walk. A browser version was written and reverted: it reached
+z=-1 and could not reliably click through to z=-2, and shipping a test I had not got
+passing would be worse than shipping none. The likely cause is that the deeper
+transitions sit inside populated caves, where the client's click can become an
+attack if a mob is on the tile. That is a real usability question for a player as
+much as a test one, and is worth investigating on its own.
+
+**Three floors, but the dungeon content does not scale with depth.** Floors -1 and
+-2 already existed and are lightly populated relative to the map; -3 adds 16 mobs in
+a 16x16 room. Difficulty rises with `tier` but density does not.
+
+**`descendsVia` in config.js is inert.** It is declared per floor and read by nothing.
+Transitions are derived in `map.js placeTraversalTiles()` by pairing adjacent floors.
+It reads like it controls how a floor is entered, and anyone trusting it will be
+wrong. Either implement it or delete it.

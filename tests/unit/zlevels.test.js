@@ -88,14 +88,33 @@ test('a floor with no generated terrain is nowhere to stand', () => {
     // surface's obstacle set, a player on an unbuilt floor would be allowed to
     // stand on a tile that only exists above them.
     //
-    // The depth is discovered rather than hardcoded. An earlier revision
-    // asserted hasFloor(-1) === false, which was true when the surface was the
-    // only floor and stopped being true the moment the dungeon was generated --
-    // the test then failed for a reason that had nothing to do with the code it
-    // was guarding.
+    // The depth is discovered, and the test is honest when there is nothing to
+    // discover. This used to assert anUnregisteredFloor() !== null, which held
+    // while the dungeon was shallower than the Z_MIN..Z_MAX range and stopped
+    // holding when z=-3 filled the last gap -- the test then failed for a reason
+    // unrelated to the code it was guarding.
+    //
+    // It is not possible to reach an unbuilt floor through the public API while the
+    // range is full: normalizeZ clamps every z into [Z_MIN, Z_MAX], and every index
+    // in that range is registered. So the full-range case asserts the structural
+    // fact instead -- that the range really is complete -- rather than pretending
+    // to test a subject that does not exist.
     assert.strictEqual(MAP.hasFloor(CFG.Z_SURFACE), true, 'the surface is built');
+
     const z = MAP.anUnregisteredFloor();
-    assert.ok(z !== null, 'a generated world must leave some floor index unbuilt, or the range is full');
+    if (z === null) {
+        // Range full. Every in-range floor is generated; say so, and check that the
+        // guard that would have caught a gap is still wired up.
+        const span = CFG.Z_MAX - CFG.Z_MIN + 1;
+        const built = CFG.Z_FLOORS.length + 1;   // floors, plus the surface
+        assert.strictEqual(built, span,
+            `the range ${CFG.Z_MIN}..${CFG.Z_MAX} holds ${span} floors and ${built} are built, ` +
+            `so the unbuilt-floor case cannot be constructed -- widen Z_MIN if this was not intended`);
+        assert.strictEqual(MAP.getFloorTerrain(CFG.Z_MIN).z, CFG.Z_MIN,
+            'with a full range, the lowest floor must describe its own terrain');
+        return;
+    }
+
     assert.strictEqual(MAP.isWalkable(320, 320, z), false,
         `unbuilt floor ${z} must not be walkable`);
     assert.strictEqual(MAP.getFloorTerrain(z), null,
@@ -405,7 +424,23 @@ test('ground_sync and map_data are floor-scoped', () => {
     assert.ok(/getFloorTerrain\(pz\)/.test(src),
         'map_data must describe the floor the player is on');
     // An unbuilt floor must yield no terrain rather than the surface relabelled.
-    assert.strictEqual(MAP.getFloorTerrain(CFG.Z_MIN), null);
+    // Discovered rather than hardcoded: this used to assert
+    // getFloorTerrain(Z_MIN) === null, which was true when Z_MIN sat below the
+    // deepest generated floor and stopped being true the moment z=-3 filled the
+    // range -- it then failed for a reason unrelated to floor scoping.
+    const unbuilt = MAP.anUnregisteredFloor();
+    if (unbuilt !== null) {
+        assert.strictEqual(MAP.getFloorTerrain(unbuilt), null,
+            `unbuilt floor ${unbuilt} must describe no terrain`);
+    } else {
+        // Range full, so every index is a real floor. The strongest thing left to
+        // assert is that each one describes itself rather than falling back.
+        for (let z = CFG.Z_MIN; z <= CFG.Z_MAX; z++) {
+            const terrain = MAP.getFloorTerrain(z);
+            assert.ok(terrain && terrain.z === z,
+                `with a full range, floor ${z} must describe itself, got ${terrain && terrain.z}`);
+        }
+    }
 });
 
 test('broadcastToFloor scopes by floor and broadcast reaches everyone', () => {

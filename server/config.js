@@ -58,8 +58,26 @@ module.exports = {
             mobCount: 14, tier: 4, eliteChance: 0.4,
             mobTypes: ['minotaur', 'skeleton', 'bear'],
             chestCount: 2,
-            // The deepest floor has nowhere below it, so the only way on is the
-            // ladder from the crypt above and the only way out is back up it.
+            // Reached from the Molten Depths by its own stair tile. The stair is a
+            // separate tile type from the surface's ladder on purpose: a ladder is
+            // something you climb down, a stair is a threshold you walk through, and
+            // conflating them was what made the two-floor traversal ambiguous.
+            descendsVia: 'stairs'
+        },
+        {
+            z: -3,
+            name: 'The Frostmaw Warren',
+            originX: 2816, originY: 1024,
+            tilesW: 16, tilesH: 16, pillars: 9,
+            // Tier 5.5 and a 0.55 elite chance: this is the floor a level-appropriate
+            // character is not supposed to survive casually, which is what makes it
+            // worth descending to. The Molten Depths at tier 4 is the last floor a
+            // mid-game character can clear unaided.
+            mobCount: 16, tier: 5.5, eliteChance: 0.55,
+            mobTypes: ['yeti', 'bear', 'minotaur', 'skeleton'],
+            chestCount: 4,
+            // The deepest floor. Nothing below it, so the stair from the Molten
+            // Depths is the only way on and the way back is the same tile.
             descendsVia: null
         }
     ],

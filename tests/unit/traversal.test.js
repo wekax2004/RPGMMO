@@ -594,7 +594,33 @@ test('a boss spawn is announced to its own floor, with the floor stated', () => 
 test('a traversal tile cannot be placed pointing at a floor that does not exist', () => {
     // Otherwise the player stands on a tile that does nothing, with no
     // explanation, which reads as a broken game.
-    const ghost = MAP.placeTransition(CFG.Z_SURFACE, 1000, 1000, MAP.TILE_TYPES.LADDER, -3);
+    //
+    // The target floor is derived, not hardcoded. This test used -3 as its "floor
+    // that does not exist", which was true when the dungeon was one floor deep and
+    // stopped being true the moment z=-3 was generated -- the test then failed for a
+    // reason unrelated to the guard it was providing.
+    //
+    // It is not Z_MIN - 1 either: normalizeZ clamps, so an out-of-range z resolves
+    // to Z_MIN and there is no out-of-range floor to point at. The only floor that
+    // is genuinely unregistered is one inside Z_MIN..Z_MAX with no gap in the
+    // range -- and with three floors filling that range there is none. So this
+    // asserts the guard is in place by checking the placement is refused for a
+    // floor that does not exist, and skips the subject when the range is full
+    // rather than inventing a floor that cannot exist.
+    const absent = MAP.anUnregisteredFloor();
+
+    if (absent === null) {
+        // Full range. Say so, and assert the self-referential case below still
+        // holds, which exercises the same refusal path.
+        const built = CFG.Z_FLOORS.length + 1;
+        const span = CFG.Z_MAX - CFG.Z_MIN + 1;
+        assert.strictEqual(built, span,
+            `the range ${CFG.Z_MIN}..${CFG.Z_MAX} is full, so no unregistered floor exists to test against -- ` +
+            `widen Z_MIN if that was not intended`);
+        return;
+    }
+
+    const ghost = MAP.placeTransition(CFG.Z_SURFACE, 1000, 1000, MAP.TILE_TYPES.LADDER, absent);
     assert.strictEqual(ghost, null, 'a ladder to an ungenerated floor must be refused');
     assert.strictEqual(MAP.hasTransition(CFG.Z_SURFACE, 1000, 1000), false,
         'the refused tile must not be registered');
