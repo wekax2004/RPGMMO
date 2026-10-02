@@ -27,6 +27,7 @@ const CFG = require('../../server/config');
 const RATELIMIT = require('../../server/ratelimit');
 
 const SERVER_JS = path.join(__dirname, '..', '..', 'server', 'server.js');
+const SOCIAL_JS = path.join(__dirname, '..', '..', 'server', 'social.js');
 const AUTH_JS = path.join(__dirname, '..', '..', 'server', 'auth.js');
 
 const WORLD = ['Bob', 'Alice', 'Carol'];
@@ -217,12 +218,21 @@ test('every refusal reason has a sentence for the player', () => {
 // --- the wiring --------------------------------------------------------------
 
 test('the three client actions are handled, and all three answer with the list', () => {
-    const src = fs.readFileSync(SERVER_JS, 'utf8');
-    assert.ok(/data\.action === 'friend_list_request'/.test(src));
-    assert.ok(/data\.action === 'friend_add'/.test(src));
-    assert.ok(/data\.action === 'friend_remove'/.test(src));
-    // The list is sent from one place, after any mutation, so the client never has to
-    // patch its own copy.
+    // server.js declares the dispatch; social.js implements it. Both are asserted,
+    // because a module that handles everything and is called by nothing behaves
+    // exactly like one that does not exist.
+    const dispatch = fs.readFileSync(SERVER_JS, 'utf8');
+    assert.ok(/SOCIAL\.SOCIAL_ACTIONS\.has\(data\.action\)/.test(dispatch),
+        'server.js must dispatch through SOCIAL.SOCIAL_ACTIONS');
+    assert.ok(/await SOCIAL\.handleSocial\(/.test(dispatch),
+        'the dispatch must be awaited: handleSocial is async, and not awaiting it ' +
+        'lets the packet handler continue to a later branch claiming the same action');
+
+    const src = fs.readFileSync(SOCIAL_JS, 'utf8');
+    for (const action of ['friend_list_request', 'friend_add', 'friend_remove']) {
+        assert.ok(new RegExp(`case '${action}'`).test(src) || src.includes(`'${action}'`),
+            `${action} must be handled`);
+    }
     assert.ok(/action: 'friends_list'/.test(src),
         'the client renders nothing for a packet whose action it does not recognise');
 });
@@ -231,27 +241,33 @@ test('the payload is built from the player list and the live online names', () =
     // Both halves, because either alone produces a plausible-looking empty list: a
     // payload built from an empty online set renders every friend as offline, and one
     // built from an empty friend list renders nobody. Neither errors.
-    const src = fs.readFileSync(SERVER_JS, 'utf8');
-    assert.ok(/FRIENDS\.describe\(player\.friends, onlineCharacterNames\(\)\)/.test(src),
+    const src = fs.readFileSync(SOCIAL_JS, 'utf8');
+    assert.ok(/FRIENDS\.describe\(player\.friends, ctx\.onlineCharacterNames\(\)\)/.test(src),
         'friends_list must be built from this player\'s own list and the live online names');
-    assert.ok(/function onlineCharacterNames\(\)/.test(src),
+    assert.ok(/function onlineCharacterNames\(\)/.test(
+        fs.readFileSync(SERVER_JS, 'utf8')),
         'online status must come from a helper that reads the live player map');
 });
 
 test('a mutation persists the character immediately', () => {
-    const src = fs.readFileSync(SERVER_JS, 'utf8');
-    // Bounded by this feature's own send, not by "// --- PARTY ACTIONS".
+    // Read from server/social.js, not server.js. The friend handlers moved there in
+    // roadmap 7.1 item 1, and a test that keeps reading the old file asserts against
+    // code that no longer exists -- which fails, loudly, but for the wrong reason.
     //
-    // The wider slice reached into the leaderboard / emote / inspect / guild-bank
-    // handlers that follow, and those call persistPlayer too -- so removing the save
-    // from the friend handler left the assertion satisfied by someone else's code. A
-    // test scoped to a region that has grown to contain other people's work stops
-    // asserting what it claims to.
-    const from = src.indexOf('// --- FRIEND LIST');
-    const to = src.indexOf("action: 'friends_list'", from);
-    assert.ok(from !== -1 && to !== -1, 'the friend handler block must exist');
-    const branch = src.slice(from, to);
-    assert.ok(/persistPlayer\(player\)/.test(branch),
+    // The wider slice this replaced reached into the leaderboard / emote / inspect /
+    // guild-bank handlers that followed, and those call persistPlayer too -- so
+    // removing the save from the friend handler left the assertion satisfied by
+    // someone else's code.
+    const src = fs.readFileSync(SOCIAL_JS, 'utf8');
+    // Scoped to the friend case, bounded by this module's own next case rather than
+    // the end of the file. An unscoped /persistPlayer/ also matches the guild-bank
+    // deposit further down, so deleting the friend save leaves another one behind
+    // and the mutation passes. That is the failure mode this whole test exists to
+    // prevent, and it reappears the moment a new persistPlayer call is added below.
+    const from = src.indexOf("case 'friend_list_request':");
+    const to = src.indexOf("case 'leaderboard_request':", from);
+    assert.ok(from !== -1 && to !== -1, 'the friend case block must exist in social.js');
+    assert.ok(/ctx\.persistPlayer\(player\)/.test(src.slice(from, to)),
         'a friend list that survives in memory but not across a restart is only ' +
         'noticed weeks later, by a player who has lost it');
 });

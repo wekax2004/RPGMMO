@@ -59,6 +59,7 @@ const TESTING = require('./testing');
 const AOI = require('./aoi');
 const WHISPER = require('./whisper');
 const FRIENDS = require('./friends');
+const SOCIAL = require('./social');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -1589,74 +1590,25 @@ wss.on('connection', (ws) => {
                 }
             }
 
-            // --- FRIEND LIST (roadmap 6.2) ---
-            // The client emits friend_list_request / friend_add / friend_remove and
-            // renders whatever comes back in a friends_list packet. All three are
-            // handled together so the list is sent from one place: the client's copy
-            // is correct after every mutation without it having to patch itself.
-            if (data.action === 'friend_list_request' || data.action === 'friend_add' || data.action === 'friend_remove') {
-                if (data.action !== 'friend_list_request') {
-                    const isAdd = data.action === 'friend_add';
-                    let result;
-                    if (isAdd) {
-                        // Existence is resolved against the database, not the live
-                        // player map. The map only holds connected characters, and
-                        // adding someone who is offline is the normal case -- the first
-                        // version used the online list and refused every friend added
-                        // after they logged off, which the probe caught when re-adding a
-                        // disconnected player failed.
-                        const target = typeof data.name === 'string' ? data.name.trim() : '';
-                        const legal = FRIENDS.isLegalName(target);
-                        // Live map first. A character that is connected certainly
-                        // exists, and asking the database about it is not merely slower
-                        // -- the write queue means a character who has just logged in
-                        // may have no persisted row yet, so a database-only check refuses
-                        // a friend who is standing right there.
-                        let exists = legal &&
-                            onlineCharacterNames().some(n => n.toLowerCase() === target.toLowerCase());
-                        if (legal && !exists) {
-                            try {
-                                // Then the database, which is the only place an offline
-                                // character can be found. Adding someone who is logged
-                                // off is the normal case, not an edge case.
-                                exists = !!(await DB.loadPlayer(target));
-                            } catch (e) {
-                                // A database failure must not read as "no such
-                                // character". Refusing the add would look like the name is
-                                // wrong; accepting it would put an unverified entry in
-                                // the list. Refusing with the honest reason is the safer of
-                                // the two, and the player can retry.
-                                exists = false;
-                            }
-                        }
-                        result = FRIENDS.add(player.friends, data.name, {
-                            selfName: player.charName,
-                            exists
-                        });
-                    } else {
-                        result = FRIENDS.remove(player.friends, data.name);
-                    }
-
-                    if (result.ok) {
-                        player.friends = result.list;
-                        // Persisted immediately. A friend list that survives in memory
-                        // but not across a restart is the kind of thing that is only
-                        // noticed weeks later, by a player who has lost the list.
-                        persistPlayer(player);
-                        sendTo(player, { action: 'log', message: isAdd ? `Added ${data.name} to your friends.` : `Removed ${data.name} from your friends.` });
-                    } else {
-                        // Every refusal has a sentence. "Nothing happened" for a list
-                        // the player believes they just edited is worse than an error.
-                        sendTo(player, { action: 'log', message: FRIENDS.MESSAGES[result.reason] || 'That did not work.' });
-                    }
-                }
-                sendTo(player, {
-                    action: 'friends_list',
-                    friends: FRIENDS.describe(player.friends, onlineCharacterNames())
+            // Social handlers: friend list, leaderboard, emotes, inspection, guild bank.
+            // Extracted to server/social.js; that file is where the reasoning lives.
+            //
+            // Before the channel whitelist and the party handlers, because /w and the
+            // friend actions are commands rather than channels and would otherwise be
+            // rejected by the channel check.
+            if (SOCIAL.SOCIAL_ACTIONS.has(data.action)) {
+                // Awaited, so the dispatch runs to completion before the handler
+                // returns. handleSocial is async because resolving whether a friend
+                // exists is a database read; not awaiting it would let the packet
+                // handler continue and potentially fall through to a later branch
+                // that claims the same action.
+                await SOCIAL.handleSocial({
+                    data, player, players, DB, GUILDS,
+                    sendTo, sendProtocolError, broadcastToFloor,
+                    persistPlayer, onlineCharacterNames
                 });
                 return;
             }
-
             // --- PARTY ACTIONS ---
             if (data.action === 'party_create') {
                 const existingParty = PARTY.getParty(playerId);

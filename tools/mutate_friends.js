@@ -21,6 +21,11 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const FRIENDS = 'server/friends.js';
 const SERVER = 'server/server.js';
+// The friend handlers moved out of server.js into server/social.js in roadmap 7.1
+// item 1. Mutations that inject into them have to target the new home, or they SKIP --
+// which counts as survived, because a mutation that silently stops testing anything
+// is worse than one that fails loudly.
+const SOCIAL = 'server/social.js';
 const RATELIMIT = 'server/ratelimit.js';
 const TEST = 'tests/unit/friends.test.js';
 
@@ -176,36 +181,44 @@ const MUTATIONS = [
     },
     {
         name: 'a friend mutation is not persisted, so it is lost on restart',
-        file: SERVER,
-        from: "                        persistPlayer(player);\n                        sendTo(player, { action: 'log', message: isAdd",
-        to: "                        sendTo(player, { action: 'log', message: isAdd"
+        file: SOCIAL,
+        // Scoped to the friend case block. An unscoped `ctx.persistPlayer(player)`
+        // anchor also matches the guild bank a few hundred lines down, so removing
+        // the friend save left another one behind and the mutation passed -- the same
+        // "my assertion is satisfied by someone else's code" mistake as before, one
+        // module over.
+        from: '                    player.friends = result.list;\n' +
+            '                    // Persisted immediately. A friend list that survives in memory but\n' +
+            '                    // not across a restart is the kind of thing only noticed weeks\n' +
+            '                    // later, by a player who has lost it.\n' +
+            '                    ctx.persistPlayer(player);',
+        to: '                    player.friends = result.list;\n' +
+            '                    /* no save */'
     },
     {
         name: 'friend_add stops being handled',
         file: SERVER,
-        from: "data.action === 'friend_list_request' || data.action === 'friend_add' || data.action === 'friend_remove'",
+        from: "SOCIAL.SOCIAL_ACTIONS.has(data.action)",
         to: "data.action === 'friend_list_request'"
     },
     {
         // A protocol break, not a stylistic one: the client keys its rendering off
         // this exact action name and renders nothing for a packet it does not know.
-        // Wrapping the send in `if (false)` was the first attempt and survived,
-        // because the existing assertion only checked the literal appears somewhere.
         name: 'the response action is renamed, so the client renders nothing',
-        file: SERVER,
-        from: "                    action: 'friends_list',",
-        to: "                    action: 'friends_list_v2',"
+        file: SOCIAL,
+        from: "                action: 'friends_list',",
+        to: "                action: 'friends_list_v2',"
     },
     {
         name: 'the payload is built from an empty list, so the client sees no friends',
-        file: SERVER,
-        from: 'friends: FRIENDS.describe(player.friends, onlineCharacterNames())',
+        file: SOCIAL,
+        from: 'friends: FRIENDS.describe(player.friends, ctx.onlineCharacterNames())',
         to: 'friends: []'
     },
     {
         name: 'online status is computed from an empty list, so everyone is offline',
-        file: SERVER,
-        from: 'friends: FRIENDS.describe(player.friends, onlineCharacterNames())',
+        file: SOCIAL,
+        from: 'friends: FRIENDS.describe(player.friends, ctx.onlineCharacterNames())',
         to: 'friends: FRIENDS.describe(player.friends, [])'
     },
     {

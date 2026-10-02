@@ -249,6 +249,26 @@ function listPlayers() {
         .then(rows => rows.map(row => row.char_name));
 }
 
+function getLeaderboard(limit = 100) {
+    // char_name is selected alongside state_json because the character's name is not
+    // inside state_json at all -- serializePlayer has no `name` field. Reading p.name
+    // from the parsed record therefore yielded undefined for every row, and the client
+    // renders this name beside the medal it awards.
+    return initialize().then(() => all('SELECT char_name, state_json FROM players'))
+        .then(rows => {
+            const players = rows.map(row => ({
+                name: row.char_name,
+                record: JSON.parse(row.state_json)
+            }));
+            players.sort((a, b) => (b.record.level || 1) - (a.record.level || 1));
+            return players.slice(0, limit).map(p => ({
+                name: p.name,
+                level: p.record.level || 1,
+                classType: p.record.classType || 'warrior'
+            }));
+        });
+}
+
 // --- accounts ------------------------------------------------------------
 
 function readCharacters(value) {
@@ -354,6 +374,7 @@ module.exports = {
     savePlayer,
     deletePlayer,
     listPlayers,
+    getLeaderboard,
     loadAccounts,
     getAccountById,
     getAccountByUsername,
