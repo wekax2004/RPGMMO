@@ -270,4 +270,28 @@ module.exports = {
     // שידור
     STATUS_BROADCAST_INTERVAL: 300,
     PLAYER_BROADCAST_INTERVAL: 200,
+
+    // Area of interest for the player roster (roadmap 7.2).
+    //
+    // Each client is sent only the players within this radius of itself, on its own
+    // floor, instead of the whole floor. Two reasons 1000:
+    //
+    //   - The camera is 640x480 (SCREEN_W/2 = 320, SCREEN_H/2 = 240), so the furthest
+    //     visible point is sqrt(320^2 + 240^2) = 400px away. 1000 leaves generous
+    //     margin for the player running off-centre before a peer drops out of the set.
+    //   - The minimap already filters other players at MINIMAP_RADIUS, which is 1000
+    //     (renderer.js:661). Using the same number means AoI cannot change what the
+    //     player sees on the minimap, and there is no second number to keep in sync.
+    //
+    // Set to 0 to restore the old behaviour of sending the entire floor. That is
+    // slower and is the pre-AoI path, kept so the optimisation can be turned off
+    // without a code change if a future feature turns out to need a global roster.
+    //
+    // The env override exists so a harness can measure both paths against each
+    // other rather than trusting a number calculated on paper. TIBIA_AOI_RADIUS=0
+    // is how tests/bots/aoi_probe.js establishes its "before" number.
+    AOI_RADIUS: (() => {
+        const fromEnv = Number.parseInt(process.env.TIBIA_AOI_RADIUS, 10);
+        return Number.isFinite(fromEnv) ? fromEnv : 1000;
+    })(),
 };

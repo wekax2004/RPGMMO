@@ -330,9 +330,39 @@ test('isMounted is persisted on both sides of the round trip', () => {
 
 test('isMounted is broadcast in players_sync', () => {
     const src = fs.readFileSync(SERVER_JS, 'utf8');
-    const sync = src.slice(src.indexOf("action: 'players_sync'") - 900, src.indexOf("action: 'players_sync'"));
-    assert.match(sync, /isMounted: p\.isMounted === true/,
-        'players_sync must carry isMounted so clients can render the rider');
+
+    // Anchored on the entry construction, not on a fixed number of characters
+    // before the send.
+    //
+    // This used to slice the 900 bytes preceding the first `action: 'players_sync'`
+    // and look for the flag inside. The AoI change put a fifteen-line explanatory
+    // comment between the entry construction and the send, so the window stopped
+    // reaching the flag and the test failed -- reporting a problem that was
+    // entirely about where a comment sits.
+    //
+    // A fixed-width window is the same fragility as a hardcoded line number: any
+    // edit above the assertion silently changes what is being inspected. Anchored
+    // on the construction, it inspects what it means to inspect.
+    const pushStart = src.indexOf('byFloor.get(floor).push({');
+    assert.notStrictEqual(pushStart, -1, 'the roster entry construction must exist');
+    const entry = src.slice(pushStart, src.indexOf('});', pushStart) + 3);
+    assert.match(entry, /isMounted: p\.isMounted === true/,
+        'the roster entry must carry isMounted so clients can render the rider');
+
+    // And that entry is the one that goes on the wire, from inside the tick that
+    // builds it -- under both the filtered path and the pre-AoI path.
+    const tickStart = src.indexOf('scheduleServerInterval(() => {\n    const now = Date.now();');
+    assert.ok(tickStart !== -1, 'the periodic roster tick must exist');
+    // Both offsets are into `src`. Comparing `tick.indexOf(pushStart)` would be
+    // comparing a slice-relative offset against a src-relative one, which is only
+    // meaningful by accident.
+    assert.ok(tickStart < pushStart,
+        'the entry construction must live inside the periodic roster tick');
+    const fromEntry = src.slice(pushStart);
+    assert.ok(/broadcastToFloor\(floor, \{ action: 'players_sync', players: list \}\)/.test(fromEntry),
+        'the pre-AoI path must still send the whole floor');
+    assert.ok(/players: AOI\.visibleTo\(viewer, list, CFG\.AOI_RADIUS\)/.test(fromEntry),
+        'the filtered path must send each viewer the entries constructed above');
 });
 
 test('damage dismounts via the tick HP snapshot, not 15 patched sites', () => {

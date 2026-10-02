@@ -52,7 +52,7 @@ Everything is environment variables. Nothing needs to be set to run locally.
 ## Tests
 
 ```powershell
-npm test                # 243 unit tests
+npm test                # 264 unit tests
 npm run test:baseline   # harness self-checks, 50-bot load
 npm run test:acceptance # 7 acceptance criteria
 npm run test:browser    # AC1-AC5 in a real browser
@@ -103,7 +103,7 @@ client/                 Browser client: HTML, CSS, three JS modules
 client/assets/          Sprites and tiles, 150 files, 97.8 MB (83% unused)
 server/                 Entry point plus 22 flat domain modules
 server/data/            Live database (gitignored)
-tests/unit/             243 unit tests
+tests/unit/             264 unit tests
 tests/browser/          Puppeteer acceptance tests, AC1-AC5
 tests/bots/             Headless WebSocket clients
 tools/                  Mutation harnesses, sprite pipeline, integrity guards

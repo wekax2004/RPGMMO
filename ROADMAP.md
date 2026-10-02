@@ -31,14 +31,14 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 |---|---|---|---|
 | 2.1 | Unique NPC sprites | 🔶 | King Arthur done (owner-generated AI art, tracked, provenance in CREDITS.md). Trainer Aria, Scout Elara, Hermit Frost, Sage Mordecai, Mayor Joe still reuse class sprites. |
 | 2.2 | Wire NPC sprites into `renderer.js` | ✅ | Name-based lookup at `renderer.js:253-260`. |
-| 2.3 | Terrain variation tiles | ⬜ | |
+| 2.3 | Terrain variation tiles | ✅ | Flowers and pebbles drawn procedurally on grass tiles. |
 | 2.4 | Dungeon ambiance / torch glow | ✅ | Floor-tinted background at `renderer.js:108`. |
 | 2.5 | Smooth movement interpolation | ✅ | `renderX`/`renderY` lerp. |
 | 2.6 | Idle animation frames | ⬜ | Single-frame sprites throughout. |
-| 2.7 | Death animation + particles | 🔶 | Particles exist (`renderer.js`); no fade-out or blood. |
+| 2.7 | Death animation + particles | ✅ | Blood particle explosion on death, plus death modal. |
 | 2.8 | Chest/loot spawn particles | ✅ | |
-| 2.9 | Water animation | ⬜ | |
-| 2.10 | Item icons for the inventory grid | ⬜ | Grid exists, text only. |
+| 2.9 | Water animation | ✅ | Oscillating wave effect added to renderer. |
+| 2.10 | Item icons for the inventory grid | ✅ | Emojis used for inventory cells and paperdoll. |
 
 ## Stage 3 — UI overhaul
 
@@ -52,9 +52,9 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 3.6 | Level-up celebration | ✅ | |
 | 3.7 | Death screen | ✅ | Covered by `tests/browser/test_class_preview.js`. |
 | 3.8 | Loading screen | ✅ | |
-| 3.9 | Responsive layout | 🔶 | Panels collapse; no media queries. |
+| 3.9 | Responsive layout | ✅ | CSS media queries + canvas click scaling. |
 | 3.10 | Character preview on class select | ✅ | **Was silently blank** until `test_class_preview.js` asserted on painted pixels. |
-| 3.11 | Settings panel | 🔶 | Modals exist; no volume sliders. |
+| 3.11 | Settings panel | ✅ | Volume slider wired up. |
 | 3.12 | World map (M) | ✅ | |
 
 ## Stage 4 — Content
@@ -103,7 +103,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | # | Task | Status | Notes |
 |---|---|---|---|
 | 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 lines → 2605: test actions extracted to `server/testing.js`, verified by `tests/bots/testing_actions_probe.js` (13 checks). Movement, combat, trade, guild, auction and bank branches remain inline. |
-| 7.2 | Spatial AoI | ⬜ | Full-floor roster every 200 ms. |
+| 7.2 | Spatial AoI | ✅ | **Players only.** `server/aoi.js`, radius 1000 = the minimap's own `MINIMAP_RADIUS`, so nothing visible changes. Measured over a real socket: **47,850 vs 93,480 bytes** for six bots in two clusters — 49% less. `tests/unit/aoi.test.js` (21), `tools/mutate_aoi.js` (15/15 + 1 documented no-op), `tests/bots/aoi_probe.js` (10, plus a control run). **Mobs are still full-floor** — the larger win, 44+ per floor. |
 | 7.3 | Rate limiting beyond auth | ✅ | `server/ratelimit.js`, 7 budget classes, Ollama bounded. 14 mutations + 6 wiring mutations. |
 | 7.4 | `ui.js` XSS audit | ✅ | Found a stored XSS in the auction renderer. `xss_sinks` (5) + `chat_render` (14), 16 mutations. |
 | 7.5 | TLS / WSS | ⬜ | Deployment concern; no config. |
@@ -116,13 +116,13 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 8.1 | Title screen | ⬜ | |
+| 8.1 | Title screen | ✅ | Exists in engine.js. |
 | 8.2 | Per-region music | 🔶 | One track per biome via `changeMusic`. |
 | 8.3 | Sound effects pass | 🔶 | ~8 SFX. |
 | 8.4 | Screen shake | ✅ | Boss impacts. |
 | 8.5 | Weather effects | ✅ | Rain/snow, `particleSetting`. |
-| 8.6 | Tutorial / onboarding | 🔶 | A first-login modal exists; not guided. |
-| 8.7 | Favicon + Open Graph | ⬜ | |
+| 8.6 | Tutorial / onboarding | ✅ | Guided modal added for new players. |
+| 8.7 | Favicon + Open Graph | ✅ | Emoji favicon + OG meta tags added. |
 | 8.8 | Performance profiling | ⬜ | |
 | 8.9 | Full playtest | ⬜ | |
 | 8.10 | Changelog page | ✅ | `client/changelog.html`. |
@@ -142,6 +142,8 @@ fails if the suite does not catch it.
 | `tools/mutate_ratelimit.js` | 14 | budget maths and classification |
 | `tools/mutate_ratelimit_wiring.js` | 6 | that the limiter is actually *called* |
 | `tools/mutate_class_preview.js` | 9 + 1 no-op | painted pixels and the death screen |
+| `tools/mutate_aoi.js` | 15 + 1 no-op | the area-of-interest filter, its wiring, and the client prune it depends on |
+| `tools/selftest_update_doc_counts.js` | 10 | that the doc-count fixer cannot rewrite a number it was not asked about |
 | `tools/mutate_zlevels.js` | 21 | floor scoping |
 | `tools/mutate_ac5.js` | 11 | the browser descent test |
 
@@ -188,3 +190,13 @@ a 16x16 room. Difficulty rises with `tier` but density does not.
 Transitions are derived in `map.js placeTraversalTiles()` by pairing adjacent floors.
 It reads like it controls how a floor is entered, and anyone trusting it will be
 wrong. Either implement it or delete it.
+
+**AC5 (browser descent) currently fails, and it is not the server's fault.** Proven by
+A/B: with `server/server.js`, `server/config.js` and `tests/browser/test_descent.js`
+all reverted to HEAD, leaving only the frontend session's uncommitted client changes
+(`style.css`, `engine.js`, `renderer.js`, `ui.js`), the test still fails; with
+everything at HEAD it passes. The likely cause is their responsive-layout CSS —
+`@media (max-width: 1300px)` sets `#gameCanvas { margin: 0 auto; display: block;
+max-width: 100vw; height: auto; }` and the test viewport is 1280x720, so the query is
+active in tests. Left for the frontend session to own; not worked around here, because
+a workaround in the test would hide a real layout problem from them.

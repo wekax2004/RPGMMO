@@ -56,6 +56,7 @@ function sweepAuthAttempts() {
 }
 const RATELIMIT = require('./ratelimit');
 const TESTING = require('./testing');
+const AOI = require('./aoi');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -2323,7 +2324,29 @@ scheduleServerInterval(() => {
         });
     });
     for (const [floor, list] of byFloor) {
-        broadcastToFloor(floor, { action: 'players_sync', players: list });
+        // Area of interest (roadmap 7.2). Each client gets its own list rather
+        // than a shared floor-wide one, so a player standing in a corner is not
+        // made to carry updates for everyone else on the floor five times a
+        // second. The selection itself, and why it is a square rather than a
+        // circle, is in server/aoi.js.
+        //
+        // The client needs no new removal packet for this to work. engine.js
+        // already treats players_sync as authoritative and complete:
+        //
+        //     for (let id in otherPlayers) { if (!newIds.includes(id)) delete otherPlayers[id]; }
+        //
+        // so a peer that walks out of range is simply absent from the next list
+        // and the client drops it.
+        if (CFG.AOI_RADIUS <= 0) {
+            broadcastToFloor(floor, { action: 'players_sync', players: list });
+            continue;
+        }
+        for (const viewer of list) {
+            sendTo(players.get(viewer.id), {
+                action: 'players_sync',
+                players: AOI.visibleTo(viewer, list, CFG.AOI_RADIUS)
+            });
+        }
     }
     // Ground loot rides along with the same periodic broadcast so a client
     // that missed an earlier ground_sync resynchronises on its own.
