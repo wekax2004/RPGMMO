@@ -102,7 +102,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 lines → 2605: test actions extracted to `server/testing.js`, verified by `tests/bots/testing_actions_probe.js` (13 checks). Movement, combat, trade, guild, auction and bank branches remain inline. |
+| 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 lines → 2605 (testing.js) → **2853** (AoI + mobs landed since): social handlers extracted to `server/social.js`, verified by `tests/bots/social_probe.js` (10 checks). Remaining: `testing.js` extension, `combat.js` (~260), `world.js` (~200, tick/traversal — most invariant-dense, may be deferred). `server.js` stays the entry point owning sockets, tick and player state; dependencies reach it via a `ctx` object rather than imports, so nothing mutable is exported. |
 | 7.2 | Spatial AoI | ✅ | **Players and mobs.** Players: `server/aoi.js`, radius 1000 = the minimap's own `MINIMAP_RADIUS`, so nothing visible changes. Measured over real sockets: **47,850 vs 93,480 bytes**, 49% less. Mobs: **SHIPPED OFF** — see below. |
 | 7.3 | Rate limiting beyond auth | ✅ | `server/ratelimit.js`, 7 budget classes, Ollama bounded. 14 mutations + 6 wiring mutations. |
 | 7.4 | `ui.js` XSS audit | ✅ | Found a stored XSS in the auction renderer. `xss_sinks` (5) + `chat_render` (14), 16 mutations. |
@@ -184,18 +184,22 @@ Two lessons from building them, kept because they generalise:
 Recorded rather than buried, because a status file that claims completeness is
 worse than none.
 
-**Mob AoI is implemented and verified, but ships disabled** (`MOB_AOI_RADIUS: 0`).
-Turning it on needs one line in `client/js/engine.js` to handle the new `mob_forget`
-packet. It cannot reuse `mob_update` with `alive:false`, because that means "died" to
-the client and now plays a blood-burst particle effect — walking out of range would
-spray blood every time a player turned around. So the server half is committed,
-feature-flagged and inert, and `tests/unit/mob_aoi.test.js` asserts the two halves
-agree: when the client gains the handler, that test fails and the default is flipped
-deliberately. Enable with `TIBIA_MOB_AOI_RADIUS=1000` to try it.
+**Mob AoI is implemented and verified, and ships ON** (`MOB_AOI_RADIUS: 1000`).
+It was three commits ago shipped disabled, pending one line in `client/js/engine.js`
+to handle the new `mob_forget` packet. It cannot reuse `mob_update` with
+`alive:false`, because that means "died" to the client and plays a blood-burst
+particle effect - walking out of range would spray blood every time a player turned
+around. The frontend session added the handler, `tests/unit/mob_aoi.test.js` asserts
+the two halves agree, and the default was then flipped deliberately rather than by
+accident. Set `TIBIA_MOB_AOI_RADIUS=0` to get the unfiltered behaviour back.
 Measured, same probe both modes: **883 bytes / 5 mobs** filtered vs **6,750 bytes /
 46 mobs** unfiltered on the surface. The two runs are separately seeded worlds, so
-the ratio is indicative — the controlled version spawns a mob at a known 200px and
+the ratio is indicative - the controlled version spawns a mob at a known 200px and
 2500px and asserts on arrival.
+
+Known limitation, not yet fixed: the `mob_forget` handler in `client/js/engine.js`
+does not clear `currentTargetId`. A mob that walks out of range while selected stays
+selected in the HUD.
 
 **AoI for bosses, corpses and gathering nodes is not done.** Bosses are three types
 with one lair each, so filtering saves nothing measurable and `bosses.js` broadcasts
@@ -221,12 +225,52 @@ Transitions are derived in `map.js placeTraversalTiles()` by pairing adjacent fl
 It reads like it controls how a floor is entered, and anyone trusting it will be
 wrong. Either implement it or delete it.
 
-**AC5 (browser descent) currently fails, and it is not the server's fault.** Proven by
-A/B: with `server/server.js`, `server/config.js` and `tests/browser/test_descent.js`
-all reverted to HEAD, leaving only the frontend session's uncommitted client changes
-(`style.css`, `engine.js`, `renderer.js`, `ui.js`), the test still fails; with
-everything at HEAD it passes. The likely cause is their responsive-layout CSS —
-`@media (max-width: 1300px)` sets `#gameCanvas { margin: 0 auto; display: block;
-max-width: 100vw; height: auto; }` and the test viewport is 1280x720, so the query is
-active in tests. Left for the frontend session to own; not worked around here, because
-a workaround in the test would hide a real layout problem from them.
+**AC5 (browser descent) currently fails, and the cause is a fountain - not the CSS.**
+An earlier version of this entry blamed the frontend session's responsive-layout CSS.
+**That was wrong**, and the correction is worth keeping because the CSS theory was
+stated twice with confidence before it was ever tested.
+
+The real cause is an uncommitted `server/map.js` change that builds a starting town,
+which places water tiles at (288,288), (320,288), (288,320) and (320,320):
+```js
+obstacles.add(`288,288`); obstacleData.push({x: 288, y: 288, type: 'water'});
+```
+`CFG.LADDER_X` and `CFG.LADDER_Y` are both 288, so the town fountain lands exactly on
+the surface ladder. `MAP.isWalkable(288,288,0)` returns false, `getFloor(0).obstacles`
+contains the tile, and the descent cannot be triggered at all. Measured, all three
+consequences:
+```
+isWalkable(ladder)     false        <- the ladder is an obstacle
+isWalkable(320,320)    false        <- spawn point is inside the fountain too
+hasWaterNear(spawn,128) 3           <- so the spawn point is fishable
+```
+The third line is why `tests/unit/auction_mount_fish.test.js:397` fails ("spawn must
+not be fishable") and the first two are why `tests/unit/traversal.test.js:47` and
+`:125` fail. The `zlevels` mutation harness aborts outright for the same reason: it
+refuses to report "caught" against a red baseline.
+
+Proof it is the only cause: with `server/map.js` reverted and nothing else touched,
+the full unit suite is 340/340 stable over three consecutive runs and the `zlevels`
+harness reports 21/21. With the fountain present, the same tree is 337/340 and the
+failing three are exactly those three assertions.
+
+The fix is not mine to choose - where the town goes is a design decision. Two options:
+move the fountain off (288,288), or call `placeTraversalTiles()` *after* the town is
+built so transitions can clear their own tile. The second is the more robust one,
+because it makes any future decorative build unable to bury a ladder.
+
+**The browser suite runs again.** `client/js/renderer.js` used to throw a
+`SyntaxError: Identifier 'nowTime' has already been declared` (a `const` against a
+`let`), which made every module importing it fail to load. The frontend session fixed
+it; `node --check` passes and there is now a single `nowTime` at L382. AC5 therefore
+fails for the fountain reason above and nothing else, which the run confirms directly:
+
+```
+✓ the client knows the ladder is a way down ([{"x":288,"y":288,"type":"ladder","to":-1}])
+✗ the second watcher walked down to the dungeon too (blocked at 320,320,z=0)
+```
+
+The client is told the ladder exists and can see it in its terrain, but cannot walk
+onto it, because the tile is an obstacle. The second watcher is a second, stronger
+symptom: it spawns at (320,320), which is also a fountain tile, and cannot move off
+it at all. A player logging in right now lands inside an obstacle.
