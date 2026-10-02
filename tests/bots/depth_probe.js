@@ -24,25 +24,26 @@
  *      a wall, being killed by tier-2.5 mobs, and respawning on the surface. Which
  *      is why this file does not walk.
  *
- * Run: node tests/bots/depth_probe.js --port=8146
+ * Run: node tests/bots/depth_probe.js
  */
-let WS;
-try {
-    WS = require('ws');
-} catch (e) {
-    WS = require('../../server/node_modules/ws');
-}
-
+/*
+ * No socket, no ws dependency. The topology is a pure function of config and the
+ * generated map, so reading server/map.js directly is both cheaper and more honest
+ * than driving a character there. An earlier version of this file opened a
+ * WebSocket and required ws -- and then failed with "Cannot find module
+ * '../../server/node_modules/ws'" in a freshly cloned tree that had not run
+ * npm install yet, for a probe that never sent a packet.
+ */
 function readPort(argv) {
     const eq = argv.find(a => a.startsWith('--port='));
     if (eq) return Number(eq.split('=')[1]);
     const i = argv.indexOf('--port');
     if (i > -1 && argv[i + 1]) return Number(argv[i + 1]);
-    const env = Number(process.env.PROBE_PORT);
-    return Number.isFinite(env) && env > 0 ? env : 8146;
+    return 0;
 }
 
-const PORT = readPort(process.argv.slice(2));
+// Accepted and ignored, so the documented invocation still works.
+readPort(process.argv.slice(2));
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 let failures = 0;
@@ -57,7 +58,7 @@ function check(name, ok, detail) {
  * nothing but flakiness -- this is a question about the server's own data.
  */
 async function main() {
-    console.log(`=== dungeon depth topology (port ${PORT}) ===\n`);
+    console.log('=== dungeon depth topology ===\n');
     const CFG = require('../../server/config');
     const MAP = require('../../server/map');
 
