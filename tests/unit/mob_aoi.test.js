@@ -314,10 +314,16 @@ test('mob AoI is enabled only while the client can forget a mob', () => {
         'Enable one without the other and either clients accumulate frozen ghost mobs ' +
         '(handler missing) or the optimisation is silently inert (default left at 0).');
 
-    if (!clientHandlesForget) {
-        // The stronger half when it is off: the handler must not be re-routed through
-        // the death branch, which is the blood-burst path this packet exists to avoid.
-        assert.ok(!/mob_forget/.test(engine) || !/mob_update" && data\.alive === false/.test(engine),
+    if (clientHandlesForget) {
+        // The stronger half when it is on: the handler must actually delete the mob,
+        // and must not reuse the death branch -- which is the blood-burst path this
+        // packet exists to avoid.
+        const at = engine.indexOf('"mob_forget"');
+        const branch = engine.slice(at, at + 240);
+        assert.match(branch, /delete mobs\[data\.id\]/,
+            'mob_forget must remove the mob from the client cache, or every mob a ' +
+            'player walks past stays on their screen forever');
+        assert.ok(!/alive\s*:\s*false/.test(branch),
             'mob_forget must not be routed through the death branch');
     }
 });

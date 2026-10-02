@@ -303,21 +303,37 @@ module.exports = {
         return Number.isFinite(fromEnv) ? fromEnv : 1000;
     })(),
 
-    // MOB AOI IS CURRENTLY OFF, because the client's mob_forget handler is missing.
+    // Area of interest for the mob roster (roadmap 7.2, mobs).
     //
-    // It was enabled once, when the handler was added. A later frontend rewrite of the
-    // packet handler in engine.js removed it, and tests/unit/mob_aoi.test.js failed on
-    // exactly that -- which is what the gate was built for. Left enabled, every client
-    // would accumulate a frozen ghost of every mob it had ever passed, with nothing in
-    // any log to say so.
+    // ENABLED. The client half arrived first, on its own, and the default was left at
+    // 0 until it did -- because this feature cannot be half-enabled.
     //
-    // Re-enabling needs two things together: this default back at 1000, AND the
-    // mob_forget branch back in client/js/engine.js. The test compares the two states
-    // directly, so doing only one of them fails the build.
+    // Removing a mob that has left the radius cannot reuse the existing way to drop one
+    // from the client's cache -- mob_update with `alive: false` -- because that also
+    // means "died" to the client, and the death branch plays a fifteen-particle blood
+    // burst. Walking out of range would spray blood at the player every time they
+    // turned around. So removal needs its own packet, and that needs a
+    // `mob_forget` branch in client/js/engine.js.
     //
-    // TIBIA_MOB_AOI_RADIUS=1000 exercises it without changing the default.
+    // That gate has now fired in both directions, which is what it is for:
+    //
+    //   - enabled here while the handler was missing, on the assumption it was coming
+    //   - the handler was then removed by an unrelated rewrite, and this reverted to 0
+    //   - the handler is back, and this is 1000 again
+    //
+    // tests/unit/mob_aoi.test.js asserts the two halves agree, so neither state can be
+    // reached by changing only one of them. The failure is invisible otherwise: no
+    // error, no log line, just a ghost per mob per client.
+    //
+    // Its own knob rather than sharing AOI_RADIUS, because the two roll back
+    // independently. A player you cannot see is a social problem; a mob you cannot see
+    // is an invisible-attacker problem.
+    //
+    // SAFETY INVARIANT, also asserted: this radius must stay above AGGRO_RANGE (400)
+    // and the boss aggro range (600). Below either, a mob can start hitting a player
+    // who cannot see it, which is worse than the bandwidth this saves.
     MOB_AOI_RADIUS: (() => {
         const fromEnv = Number.parseInt(process.env.TIBIA_MOB_AOI_RADIUS, 10);
-        return Number.isFinite(fromEnv) ? fromEnv : 0;
+        return Number.isFinite(fromEnv) ? fromEnv : 1000;
     })(),
 };

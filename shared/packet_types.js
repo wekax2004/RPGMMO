@@ -11,7 +11,7 @@
  * which is exactly what happened when the list was maintained by hand: it
  * listed actions the server never handled and missed every feature added since.
  *
- * Generated: 61 inbound, 69 outbound.
+ * Generated: 66 inbound, 72 outbound.
  */
 
 const PACKET = {
@@ -38,13 +38,18 @@ const PACKET = {
         CRAFT_ITEM: 'craft_item',
         DIALOGUE_CHOICE: 'dialogue_choice',
         DROP_ITEM: 'drop_item',
+        EMOTE: 'emote',
         EQUIP_ITEM: 'equip_item',
         EVOLVE: 'evolve',
         FISH: 'fish',
         FRIEND_ADD: 'friend_add',
         FRIEND_LIST_REQUEST: 'friend_list_request',
         FRIEND_REMOVE: 'friend_remove',
+        GUILD_BANK_DEPOSIT: 'guild_bank_deposit',
+        GUILD_BANK_WITHDRAW: 'guild_bank_withdraw',
+        INSPECT_PLAYER: 'inspect_player',
         INTERACT_CORPSE: 'interact_corpse',
+        LEADERBOARD_REQUEST: 'leaderboard_request',
         LOGIN: 'login',
         MOVE: 'move',
         OPEN_CRAFTING: 'open_crafting',
@@ -109,8 +114,11 @@ const PACKET = {
         GROUND_SYNC: 'ground_sync',
         GUILD_INVITED: 'guild_invited',
         GUILD_SYNC: 'guild_sync',
+        INSPECT_PLAYER_RESULT: 'inspect_player_result',
+        INVENTORY_SYNC: 'inventory_sync',
         INVENTORY_UPDATE: 'inventory_update',
         ITEM_DICT: 'item_dict',
+        LEADERBOARD_RESULT: 'leaderboard_result',
         LOG: 'log',
         LOGIN_ERROR: 'login_error',
         LOGIN_FAIL: 'login_fail',

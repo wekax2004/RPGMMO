@@ -68,7 +68,7 @@ directly testable because none of them require a socket.
 
 | Path | What it does |
 |---|---|
-| `tests/unit/` | 311 unit tests across 18 files. `npm test` |
+| `tests/unit/` | 340 unit tests across 19 files. `npm test` |
 | `tests/e2e_runner.js` | Master runner: `--suite=baseline\|acceptance\|browser\|bots` |
 | `tests/browser/` | Puppeteer acceptance tests, AC1–AC5 |
 | `tests/bots/` | Headless WebSocket clients: 50-bot load, party chat, persistence |
@@ -101,7 +101,7 @@ are small diagnostics run individually rather than as suite members.
 ```
 npm install
 npm start          # server on :8080
-npm test           # 311 unit tests
+npm test           # 340 unit tests
 ```
 
 `server/` has its own `package.json` and needs `npm install` in that directory
@@ -170,10 +170,10 @@ tibia_mmo/
 │   ├── js/engine.js           # socket, packets, input, movement, player state
 │   ├── js/renderer.js         # canvas drawing, sprites, minimap, Z-level light
 │   ├── js/ui.js               # panels, chat, trade window, inventory
-│   └── assets/                # 150 files, 97.8 MB (81.1 MB loaded by nothing)
+│   └── assets/                # 150 files, 97.8 MB (81.5 MB loaded by nothing)
 ├── tests/
 │   ├── e2e_runner.js          # master runner for all four suites
-│   ├── unit/                  # 311 tests across 18 files
+│   ├── unit/                  # 311 tests across 19 files
 │   ├── browser/               # AC1-AC5, driver, canvas inspector
 │   ├── bots/                  # bot client, 50-bot load, party chat, persistence
 │   └── lib/                   # server controller, preload, test framework
@@ -289,7 +289,7 @@ Ordered roughly by cost to fix.
    one. That is deliberate -- cancelling mid-generation would leave the local
    model in an unknown state -- but it means the worst case is
    MAX_CONCURRENT generations plus whatever a single 45s generation costs.
-4. **81.1 MB of the 97.8 MB committed in `client/assets/` is loaded by nothing**
+4. **81.5 MB of the 97.8 MB committed in `client/assets/` is loaded by nothing**
    — 83%. Most of that is benign (the magenta sources the sprite pipeline
    consumes, 9.5 MB; timestamped duplicates, 4.9 MB; superseded leftovers,
    10.4 MB). Run `python tools/audit_unreferenced_assets.py --list`.

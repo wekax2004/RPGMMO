@@ -117,8 +117,28 @@ const MUTATIONS = [
     {
         name: 'the guild member list stops escaping names',
         file: ENGINE,
-        from: 'myGuild.members.forEach(m => h += "- " + escapeHtml(m) + "<br/>");',
-        to: 'myGuild.members.forEach(m => h += "- " + m + "<br/>");'
+        // Rewritten from a one-line `h += "- " + escapeHtml(m) + "<br/>"` into a
+        // multi-line block that also renders rank icons and promote/demote/kick
+        // buttons, so the old anchor stopped existing. This targets the name in the
+        // visible label, which is the part that actually reaches the reader.
+        from: '<span style="font-size:12px; color:#e2e8f0;">${rankIcon} ${escapeHtml(mName)}</span>',
+        to: '<span style="font-size:12px; color:#e2e8f0;">${rankIcon} ${mName}</span>'
+    },
+    {
+        // Proves the `btns` allowlist entry is not a hole. That entry exists because
+        // the guild button row is a template literal built from three already-escaped
+        // bindings, and an allowlist entry cannot see reassignment -- so if someone
+        // later swaps one of those interpolations back to the raw name, this must go red.
+        name: 'a guild button interpolates the raw member name again',
+        file: ENGINE,
+        from: 'onclick="window.ws.send(${promCmd})"',
+        to: 'onclick="window.ws.send(JSON.stringify({action:\'chat\', text:\'/guild promote \' + \'${mName}\'}))"'
+    },
+    {
+        name: 'a guild command stops being JSON-encoded before the attribute',
+        file: ENGINE,
+        from: 'const promCmd = escapeHtml(JSON.stringify({action:\'chat\', text:\'/guild promote \' + mName}));',
+        to: 'const promCmd = mName;'
     },
     {
         name: 'the bank item list stops escaping names',

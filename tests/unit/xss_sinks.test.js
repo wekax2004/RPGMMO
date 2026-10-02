@@ -48,6 +48,32 @@ const ALLOWED_BARE = new Map([
     // Pre-escaped in engine.js: `const escK = escapeHtml(k).replace(/'/g, '&#39;')`.
     ['escK', 'already escaped at definition, then quote-escaped for the attribute'],
     ['escS', 'already escaped at definition'],
+    // Guild rank icon, engine.js:
+    //     const rankIcon = mName === myGuild.leader ? "<emoji>" : (mRank === "officer" ? "<emoji>" : "<emoji>");
+    // A ternary whose every arm is a literal emoji, chosen by comparing two values.
+    // No interpolation, no concatenation, no call -- there is no path by which a
+    // character name could reach it.
+    ['rankIcon', 'a ternary of literal emoji strings, selected by comparison'],
+    // Guild promote/demote/kick buttons, engine.js:
+    //     const promCmd = escapeHtml(JSON.stringify({action:'chat', text:'/guild promote ' + mName}));
+    //     ... then interpolated into onclick="${promCmd}"
+    // JSON.stringify is what makes the name safe in a JS-string-inside-an-attribute:
+    // it quotes and escapes the value, and escapeHtml then escapes the result for the
+    // HTML attribute around it. Both steps are present; the name cannot break out.
+    // The button row the three escaped commands are assembled into.
+    //
+    // promCmd, demCmd and kickCmd are deliberately NOT listed here. Each is assigned
+    // from escapeHtml(JSON.stringify(...)), which trustedBindings already recognises
+    // and -- crucially -- checks at the point of assignment. Listing them by name made
+    // the guard trust the *name* rather than the value, and a mutation setting
+    // `promCmd = mName` survived it: the allowlist said yes regardless of what the
+    // variable held. That is the wrong way round for a security rule.
+    //
+    // btns does need an entry, because it is a template literal assembled inside an if
+    // and so is disqualified by the reassignment guard. It is the weakest entry here
+    // for the same reason, so tools/mutate_xss.js swaps one of its interpolations back
+    // to the raw member name and requires this suite to go red.
+    ['btns', 'a template literal composed only of promCmd/demCmd/kickCmd, each escaped'],
     // Counts and indices derived from array lengths.
     ['pct', 'numeric percentage, computed then clamped'],
     ['qty', 'stack count'],

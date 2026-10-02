@@ -204,11 +204,16 @@ const MUTATIONS = [
         // accumulates a frozen ghost of every mob it has passed -- so removing this
         // branch must break the build.
         //
-        // The earlier version of this mutation added the handler, and survived: by
-        // then the handler already existed, so adding a second copy changed nothing.
+        // Anchored on the whole branch including its guard. The handler was rewritten
+        // once already, from a bare `delete` to a guarded
+        // `if (data.id && mobs[data.id])`, and both earlier anchors stopped matching.
         name: 'the client stops handling mob_forget, leaving every client with ghost mobs',
         file: ENGINE,
-        from: '            else if (data.action === "mob_forget") {\n                delete mobs[data.id];\n                if (currentTargetId === data.id) currentTargetId = null;\n            }',
+        from: '            else if (data.action === "mob_forget") {\n' +
+            '                if (data.id && mobs[data.id]) {\n' +
+            '                    delete mobs[data.id];\n' +
+            '                }\n' +
+            '            }',
         to: '            // mob_forget handler removed'
     },
     {
@@ -216,8 +221,8 @@ const MUTATIONS = [
         // is the blood-burst path this packet was written to avoid.
         name: 'mob_forget is routed through the death branch, restoring the blood burst',
         file: ENGINE,
-        from: '            else if (data.action === "mob_forget") {\n                delete mobs[data.id];',
-        to: '            else if (data.action === "mob_update" && data.alive === false) {\n                delete mobs[data.id];'
+        from: '            else if (data.action === "mob_forget") {',
+        to: '            else if (data.action === "mob_update" && data.alive === false) {'
     }
 ];
 
