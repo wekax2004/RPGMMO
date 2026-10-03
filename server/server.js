@@ -2223,7 +2223,27 @@ scheduleServerInterval(() => {
             // boolean so the client never has to reason about the timer.
             skulled: hasActiveSkull(p, now),
             isMounted: p.isMounted === true,
-            guild: p.guild || null
+            guild: p.guild || null,
+            // Status effects for everyone else (roadmap 5.4). The renderer has read
+            // `poison`, `bleed` and `stun` off other players since before this
+            // existed -- renderer.js draws the marker from exactly these three
+            // fields -- so the renderer was ready and the roster was simply not
+            // carrying them. Only the local player's own HUD showed them, which
+            // meant a poisoned opponent looked completely healthy to everyone
+            // watching the fight.
+            //
+            // `stun` is a boolean rather than a timestamp for the same reason
+            // `skulled` is: the client must not have to reason about a timer to
+            // know whether to draw a marker, and a stale timestamp would keep the
+            // marker lit after the stun had ended.
+            //
+            // Coerced to numbers and a boolean, so a player object that somehow
+            // lacks the field sends 0/false rather than undefined, which would
+            // make `op.poison > 0` false anyway but `op.stun` render as a truthy
+            // marker in any consumer that is not careful.
+            poison: (p.poisonStacks || 0) > 0 ? p.poisonStacks : 0,
+            bleed: (p.bleedStacks || 0) > 0 ? p.bleedStacks : 0,
+            stun: (p.stunUntil || 0) > now
         });
     });
     for (const [floor, list] of byFloor) {
