@@ -62,6 +62,7 @@ const FRIENDS = require('./friends');
 const SOCIAL = require('./social');
 const GROUPING = require('./grouping');
 const COMBAT_ACTIONS = require('./combat_actions');
+const INVENTORY = require('./inventory');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -1782,98 +1783,21 @@ wss.on('connection', (ws) => {
                 }
             }
             
-            if (data.action === 'drop_item') {
-                // Accept either field name so the client can use whichever it
-                // already has a control for.
-                const raw = typeof data.item === 'string' ? data.item
-                    : (typeof data.itemName === 'string' ? data.itemName : '');
-                const item = raw.slice(0, 100);
-                if (!item) {
-                    sendProtocolError(player, 'No item specified.');
-                    return;
-                }
-                const index = player.inventory.indexOf(item);
-                if (index === -1) {
-                    sendProtocolError(player, 'You do not own that item.');
-                    return;
-                }
-                if (groundItems.size >= CFG.GROUND_MAX_ITEMS) {
-                    sendProtocolError(player, 'The ground is too littered to drop more.');
-                    return;
-                }
-                // Exactly one instance leaves the inventory, and the drop lands
-                // on the tile the server believes the player occupies.
-                player.inventory.splice(index, 1);
-                const id = 'gi_' + groundItemCounter++;
-                // The drop records the floor it was made on. Without it the entry
-                // had no z at all, and both ends of that were wrong in opposite
-                // directions: a dungeon player could never pick up their own
-                // drop, because dist3D compared z = -1 against a missing value
-                // that normalised to the surface and returned Infinity, while a
-                // surface player at the same X/Y could take a dungeon item
-                // through the rock.
-                groundItems.set(id, {
-                    id,
-                    name: item,
-                    x: player.x,
-                    y: player.y,
-                    z: MAP.normalizeZ(player.z),
-                    ownerId: player.id,
-                    droppedAt: Date.now(),
-                    expiresAt: Date.now() + CFG.GROUND_ITEM_TTL_MS
+            // --- INVENTORY, EQUIPMENT and GROUND ITEMS ---
+            // Extracted to server/inventory.js. That file holds the reasoning
+            // about one-copy removal, the ground-item floor record, and why
+            // toggle_mount is here rather than with the movement code.
+            if (INVENTORY.INVENTORY_ACTIONS.has(data.action)) {
+                INVENTORY.handleInventory({
+                    data, player, now,
+                    CFG, MAP, ITEMS, groundItems,
+                    nextGroundItemId: () => 'gi_' + groundItemCounter++,
+                    sendTo, sendProtocolError, broadcast, broadcastToFloor,
+                    dist3D, resolveGroundTarget, broadcastGroundSync,
+                    sendPlayerStatus, recalcPlayerStats,
+                    mountPlayer, dismountPlayer
                 });
-                player.persistenceDirty = true;
-                broadcastGroundSync();
-                broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `-${item}`, color: '#cccccc' });
-                sendPlayerStatus(player);
-            }
-
-            if (data.action === 'pickup_item') {
-                const entry = resolveGroundTarget(player, data);
-                if (!entry) {
-                    sendProtocolError(player, 'There is nothing to pick up there.');
-                    return;
-                }
-                // Server-side distance check. Cheap to forge a packet without
-                // it, so it is never inferred from the request.
-                if (dist3D(player.x, player.y, player.z, entry.x, entry.y, entry.z) > CFG.GROUND_PICKUP_RANGE) {
-                    sendProtocolError(player, 'Too far away.');
-                    return;
-                }
-                groundItems.delete(entry.id);
-                player.inventory.push(entry.name);
-                player.persistenceDirty = true;
-                broadcastGroundSync();
-                broadcastToFloor(player.z, { action: 'fct', x: player.x + 16, y: player.y, text: `+${entry.name}`, color: '#88ff88' });
-                sendPlayerStatus(player);
-            }
-
-            if (data.action === 'toggle_mount') {
-                if (player.stunUntil > now) {
-                    sendProtocolError(player, 'You cannot mount while stunned.');
-                    return;
-                }
-                const mounting = !player.isMounted;
-                if (mounting) {
-                    if (!mountPlayer(player)) return;
-                } else {
-                    dismountPlayer(player);
-                }
-                broadcast({
-                    action: 'mount_changed',
-                    id: player.id,
-                    isMounted: player.isMounted
-                });
-                sendTo(player, {
-                    action: 'status',
-                    isMounted: player.isMounted
-                });
-                sendTo(player, {
-                    action: 'log',
-                    message: player.isMounted
-                        ? '🐴 You mount up and gain speed.'
-                        : '🐴 You dismount.'
-                });
+                return;
             }
 
             if (data.action === 'fish') {
@@ -1972,57 +1896,6 @@ wss.on('connection', (ws) => {
                 }
             }
 
-            if (data.action === 'use_item') {
-                const itemIndex = player.inventory.indexOf(data.item);
-                if (itemIndex > -1) {
-                    const itemDef = ITEMS.consumables[data.item];
-                    if (itemDef) {
-                        player.inventory.splice(itemIndex, 1);
-                        if (itemDef.type === 'heal') {
-                            player.hp = Math.min(player.maxHp, player.hp + itemDef.val);
-                            broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${itemDef.val} HP`, color: '#44ff44' });
-                        }
-                        if (itemDef.type === 'mana') {
-                            player.mana = Math.min(player.maxMana, player.mana + itemDef.val);
-                            broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: `+${itemDef.val} MP`, color: '#4488ff' });
-                        }
-                    }
-                }
-            }
-            
-            if (data.action === 'equip_item') {
-                const itemIndex = player.inventory.indexOf(data.item);
-                if (itemIndex > -1) {
-                    let type = null;
-                    if (ITEMS.weapons && ITEMS.weapons[data.item]) type = 'weapon';
-                    else if (ITEMS.armor && ITEMS.armor[data.item]) type = 'armor';
-                    else if (ITEMS.helmets && ITEMS.helmets[data.item]) type = 'helmet';
-                    else if (ITEMS.legs && ITEMS.legs[data.item]) type = 'legs';
-                    else if (ITEMS.boots && ITEMS.boots[data.item]) type = 'boots';
-                    else if (ITEMS.shields && ITEMS.shields[data.item]) type = 'shield';
-                    else if (ITEMS.amulets && ITEMS.amulets[data.item]) type = 'amulet';
-
-                    if (type) {
-                        player.inventory.splice(itemIndex, 1);
-                        if (player.equipment[type]) player.inventory.push(player.equipment[type]);
-                        player.equipment[type] = data.item;
-                        sendTo(player, { action: 'log', message: `✨ Equipped ${data.item}` });
-                        recalcPlayerStats(player);
-                    }
-                }
-            }
-            if (data.action === 'unequip_item') {
-                const slot = data.slot;
-                const validSlots = new Set(['weapon', 'shield', 'helmet', 'armor', 'legs', 'boots', 'amulet']);
-                if (!validSlots.has(slot)) {
-                    sendProtocolError(player, 'Invalid equipment slot.');
-                } else if (player.equipment[slot]) {
-                    player.inventory.push(player.equipment[slot]);
-                    player.equipment[slot] = null;
-                    recalcPlayerStats(player);
-                }
-            }
-            
             // --- SHOP ACTIONS ---
             if (data.action === 'open_crafting') {
                 if (dist3D(player.x, player.y, player.z, CRAFTING.WORKBENCH.x, CRAFTING.WORKBENCH.y, CRAFTING.WORKBENCH.z) > 96) {

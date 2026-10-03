@@ -486,14 +486,19 @@ test('a dropped item records the floor it was dropped on', () => {
     // dist3D compared z = -1 against a missing value normalised to the surface
     // and returned Infinity, while a surface player at the same X/Y could take a
     // dungeon item through the rock.
-    const src = fs.readFileSync(path.join(SERVER_DIR, 'server.js'), 'utf8');
+    // Reads inventory.js, not server.js. The drop and pickup handlers moved there
+    // in roadmap 7.1 item 4, and a test still reading server.js asserts against
+    // code that no longer exists -- which fails loudly, but for the wrong reason.
+    const src = fs.readFileSync(path.join(SERVER_DIR, 'inventory.js'), 'utf8');
     const at = src.indexOf('groundItems.set(');
     assert.ok(at !== -1, 'groundItems.set must exist');
     const block = src.slice(at, at + 600);
     assert.ok(/z:\s*MAP\.normalizeZ\(player\.z\)/.test(block),
         'a ground drop must record the floor of the player who made it');
     // And the pickup check has to compare floors, not just coordinates.
-    const pickup = src.slice(src.indexOf("action === 'pickup_item'"), src.indexOf("action === 'pickup_item'") + 900);
+    const pickupAt = src.indexOf("case 'pickup_item'");
+    assert.ok(pickupAt !== -1, 'the pickup handler must exist');
+    const pickup = src.slice(pickupAt, pickupAt + 900);
     assert.ok(/dist3D\(player\.x, player\.y, player\.z, entry\.x, entry\.y, entry\.z\)/.test(pickup),
         'pickup must compare floors as well as distance');
 });
