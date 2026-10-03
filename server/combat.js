@@ -585,6 +585,24 @@ function createCombat(deps) {
                             damage += ITEMS.weapons[player.equipment.weapon].bonus;
                         }
 
+                        // Call for help (roadmap 5.2). Guarded because `callForHelp` is an
+                        // injected dependency and is absent in the unit-test context.
+                        //
+                        // BEFORE the damage is applied, and that ordering is load
+                        // bearing. `callForHelp` refuses a mob with hp <= 0 -- a corpse
+                        // should not rally its pack -- and the first version of this sat
+                        // after `target.hp -= damage`. So a mob that DIED on the hit
+                        // never called, which is the single most important case: it is
+                        // the one the player watches, and the pack beside the corpse is
+                        // exactly the situation where help should arrive.
+                        //
+                        // The socket probe caught this. A spider died to the first hit
+                        // every time and never announced anything, which read as "the
+                        // call never reaches the damage path" when in fact the path was
+                        // fine and the mob was already dead by the time it arrived.
+                        if (typeof callForHelp === 'function') {
+                            callForHelp(target, player.id, player.z);
+                        }
                         target.hp -= damage; applyLifesteal(player, damage);
                         broadcastToFloor(MAP_NORMALIZE(player.z), { action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                         broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
@@ -592,18 +610,6 @@ function createCombat(deps) {
                         // Melee counts too. A combo meter that only tracked spells
                         // would feel broken to a warrior, who has no spells to chain.
                         announceCombo(player, player.targetId);
-                        // Call for help (roadmap 5.2). Guarded because `callForHelp`
-                        // is an injected dependency and is absent in the unit-test
-                        // context -- a missing call there would throw on the first
-                        // melee swing, which is a worse failure than not calling.
-                        //
-                        // Placed after the combo and before the kill so a mob that
-                        // dies on this swing still calls: the corpse is what the
-                        // player is looking at, and "it screamed for help as it died"
-                        // is both correct and good theatre.
-                        if (typeof callForHelp === 'function') {
-                            callForHelp(target, player.id, player.z);
-                        }
                         if (target.hp <= 0) killMob(player, target);
                         if (player.classType === 'warrior') trainMelee(player);
                     }

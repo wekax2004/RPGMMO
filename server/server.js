@@ -1576,8 +1576,6 @@ wss.on('connection', (ws) => {
                 if (data.text.startsWith('/guild invite ')) { GUILDS.inviteGuild(player, data.text.substring(14).trim()); return; }
                 if (data.text === '/guild accept') { GUILDS.acceptGuild(player); return; }
                 if (data.text.startsWith('/guild kick ')) { GUILDS.kickGuild(player, data.text.substring(12).trim()); return; }
-                if (data.text.startsWith('/guild promote ')) { GUILDS.promoteGuild(player, data.text.substring(15).trim()); return; }
-                if (data.text.startsWith('/guild demote ')) { GUILDS.demoteGuild(player, data.text.substring(14).trim()); return; }
                 if (data.text === '/guild leave') { GUILDS.leaveGuild(player); return; }
                 if (data.channel === 'guild' || data.text.startsWith('/g ')) {
                     if (!player.guild) return sendTo(player, { action: 'log', message: 'You are not in a guild.' });
