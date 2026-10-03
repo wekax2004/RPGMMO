@@ -5,7 +5,7 @@ const path = require('path');
 const CFG = require('./config');
 const { isWalkable, obstacleData, isWater, hasWaterNear } = require('./map');
 const MAP = require('./map');
-const { mobs, spawnMobPack, spawnFloorPack, spawnMobAt, moveMobToward, mobAttack, inSafeZone, countMobsOn, KNOWN_MOB_TYPES } = require('./mobs');
+const { mobs, spawnMobPack, spawnFloorPack, spawnMobAt, moveMobToward, moveMobAway, patrolStep, mobAttack, inSafeZone, countMobsOn, KNOWN_MOB_TYPES } = require('./mobs');
 const { chests, spawnChest } = require('./chests');
 const { npcs } = require('./npcs');
 const corpses = new Map();
@@ -64,6 +64,7 @@ const GROUPING = require('./grouping');
 const COMBAT_ACTIONS = require('./combat_actions');
 const DODGE = require('./dodge');
 const COMBO = require('./combo');
+const MOBAI = require('./mobai');
 const INVENTORY = require('./inventory');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
@@ -577,6 +578,10 @@ const COMBAT = createCombat({
     checkPlayerDeath,
     sendQuestJournal,
     spawnMobPack: (size) => spawnMobPack(broadcastSurface, size),
+    // Call for help (roadmap 5.2). Declared below as a function so it can be
+    // referenced here; a const arrow would be in the temporal dead zone at the point
+    // createCombat runs.
+    callForHelp,
     persistPlayer,
     awardSkill,
     grantWhiteSkull,
@@ -636,6 +641,32 @@ function dismountPlayer(player, reason) {
     });
     sendTo(player, { action: 'status', isMounted: false });
     return true;
+}
+
+/**
+ * Rouses nearby same-type mobs when one of their number is hurt (roadmap 5.2).
+ *
+ * This is what makes a pack a pack. `spawnMobPack` places three mobs together and
+ * until now nothing ever made them engage together -- a player could pull one and
+ * fight it alone in a corridor full of its siblings.
+ *
+ * The alerted mobs are not teleported, re-typed or made stronger. They are given an
+ * aggro target and nothing else, so they walk in under the ordinary chase branch and
+ * arrive on their own time. That is why this is cheap: it adds state, not entities.
+ *
+ * The alert is deliberately short-lived (see mobai.js). A permanently-enraged mob is
+ * a mob that follows a player across the map, which turns every fight into a chase
+ * and makes a dungeon floor unusable.
+ */
+function callForHelp(mob, targetPlayerId, floor) {
+    if (!mob || mob.hp <= 0) return;
+    const helpers = MOBAI.callersForHelp(mob, [...mobs.values()], { targetId: targetPlayerId, now: Date.now() });
+    if (helpers.length === 0) return;
+    // Stated out loud. A pack arriving is much more readable as an event than as
+    // three mobs that were simply already walking that way.
+    broadcastToFloor(MAP.normalizeZ(mob.z), {
+        action: 'fct', x: mob.x + 16, y: mob.y - 24, text: 'CALLING HELP', color: '#ff8844'
+    });
 }
 
 // --- Ground loot ---------------------------------------------------------
@@ -1545,6 +1576,8 @@ wss.on('connection', (ws) => {
                 if (data.text.startsWith('/guild invite ')) { GUILDS.inviteGuild(player, data.text.substring(14).trim()); return; }
                 if (data.text === '/guild accept') { GUILDS.acceptGuild(player); return; }
                 if (data.text.startsWith('/guild kick ')) { GUILDS.kickGuild(player, data.text.substring(12).trim()); return; }
+                if (data.text.startsWith('/guild promote ')) { GUILDS.promoteGuild(player, data.text.substring(15).trim()); return; }
+                if (data.text.startsWith('/guild demote ')) { GUILDS.demoteGuild(player, data.text.substring(14).trim()); return; }
                 if (data.text === '/guild leave') { GUILDS.leaveGuild(player); return; }
                 if (data.channel === 'guild' || data.text.startsWith('/g ')) {
                     if (!player.guild) return sendTo(player, { action: 'log', message: 'You are not in a guild.' });
@@ -2315,8 +2348,54 @@ scheduleServerInterval(() => {
                 if (d2 < minD) { minD = d2; closest = p; } 
             } 
         });
-        if (!closest) return;
-        
+        if (!closest) {
+            // No player in range at all (roadmap 5.2). Previously the mob simply
+            // stopped existing as far as behaviour goes -- it stood still forever,
+            // so a dungeon floor was a set of statues the player walked between.
+            patrolStep(mob);
+            return;
+        }
+
+        // The brain decides; this loop performs. Kept as two pieces so every decision
+        // is testable without a world, and so a behaviour can be added without
+        // touching the move/attack plumbing below.
+        const intent = MOBAI.decide({
+            mob,
+            target: closest,
+            distance: minD,
+            isNight: !isDay,
+            now,
+            meleeRange: CFG.MELEE_RANGE,
+            aggroRange: AGGRO_RANGE
+        });
+
+        if (intent.state === 'flee') {
+            if (moveMobAway(mob, closest.x, closest.y)) {
+                broadcastToFloorNear(mob.z, { action: 'mob_update', id: mobId, x: mob.x, y: mob.y, z: MAP.normalizeZ(mob.z), hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type }, mob.x, mob.y);
+                // Said out loud, because a mob that runs and comes back is far less
+                // frustrating when the player can see that is what is happening.
+                broadcastToFloor(mob.z, { action: 'fct', x: mob.x + 16, y: mob.y - 20, text: 'FLEEING', color: '#ffcc00' });
+            }
+            return;
+        }
+
+        if (intent.state === 'patrol') {
+            patrolStep(mob);
+            return;
+        }
+
+        if (intent.state === 'chase') {
+            if (moveMobToward(mob, closest.x, closest.y)) {
+                // Floor-scoped, and it carries z. Broadcast globally it told
+                // every surface client about a dungeon mob that had moved, and
+                // because the packet had no z the client filed it under "no
+                // floor" -- so a mob was simultaneously known to the surface
+                // roster and unclassifiable.
+                broadcastToFloorNear(mob.z, { action: 'mob_update', id: mobId, x: mob.x, y: mob.y, z: MAP.normalizeZ(mob.z), hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type }, mob.x, mob.y);
+            }
+            return;
+        }
+
         if (minD <= CFG.MELEE_RANGE) {
             let def = 0;
             const eq = closest.equipment;
@@ -2346,15 +2425,6 @@ scheduleServerInterval(() => {
                 if (result.bled) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `BLEED`, color: '#ff4444' });
                 if (result.stunned) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `STUN`, color: '#ff88ff' });
                 checkPlayerDeath(closest, mob.name);
-            }
-        } else if (minD <= AGGRO_RANGE) { 
-            if (moveMobToward(mob, closest.x, closest.y)) {
-                // Floor-scoped, and it carries z. Broadcast globally it told
-                // every surface client about a dungeon mob that had moved, and
-                // because the packet had no z the client filed it under "no
-                // floor" -- so a mob was simultaneously known to the surface
-                // roster and unclassifiable.
-                broadcastToFloorNear(mob.z, { action: 'mob_update', id: mobId, x: mob.x, y: mob.y, z: MAP.normalizeZ(mob.z), hp: mob.hp, maxHp: mob.maxHp, alive: true, isElite: mob.isElite, name: mob.name, type: mob.type }, mob.x, mob.y);
             }
         }
     });

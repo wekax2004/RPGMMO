@@ -33,6 +33,7 @@ const { bosses, spawnBoss } = require('./bosses');
  * @param {Function} deps.checkPlayerDeath
  * @param {Function} deps.sendQuestJournal
  * @param {Function} deps.spawnMobPack
+ * @param {Function} deps.callForHelp      rouse nearby same-type mobs (roadmap 5.2)
  * @param {Function} deps.persistPlayer
  * @param {Function} deps.grantWhiteSkull   mark the aggressor (PvP)
  * @param {Function} deps.hasActiveSkull     is a player currently flagged
@@ -67,6 +68,7 @@ function createCombat(deps) {
         checkPlayerDeath,
         sendQuestJournal,
         spawnMobPack,
+        callForHelp,
         persistPlayer,
         awardSkill,
         grantWhiteSkull,
@@ -590,6 +592,18 @@ function createCombat(deps) {
                         // Melee counts too. A combo meter that only tracked spells
                         // would feel broken to a warrior, who has no spells to chain.
                         announceCombo(player, player.targetId);
+                        // Call for help (roadmap 5.2). Guarded because `callForHelp`
+                        // is an injected dependency and is absent in the unit-test
+                        // context -- a missing call there would throw on the first
+                        // melee swing, which is a worse failure than not calling.
+                        //
+                        // Placed after the combo and before the kill so a mob that
+                        // dies on this swing still calls: the corpse is what the
+                        // player is looking at, and "it screamed for help as it died"
+                        // is both correct and good theatre.
+                        if (typeof callForHelp === 'function') {
+                            callForHelp(target, player.id, player.z);
+                        }
                         if (target.hp <= 0) killMob(player, target);
                         if (player.classType === 'warrior') trainMelee(player);
                     }

@@ -20,7 +20,7 @@ function createGuild(player, guildName) {
 
     player.gold -= 1000;
     const gId = "guild_" + Date.now();
-    const g = { id: gId, name: guildName, leader: player.charName, members: new Set([player.charName]) };
+    const g = { id: gId, name: guildName, leader: player.charName, members: new Set([player.charName]), ranks: { [player.charName]: 'leader' }, bank: 0 };
     guilds.set(gId, g);
     player.guild = gId;
     
@@ -62,6 +62,8 @@ function acceptGuild(player) {
     if (!g) return sendTo(player, { action: 'log', message: 'Guild no longer exists.' });
     
     g.members.add(player.charName);
+    if (!g.ranks) g.ranks = {};
+    g.ranks[player.charName] = 'member';
     player.guild = g.id;
     player.pendingGuildInvite = null;
     
@@ -77,6 +79,7 @@ function kickGuild(player, targetName) {
     if (!g.members.has(targetName)) return sendTo(player, { action: 'log', message: 'Player not in guild.' });
     
     g.members.delete(targetName);
+    if (g.ranks) delete g.ranks[targetName];
     const target = getPlayerByName(targetName);
     if (target) {
         target.guild = null;
@@ -91,6 +94,7 @@ function leaveGuild(player) {
     if (!player.guild) return;
     const g = guilds.get(player.guild);
     g.members.delete(player.charName);
+    if (g.ranks) delete g.ranks[player.charName];
     player.guild = null;
     sendTo(player, { action: 'guild_sync', guild: null });
     
@@ -100,6 +104,7 @@ function leaveGuild(player) {
         // Assign new leader
         const nextLeader = Array.from(g.members)[0];
         g.leader = nextLeader;
+        if (g.ranks) g.ranks[nextLeader] = 'leader';
         broadcastGuild(g, `${nextLeader} is the new guild leader.`);
     }
     
@@ -118,7 +123,8 @@ function broadcastGuild(g, message, senderName) {
 }
 
 function syncGuild(player, g) {
-    sendTo(player, { action: 'guild_sync', guild: { id: g.id, name: g.name, leader: g.leader, members: Array.from(g.members) } });
+    const mems = Array.from(g.members).map(m => ({ name: m, rank: (g.ranks && g.ranks[m]) ? g.ranks[m] : 'member' }));
+    sendTo(player, { action: 'guild_sync', guild: { id: g.id, name: g.name, leader: g.leader, members: mems, bank: g.bank || 0 } });
 }
 
 function syncAllGuildMembers(g) {
@@ -128,4 +134,46 @@ function syncAllGuildMembers(g) {
     }
 }
 
-module.exports = { init, guilds, createGuild, inviteGuild, acceptGuild, kickGuild, leaveGuild, broadcastGuild };
+function promoteGuild(player, targetName) {
+    if (!player.guild) return;
+    const g = guilds.get(player.guild);
+    if (g.leader !== player.charName) return sendTo(player, { action: 'log', message: 'Only the leader can promote.' });
+    if (targetName === player.charName) return sendTo(player, { action: 'log', message: 'You are already the leader.' });
+    if (!g.members.has(targetName)) return sendTo(player, { action: 'log', message: 'Player not in guild.' });
+    
+    if (!g.ranks) g.ranks = {};
+    if (g.ranks[targetName] === 'officer') {
+        // promote officer to leader
+        g.ranks[player.charName] = 'officer';
+        g.ranks[targetName] = 'leader';
+        g.leader = targetName;
+        broadcastGuild(g, `${targetName} has been promoted to Guild Leader!`);
+    } else {
+        // promote member to officer
+        g.ranks[targetName] = 'officer';
+        broadcastGuild(g, `${targetName} has been promoted to Officer.`);
+    }
+    syncAllGuildMembers(g);
+}
+
+function demoteGuild(player, targetName) {
+    if (!player.guild) return;
+    const g = guilds.get(player.guild);
+    if (g.leader !== player.charName) return sendTo(player, { action: 'log', message: 'Only the leader can demote.' });
+    if (targetName === player.charName) return sendTo(player, { action: 'log', message: 'You cannot demote yourself.' });
+    if (!g.members.has(targetName)) return sendTo(player, { action: 'log', message: 'Player not in guild.' });
+    
+    if (!g.ranks) g.ranks = {};
+    if (g.ranks[targetName] === 'officer') {
+        g.ranks[targetName] = 'member';
+        broadcastGuild(g, `${targetName} has been demoted to member.`);
+    }
+    syncAllGuildMembers(g);
+}
+
+// Add a save hook (if it exists, we can use it to serialize)
+function saveGuilds() {
+    // guilds are in-memory unless we add DB persistence for them later
+}
+
+module.exports = { init, guilds, createGuild, inviteGuild, acceptGuild, kickGuild, leaveGuild, promoteGuild, demoteGuild, broadcastGuild, saveGuilds };

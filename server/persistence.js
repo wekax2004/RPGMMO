@@ -145,6 +145,12 @@ async function flush() {
     if (pending.length > 0) await Promise.all(pending);
 }
 
+async function getLeaderboard(limit = 100) {
+    await ready;
+    if (store.driver === 'sqlite') return DB.getLeaderboard(limit);
+    return []; // Firebase fallback not implemented
+}
+
 // Drains writes and then closes the underlying connection, so the SQLite
 // file and its WAL can be released. Callers that only want the writes to land
 // should use flush().
@@ -158,6 +164,7 @@ module.exports = {
     file: store.file,
     loadPlayer,
     savePlayer,
+    getLeaderboard,
     flush,
     close
 };

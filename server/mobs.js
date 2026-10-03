@@ -71,7 +71,13 @@ function spawnMobPack(broadcast, size = 3) {
                 // tier, so the default of 1 applied and the surface is tier 1. See
                 // the note in spawnFloorPack for why this is recorded at all.
                 tier: 1,
-                xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
+                xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0,
+                // Home anchor for patrolling (roadmap 5.2), plus the flee and
+                // call-for-help timers. Set at spawn rather than inferred later: a mob
+                // that has already wandered has no way to know where it started, and
+                // "drift home" is the whole reason patrols stay near their pack
+                // instead of emptying a floor over a long session.
+                homeX: x, homeY: y, fleeUntil: 0, lastCallAt: 0
             });
             broadcast({ action: 'mob_update', id, type, name, x, y, z: CFG.Z_SURFACE, hp: stats.hp, maxHp: stats.hp, alive: true, isElite });
         }
@@ -118,7 +124,10 @@ function spawnFloorPack(broadcast, options = {}) {
             // rare-drop roll in rarity.js -- needs to read it off the mob later, long
             // after the spawn call that knew it.
             tier,
-            xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
+            xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0,
+            // See the note in spawnMobPack. `spot` exists here; the surface path uses
+            // x/y locals, so the two spawn sites name their own tile.
+            homeX: spot.x, homeY: spot.y, fleeUntil: 0, lastCallAt: 0
         });
         broadcast({
             action: 'mob_update', id, type, name, x: spot.x, y: spot.y, z,
@@ -166,7 +175,9 @@ function spawnMobAt(x, y, type, broadcast, z = CFG.Z_SURFACE) {
         id, type: resolved, name, x, y, z: floor,
         hp: stats.hp, maxHp: stats.hp,
         tier,
-        xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
+        xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0,
+        // See the note in spawnMobPack.
+        homeX: x, homeY: y, fleeUntil: 0, lastCallAt: 0
     });
     if (typeof broadcast === 'function') {
         broadcast({
@@ -190,23 +201,35 @@ function inSafeZone(x, y, z = CFG.Z_SURFACE) {
            y >= CFG.SAFE_ZONE.y && y < CFG.SAFE_ZONE.y + CFG.SAFE_ZONE.h;
 }
 
+/**
+ * Moves a mob one step. `nx`/`ny` are the proposed tile; the walkability and
+ * safe-zone checks are identical for every caller, so they live here once.
+ *
+ * Roadmap 5.2 added a third caller -- fleeing mobs walk AWAY from a target, and
+ * patrolling mobs walk somewhere arbitrary -- and all three need the same refusal to
+ * walk into rock or into the city. Duplicating that check per caller is how a
+ * fleeing mob ends up standing inside a wall.
+ */
+function tryStep(mob, nx, ny) {
+    if (!isWalkable(nx, ny) || inSafeZone(nx, ny, MAP.normalizeZ(mob.z))) return false;
+    mob.x = nx;
+    mob.y = ny;
+    return true;
+}
+
 function moveMobToward(mob, targetX, targetY) {
     const now = Date.now();
     if (now - (mob.lastMoveTime || 0) < CFG.MOB_MOVE_COOLDOWN) return false;
-    
+
     let nx = mob.x, ny = mob.y;
     if (Math.abs(targetX - mob.x) > Math.abs(targetY - mob.y)) {
         nx += targetX > mob.x ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
     } else {
         ny += targetY > mob.y ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
     }
-    
-    if (isWalkable(nx, ny) && !inSafeZone(nx, ny, MAP.normalizeZ(mob.z))) {
-        mob.x = nx; mob.y = ny;
-        mob.lastMoveTime = now;
-        return true;
-    }
-    
+
+    if (tryStep(mob, nx, ny)) { mob.lastMoveTime = now; return true; }
+
     // Try other axis if blocked
     nx = mob.x; ny = mob.y;
     if (Math.abs(targetX - mob.x) <= Math.abs(targetY - mob.y)) {
@@ -215,14 +238,72 @@ function moveMobToward(mob, targetX, targetY) {
         ny += targetY > mob.y ? CFG.TILE_SIZE : -CFG.TILE_SIZE;
     }
 
-    if (isWalkable(nx, ny) && !inSafeZone(nx, ny, MAP.normalizeZ(mob.z))) {
-        mob.x = nx; mob.y = ny;
-        mob.lastMoveTime = now;
-        return true;
-    }
+    if (tryStep(mob, nx, ny)) { mob.lastMoveTime = now; return true; }
 
     return false;
 }
+
+/**
+ * Moves a mob one step directly away from a point (roadmap 5.2).
+ *
+ * Separate from `moveMobToward` rather than a negative distance, because "toward" and
+ * "away from" need different steering: fleeing has to prefer the axis that increases
+ * distance most, which is the opposite preference, and a mob cornered against a wall
+ * should try the other axis rather than give up.
+ */
+function moveMobAway(mob, fromX, fromY) {
+    const now = Date.now();
+    if (now - (mob.lastMoveTime || 0) < CFG.MOB_MOVE_COOLDOWN) return false;
+
+    const awayX = fromX > mob.x ? -1 : 1;
+    const awayY = fromY > mob.y ? -1 : 1;
+    // X first, then Y, then the two diagonals. The diagonal step is what stops a
+    // fleeing mob pinned against a wall on one axis from simply giving up in the
+    // corner, which is where a naive implementation always ends up.
+    const options = [
+        [awayX, 0], [0, awayY],
+        [awayX, awayY], [-awayX, awayY],
+        [awayX, -awayY], [0, -awayY], [-awayX, 0]
+    ];
+    for (const [dx, dy] of options) {
+        if (tryStep(mob, mob.x + dx * CFG.TILE_SIZE, mob.y + dy * CFG.TILE_SIZE)) {
+            mob.lastMoveTime = now;
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Wanders a mob one step (roadmap 5.2).
+ *
+ * Biased toward its own spawn point, so a patrolling mob drifts home rather than
+ * wandering the entire map over a long session and leaving a floor empty. The bias is
+ * applied most of the time, not always: a mob that only ever moved toward home would
+ * stand still at its spawn, which is what it was doing before this feature existed.
+ */
+function patrolStep(mob, random = Math.random) {
+    const now = Date.now();
+    if (now - (mob.lastMoveTime || 0) < CFG.MOB_MOVE_COOLDOWN) return false;
+
+    // Stray for a while, then head home.
+    const hasHome = mob.homeX !== undefined && mob.homeX !== null;
+    const straying = !hasHome || (random() < PATROL_HOME_BIAS);
+    let tx, ty;
+    if (!hasHome) {
+        tx = mob.x + (Math.floor(random() * 5) - 2) * CFG.TILE_SIZE;
+        ty = mob.y + (Math.floor(random() * 5) - 2) * CFG.TILE_SIZE;
+    } else if (straying) {
+        tx = mob.x + (Math.floor(random() * 5) - 2) * CFG.TILE_SIZE;
+        ty = mob.y + (Math.floor(random() * 5) - 2) * CFG.TILE_SIZE;
+    } else {
+        tx = mob.homeX;
+        ty = mob.homeY;
+    }
+    return moveMobToward(mob, tx, ty);
+}
+
+const PATROL_HOME_BIAS = 0.7;
 
 function mobAttack(mob, player, damageMultiplier = 1.0, defense = 0) {
     const now = Date.now();
@@ -279,5 +360,6 @@ function mobAttack(mob, player, damageMultiplier = 1.0, defense = 0) {
 
 module.exports = {
     mobs, spawnMobPack, spawnFloorPack, spawnMobAt, inSafeZone,
-    moveMobToward, mobAttack, countMobsOn, getMobStats, KNOWN_MOB_TYPES
+    moveMobToward, moveMobAway, patrolStep, mobAttack, countMobsOn, getMobStats,
+    KNOWN_MOB_TYPES
 };

@@ -19,30 +19,64 @@
 
 <body>
     <div id="loading-screen" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#0f172a; z-index:9999; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#fbbf24;">
-        <h1 style="font-family:'Outfit', sans-serif; font-size:48px; margin:0 0 10px 0; text-shadow:0 0 20px rgba(251,191,36,0.5);">TIBIA MMO</h1>
+        <h1 style="font-family:'VT323', monospace; font-size:48px; margin:0 0 10px 0; text-shadow:0 0 20px rgba(251,191,36,0.5);">TIBIA MMO</h1>
         <div style="font-size:16px; color:#94a3b8; animation: pulse 1.5s infinite;">Connecting to server...</div>
     </div>
     
     <div id="levelup-celebration" style="position:fixed; top:30%; left:50%; transform:translate(-50%, -50%) scale(0.5); opacity:0; pointer-events:none; z-index:5000; text-align:center; transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-        <h1 style="font-family:'Outfit', sans-serif; font-size:64px; color:#fbbf24; margin:0; text-shadow: 0 0 30px rgba(251,191,36,1), 0 0 10px #fff;">LEVEL UP!</h1>
+        <h1 style="font-family:'VT323', monospace; font-size:64px; color:#fbbf24; margin:0; text-shadow: 0 0 30px rgba(251,191,36,1), 0 0 10px #fff;">LEVEL UP!</h1>
         <div id="levelup-text" style="font-size:24px; color:#fff; font-weight:bold; text-shadow: 0 0 10px rgba(0,0,0,0.8);">You reached Level 2</div>
+    </div>
+    
+    <div id="quest-celebration" style="position:fixed; top:40%; left:50%; transform:translate(-50%, -50%) scale(0.5); opacity:0; pointer-events:none; z-index:5000; text-align:center; transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+        <h1 style="font-family:'VT323', monospace; font-size:48px; color:#38bdf8; margin:0; text-shadow: 0 0 30px rgba(56,189,248,1), 0 0 10px #fff;">QUEST COMPLETE!</h1>
+        <div id="quest-celebration-name" style="font-size:20px; color:#fff; font-weight:bold; text-shadow: 0 0 10px rgba(0,0,0,0.8);">The Rat King</div>
+    </div>
+
+    <div id="boss-banner" style="position:fixed; top:20%; left:50%; transform:translate(-50%, -50%) scale(0.5); opacity:0; pointer-events:none; z-index:5000; text-align:center; transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+        <h1 style="font-family:'VT323', monospace; font-size:56px; color:#ef4444; margin:0; text-shadow: 0 0 40px rgba(239,68,68,1), 0 0 15px #fff;">BOSS SPAWNED!</h1>
+        <div id="boss-banner-name" style="font-size:24px; color:#fca5a5; font-weight:bold; text-shadow: 0 0 10px rgba(0,0,0,0.9); text-transform:uppercase;">The Dragon King</div>
     </div>
 
     <div id="custom-tooltip"></div>
     <div id="overlay"></div>
     
+    <div id="combo-container" style="position:fixed; top:35%; right:5%; transform:translateY(-50%) scale(0.5); opacity:0; pointer-events:none; z-index:5000; text-align:right; transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+        <div style="font-family:'VT323', monospace; font-size:36px; color:#fbbf24; margin:0; text-shadow: 0 0 10px rgba(251,191,36,0.8), 0 0 5px #000; font-style:italic;">COMBO!</div>
+        <div id="combo-hits" style="font-family:'VT323', monospace; font-size:64px; color:#ef4444; font-weight:bold; text-shadow: 0 0 15px rgba(239,68,68,1); line-height:0.8;">2x</div>
+    </div>
+    
+    <script>
+        window.comboTimeout = null;
+        window.triggerCombo = function(hits) {
+            const container = document.getElementById("combo-container");
+            const text = document.getElementById("combo-hits");
+            if (!container || !text) return;
+            text.innerText = hits + "x";
+            container.style.opacity = "1";
+            container.style.transform = "translateY(-50%) scale(1.2)";
+            setTimeout(() => container.style.transform = "translateY(-50%) scale(1)", 100);
+            
+            clearTimeout(window.comboTimeout);
+            window.comboTimeout = setTimeout(() => {
+                container.style.opacity = "0";
+                container.style.transform = "translateY(-50%) scale(0.5)";
+            }, 2000);
+        };
+    </script>
+    
     <div id="auth-modal" class="modal" style="width: 350px;">
         <h2 style="color: #fbbf24; margin-top: 0;">Login to Tibia</h2>
-        <input type="text" id="auth-username" placeholder="Username" style="width: 100%; padding: 10px; margin-bottom: 10px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; text-align: center; font-size: 16px;">
-        <input type="password" id="auth-password" placeholder="Password" style="width: 100%; padding: 10px; margin-bottom: 15px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; text-align: center; font-size: 16px;">
+        <input type="text" id="auth-username" placeholder="Username" style="width: 100%; padding: 10px; margin-bottom: 10px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 0; text-align: center; font-size: 16px;">
+        <input type="password" id="auth-password" placeholder="Password" style="width: 100%; padding: 10px; margin-bottom: 15px; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 0; text-align: center; font-size: 16px;">
         <div style="display:flex; gap:10px;">
-            <button onclick="submitAuth('login')" style="flex:1; background: #3b82f6; color:white; border:none; padding:10px; cursor:pointer; border-radius:6px; font-weight:bold;">Login</button>
-            <button onclick="submitAuth('register')" style="flex:1; background: #10b981; color:white; border:none; padding:10px; cursor:pointer; border-radius:6px; font-weight:bold;">Register</button>
+            <button onclick="submitAuth('login')" style="flex:1; background: #3b82f6; color:white; border:none; padding:10px; cursor:pointer; border-radius: 0; font-weight:bold;">Login</button>
+            <button onclick="submitAuth('register')" style="flex:1; background: #10b981; color:white; border:none; padding:10px; cursor:pointer; border-radius: 0; font-weight:bold;">Register</button>
         </div>
         <div id="auth-error" style="color: #ef4444; margin-top: 10px; font-size: 13px; min-height: 18px;"></div>
     </div>
     
-    <div id="class-modal" class="modal">
+    <div id="class-modal" class="modal" style="width: 580px; max-width: 90vw; max-height: 90vh; overflow-y: auto;">
         <h2 style="color: #ffcc44; margin-top: 0;">Choose Your Path</h2>
         <input type="text" id="char-name" placeholder="Character Name" style="width: 80%; padding: 8px; margin-bottom: 10px; background: #222; color: #fff; border: 1px solid #555; text-align: center; font-size: 16px;"><br>
         <label style="font-size: 14px; color: #ff8888;"><input type="checkbox" id="warmode"> Enable Warmode (PvP on, +20% XP)</label><br>
@@ -66,48 +100,52 @@
         </div>
     </div>
 
-    <div id="world-map-modal" class="modal" style="width: 500px; padding: 20px;">
-        <h2 style="color:#fbbf24; margin-top:0; text-align:center;">World Map</h2>
-        <div style="position:relative; width:400px; height:400px; background:#1e1e2f; margin:0 auto; border:2px solid rgba(255,255,255,0.2); border-radius:8px;">
-            <div style="position:absolute; top:0; left:0; width:100px; height:100px; background:#4a5d4e; border:1px solid rgba(0,0,0,0.5);">
-                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">City</div>
-            </div>
-            <div style="position:absolute; top:0; left:100px; width:300px; height:100px; background:#2e4432; border:1px solid rgba(0,0,0,0.5);">
-                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Deep Forest</div>
-            </div>
-            <div style="position:absolute; top:100px; left:0; width:200px; height:150px; background:#364639; border:1px solid rgba(0,0,0,0.5);">
-                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Goblin Camp</div>
-            </div>
-            <div style="position:absolute; top:250px; left:0; width:200px; height:150px; background:#8f9c6d; border:1px solid rgba(0,0,0,0.5);">
-                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#111; font-size:12px; font-weight:bold;">Swamp</div>
-            </div>
-            <div style="position:absolute; top:100px; left:200px; width:200px; height:300px; background:#8a94a6; border:1px solid rgba(0,0,0,0.5);">
-                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold;">Snow Mountain</div>
-            </div>
-            <!-- Player Marker dot via JS -->
-            <div id="map-player-marker" style="position:absolute; width:8px; height:8px; background:#ef4444; border-radius:50%; transform:translate(-50%,-50%); box-shadow:0 0 10px #ef4444; transition: all 0.3s; z-index:10;"></div>
+    <div id="world-map-modal" class="modal" style="width:500px; padding:0; overflow:hidden; background:#1e1e2f; border:2px solid #38bdf8; border-radius: 0; text-align:left;">
+        <div style="background: #444; padding: 15px; border-bottom: 2px solid #38bdf8; text-align:center;">
+            <h2 style="margin:0; color:#bae6fd; font-size:24px; text-shadow:none; letter-spacing:normal;">🗺️ World Map</h2>
         </div>
-        <button onclick="document.getElementById('world-map-modal').style.display='none'; document.getElementById('overlay').style.display='none';" style="width:100%; margin-top:15px; padding:10px; background:#ef4444; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">Close Map</button>
+        <div style="padding: 20px;">
+            <div style="position:relative; width:400px; height:400px; background:#0f172a; margin:0 auto; border:2px solid rgba(255,255,255,0.1); border-radius: 0; overflow:hidden;">
+                <div style="position:absolute; top:0; left:0; width:100px; height:100px; background: #444; border-right:1px solid rgba(0,0,0,0.5); border-bottom:1px solid rgba(0,0,0,0.5);">
+                    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold; text-shadow:0 0 5px rgba(0,0,0,0.8);">City</div>
+                </div>
+                <div style="position:absolute; top:0; left:100px; width:300px; height:100px; background: #444; border-bottom:1px solid rgba(0,0,0,0.5);">
+                    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold; text-shadow:0 0 5px rgba(0,0,0,0.8);">Deep Forest</div>
+                </div>
+                <div style="position:absolute; top:100px; left:0; width:200px; height:150px; background: #444; border-right:1px solid rgba(0,0,0,0.5); border-bottom:1px solid rgba(0,0,0,0.5);">
+                    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold; text-shadow:0 0 5px rgba(0,0,0,0.8);">Goblin Camp</div>
+                </div>
+                <div style="position:absolute; top:250px; left:0; width:200px; height:150px; background: #444; border-right:1px solid rgba(0,0,0,0.5);">
+                    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#e2e8f0; font-size:12px; font-weight:bold; text-shadow:0 0 5px rgba(0,0,0,0.8);">Swamp</div>
+                </div>
+                <div style="position:absolute; top:100px; left:200px; width:200px; height:300px; background: #444;">
+                    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:12px; font-weight:bold; text-shadow:0 0 5px rgba(0,0,0,0.8);">Snow Mountain</div>
+                </div>
+                <!-- Player Marker dot via JS -->
+                <div id="map-player-marker" style="position:absolute; width:12px; height:12px; background:#ef4444; border:2px solid #fff; border-radius: 0; transform:translate(-50%,-50%); box-shadow: none; transition: all 0.3s; z-index:10;"></div>
+            </div>
+            <button onclick="document.getElementById('world-map-modal').style.display='none'; document.getElementById('overlay').style.display='none';" style="width:100%; margin-top:20px; padding:10px; background:#475569; color:#fff; border:none; border-radius: 0; cursor:pointer; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#ef4444'" onmouseout="this.style.background='#475569'">Close Map</button>
+        </div>
     </div>
 
     <div id="tutorial-modal" class="modal" style="width: 450px;">
         <h2 style="color: #fbbf24; margin-top: 0;">Welcome to Tibia MMO!</h2>
-        <div style="font-size: 14px; line-height: 1.6; text-align: left; background: rgba(0,0,0,0.4); padding: 15px; border-radius: 8px;">
+        <div style="font-size: 14px; line-height: 1.6; text-align: left; background: rgba(0,0,0,0.4); padding: 15px; border-radius: 0;">
             <p><strong>Movement:</strong> Use <span style="color:#38bdf8; font-weight:bold;">W A S D</span> to walk around the world.</p>
             <p><strong>Combat:</strong> <span style="color:#ef4444; font-weight:bold;">Click</span> on monsters to auto-attack. Press <span style="color:#38bdf8; font-weight:bold;">1</span> and <span style="color:#38bdf8; font-weight:bold;">2</span> to cast spells.</p>
             <p><strong>Interaction:</strong> <span style="color:#10b981; font-weight:bold;">Click</span> or press <span style="color:#10b981; font-weight:bold;">E</span> near NPCs to talk and trade.</p>
             <p><strong>Map:</strong> Press <span style="color:#fbbf24; font-weight:bold;">M</span> to view the World Map.</p>
             <p style="color: #94a3b8; font-style: italic; margin-bottom: 0;">Good luck out there, adventurer!</p>
         </div>
-        <button onclick="document.getElementById('tutorial-modal').style.display='none'; document.getElementById('overlay').style.display='none'; window.TUTORIAL_SEEN=true;" style="width: 100%; padding: 10px; margin-top: 15px; background: #3b82f6; color: white; font-weight: bold; border: none; border-radius: 6px; cursor: pointer;">I'm Ready!</button>
+        <button onclick="document.getElementById('tutorial-modal').style.display='none'; document.getElementById('overlay').style.display='none'; window.TUTORIAL_SEEN=true;" style="width: 100%; padding: 10px; margin-top: 15px; background: #3b82f6; color: white; font-weight: bold; border: none; border-radius: 0; cursor: pointer;">I'm Ready!</button>
     </div>
 
     <div id="death-modal" class="modal" style="width: 400px; background: #3f0f0f; border: 2px solid #ef4444; text-align: center; display:none;">
-        <h1 style="color: #ef4444; margin-top: 0; font-size:48px; text-shadow:0 0 20px #ef4444; font-family:'Outfit', sans-serif;">YOU DIED</h1>
+        <h1 style="color: #ef4444; margin-top: 0; font-size:48px; text-shadow:0 0 20px #ef4444; font-family:'VT323', monospace;">YOU DIED</h1>
         <p style="color: #fca5a5; font-size: 16px;">The server will respawn you shortly...</p>
     </div>
 
-        <button onclick="closeWorldMap()" style="margin-top:15px; width:100%; background:#334155; color:white; border:none; padding:10px; border-radius:6px; cursor:pointer; font-weight:bold;">Close (M)</button>
+        <button onclick="closeWorldMap()" style="margin-top:15px; width:100%; background:#334155; color:white; border:none; padding:10px; border-radius: 0; cursor:pointer; font-weight:bold;">Close (M)</button>
     </div>
 
     <div id="subclass-modal" class="modal">
@@ -115,74 +153,94 @@
         <div id="subclass-options"></div>
     </div>
 
-    <div id="trade-modal" class="modal" style="width:400px; text-align:left;">
-        <h2 style="color: #ffcc44; margin-top: 0; text-align:center;">Trade</h2>
-        <div id="trade-request-actions" style="display:none; background:#333; padding:8px; margin-bottom:10px; text-align:center;">
-            <span id="trade-request-text" style="font-size:12px;"></span>
-            <div style="margin-top:8px; display:flex; gap:8px; justify-content:center;">
-                <button onclick="acceptTradeRequest()" style="background:#44aa44; color:white; border:none; padding:5px 10px; cursor:pointer">Accept</button>
-                <button onclick="declineTradeRequest()" style="background:#aa4444; color:white; border:none; padding:5px 10px; cursor:pointer">Decline</button>
+    <div id="trade-modal" class="modal" style="width:500px; padding:0; overflow:hidden; background:#1e1e2f; border:2px solid #fbbf24; border-radius: 0; text-align:left;">
+        <div style="background: #444; padding: 15px; border-bottom: 2px solid #fbbf24; text-align:center;">
+            <h2 style="color: #fbbf24; margin: 0; text-shadow:none; letter-spacing:normal; font-size:24px;">🤝 Trade</h2>
+        </div>
+        <div id="trade-request-actions" style="display:none; background:rgba(0,0,0,0.4); padding:10px; border-bottom:1px solid #475569; text-align:center;">
+            <span id="trade-request-text" style="font-size:14px; color:#e2e8f0; font-weight:bold;"></span>
+            <div style="margin-top:10px; display:flex; gap:10px; justify-content:center;">
+                <button onclick="acceptTradeRequest()" style="background:#10b981; color:white; border:none; padding:8px 15px; cursor:pointer; border-radius: 0; font-weight:bold;">Accept</button>
+                <button onclick="declineTradeRequest()" style="background:#ef4444; color:white; border:none; padding:8px 15px; cursor:pointer; border-radius: 0; font-weight:bold;">Decline</button>
             </div>
         </div>
-        <div style="display:flex; gap:10px;">
-            <div style="flex:1; background:#222; padding:10px; border:1px solid #444;">
-                <h3 style="margin-top:0; font-size:14px;">Your Offer</h3>
-                <div id="trade-my-offer" style="min-height:50px;" ondragover="event.preventDefault()" ondrop="dropTradeItem(event)"></div>
-                <div style="margin-top:10px;">
-                    Gold: <input type="number" id="trade-my-gold" value="0" style="width:80px; background:#111; color:#fff; border:1px solid #444;" onchange="updateTradeGold()">
+        <div style="padding: 20px;">
+            <div style="display:flex; gap:15px;">
+                <div style="flex:1; background:rgba(30,41,59,0.5); padding:15px; border:1px solid #475569; border-radius: 0;">
+                    <h3 style="margin-top:0; font-size:16px; color:#38bdf8; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">Your Offer</h3>
+                    <div id="trade-my-offer" style="min-height:80px; display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;" ondragover="event.preventDefault()" ondrop="dropTradeItem(event)"></div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="color:#e2e8f0;">Gold:</span> <input type="number" id="trade-my-gold" value="0" style="flex:1; padding:6px; background:rgba(15,23,42,0.8); color:#fff; border:1px solid #475569; border-radius: 0;" onchange="updateTradeGold()">
+                    </div>
+                </div>
+                <div style="flex:1; background:rgba(30,41,59,0.5); padding:15px; border:1px solid #475569; border-radius: 0;">
+                    <h3 style="margin-top:0; font-size:16px; color:#10b981; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">Their Offer</h3>
+                    <div id="trade-their-offer" style="min-height:80px; display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;"></div>
+                    <div id="trade-their-gold" style="color:#fbbf24; font-weight:bold;">Gold: 0</div>
                 </div>
             </div>
-            <div style="flex:1; background:#222; padding:10px; border:1px solid #444;">
-                <h3 style="margin-top:0; font-size:14px;">Their Offer</h3>
-                <div id="trade-their-offer" style="min-height:50px;"></div>
-                <div id="trade-their-gold" style="margin-top:10px;">Gold: 0</div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button id="trade-lock-btn" onclick="lockTrade()" style="flex:1; background:#3b82f6; color:white; border:none; padding:10px; cursor:pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#2563eb'" onmouseout="this.style.background='#3b82f6'">Lock Offer</button>
+                <button id="trade-confirm-btn" onclick="confirmTrade()" style="flex:1; background:#10b981; color:white; border:none; padding:10px; cursor:pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#059669'" onmouseout="this.style.background='#10b981'">Confirm</button>
+                <button onclick="cancelTrade()" style="flex:1; background:#ef4444; color:white; border:none; padding:10px; cursor:pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#dc2626'" onmouseout="this.style.background='#ef4444'">Cancel</button>
             </div>
-        </div>
-        <div style="display:flex; gap:10px; margin-top:15px;">
-            <button id="trade-lock-btn" onclick="lockTrade()" style="flex:1; background:#4466aa; color:white; border:none; padding:8px; cursor:pointer">Lock Offer</button>
-            <button id="trade-confirm-btn" onclick="confirmTrade()" style="flex:1; background:#44aa44; color:white; border:none; padding:8px; cursor:pointer">Confirm</button>
-            <button onclick="cancelTrade()" style="flex:1; background:#aa4444; color:white; border:none; padding:8px; cursor:pointer">Cancel</button>
         </div>
     </div>
 
-    <div id="npc-dialog" class="modal">
-        <h2 id="dialog-npc-name" style="margin-top:0">NPC</h2>
-        <div id="dialog-content" style="margin-bottom: 15px"></div>
-        <button onclick="closeNpcDialog()" style="background:#884444; color:white; border:none; padding:5px 15px; cursor:pointer">Close</button>
+    <div id="npc-dialog" class="modal" style="width: 500px; padding: 0; overflow: hidden; background: #1e1e2f; border: 2px solid #fbbf24; border-radius: 0;">
+        <div style="display:flex; background: #444; border-bottom: 2px solid #fbbf24; align-items:center;">
+            <div style="width: 80px; height: 80px; background: #000; border-right: 2px solid #fbbf24; display:flex; justify-content:center; align-items:center;">
+                <canvas id="dialog-npc-portrait" width="32" height="32" style="transform: scale(2); image-rendering: pixelated;"></canvas>
+            </div>
+            <div style="padding: 15px; flex: 1;">
+                <h2 id="dialog-npc-name" style="margin: 0; color: #fbbf24; text-shadow: none; font-size: 22px; text-transform: none; letter-spacing: normal;">NPC</h2>
+            </div>
+        </div>
+        <div style="padding: 20px;">
+            <div id="dialog-content" style="margin-bottom: 15px; text-align: left;"></div>
+        </div>
     </div>
 
-    <div id="shop-modal" class="modal" style="width:400px; text-align:left;">
-        <h2 style="margin-top:0; color:#ffcc44; text-align:center;">🛍️ Merchant Shop</h2>
-        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-            <span>Your Gold: <strong id="shop-player-gold" style="color:#ffd700;">0</strong></span>
+    <div id="shop-modal" class="modal" style="width:500px; padding:0; overflow:hidden; background:#1e1e2f; border:2px solid #fbbf24; border-radius: 0; text-align:left;">
+        <div style="background: #444; padding: 15px; border-bottom: 2px solid #fbbf24; text-align:center;">
+            <h2 style="margin:0; color:#fbbf24; font-size:24px; text-shadow:none; letter-spacing:normal;">🛍️ Merchant Shop</h2>
         </div>
-        <div style="display:flex; gap:10px;">
-            <div style="flex:1; background:#222; padding:10px; height:200px; overflow-y:auto; border:1px solid #444;">
-                <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #444;">Buy</h3>
-                <div id="shop-buy-list"></div>
+        <div style="padding: 20px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:15px; background:rgba(0,0,0,0.3); padding:10px; border-radius: 0; border:1px solid #334155;">
+                <span style="color:#e2e8f0;">Your Gold: <strong id="shop-player-gold" style="color:#fbbf24; font-size:16px;">0</strong></span>
             </div>
-            <div style="flex:1; background:#222; padding:10px; height:200px; overflow-y:auto; border:1px solid #444;">
-                <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #444;">Sell</h3>
-                <div id="shop-sell-list"></div>
+            <div style="display:flex; gap:15px;">
+                <div style="flex:1; background:rgba(30,41,59,0.5); padding:15px; height:250px; overflow-y:auto; border:1px solid #475569; border-radius: 0;">
+                    <h3 style="margin-top:0; font-size:16px; color:#38bdf8; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">Buy Items</h3>
+                    <div id="shop-buy-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+                </div>
+                <div style="flex:1; background:rgba(30,41,59,0.5); padding:15px; height:250px; overflow-y:auto; border:1px solid #475569; border-radius: 0;">
+                    <h3 style="margin-top:0; font-size:16px; color:#10b981; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">Sell Inventory</h3>
+                    <div id="shop-sell-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+                </div>
             </div>
+            <button onclick="closeShop()" style="margin-top:20px; width:100%; padding:10px 15px; background:#475569; color:white; border:none; border-radius: 0; font-weight:bold; cursor:pointer; transition:background 0.2s;" onmouseover="this.style.background='#ef4444'" onmouseout="this.style.background='#475569'">Leave Shop</button>
         </div>
-        <button onclick="closeShop()" style="margin-top:15px; background:#884444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%;">Leave Shop</button>
     </div>
 
-    <div id="auction-modal" class="modal" style="width:400px; display:none; background:#1e1e1e; color:white; border: 2px solid #8b5cf6;">
-        <h2 style="margin-top:0; color:#8b5cf6; text-align:center;">🏛️ Global Auction House</h2>
-        <div id="auction-list" style="margin-bottom: 10px; max-height: 200px; overflow-y: auto; padding: 5px;">
-            <!-- Auctions injected here -->
+    <div id="auction-modal" class="modal" style="width:450px; padding:0; overflow:hidden; display:none; background:#1e1e2f; border:2px solid #8b5cf6; border-radius: 0; text-align:left;">
+        <div style="background: #444; padding: 15px; border-bottom: 2px solid #8b5cf6; text-align:center;">
+            <h2 style="margin:0; color:#d8b4fe; font-size:22px; text-shadow:none; letter-spacing:normal;">🏛️ Global Auction House</h2>
         </div>
-        <div style="border-top: 1px solid #555; padding-top: 10px;">
-            <h3 style="margin-top: 0; font-size: 14px;">List an Item</h3>
-            <div style="display:flex; gap:5px;">
-                <input type="text" id="auction-item-name" placeholder="Item Name" style="flex: 1; padding: 5px; background: #333; color: white; border: 1px solid #555;" />
-                <input type="number" id="auction-item-price" placeholder="Price" style="width: 70px; padding: 5px; background: #333; color: white; border: 1px solid #555;" />
-                <button onclick="window.sellAuction()" style="background-color: #10b981; color: white; border: none; padding: 5px 10px; cursor: pointer;">Sell</button>
+        <div style="padding: 20px;">
+            <div id="auction-list" style="margin-bottom: 15px; max-height: 220px; overflow-y: auto; background:rgba(15,23,42,0.6); padding: 10px; border-radius: 0; border:1px solid #334155;">
+                <!-- Auctions injected here -->
             </div>
+            <div style="background:rgba(30,41,59,0.5); padding:15px; border-radius: 0; border:1px solid #475569;">
+                <h3 style="margin-top: 0; font-size: 15px; color:#a78bfa; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px; margin-bottom:12px;">List an Item</h3>
+                <div style="display:flex; gap:10px;">
+                    <input type="text" id="auction-item-name" placeholder="Item Name" style="flex: 2; padding: 8px 12px; background: rgba(15,23,42,0.8); color: white; border: 1px solid #475569; border-radius: 0;" />
+                    <input type="number" id="auction-item-price" placeholder="Price" style="flex: 1; padding: 8px 12px; background: rgba(15,23,42,0.8); color: white; border: 1px solid #475569; border-radius: 0;" />
+                    <button onclick="window.sellAuction()" style="background-color: #8b5cf6; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#7c3aed'" onmouseout="this.style.background='#8b5cf6'">Sell</button>
+                </div>
+            </div>
+            <button onclick="window.closeAuctionModal()" style="margin-top: 15px; width: 100%; background-color: #475569; color: white; border: none; padding: 10px; cursor: pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#ef4444'" onmouseout="this.style.background='#475569'">Close Auction House</button>
         </div>
-        <button onclick="window.closeAuctionModal()" style="margin-top: 15px; width: 100%; background-color: #ef4444; color: white; border: none; padding: 8px; cursor: pointer;">Close</button>
     </div>
 
     <div id="guild-modal" class="modal" style="width:350px;">
@@ -190,19 +248,82 @@
         
         <div id="guild-create-section">
             <input type="text" id="guild-name-input" placeholder="Enter Guild Name" style="width: 100%; padding: 8px; margin-bottom: 10px; background: #222; color: #fff; border: 1px solid #555; text-align: center;">
-            <button onclick="createGuild()" style="width:100%; background:#10b981; color:white; border:none; padding:8px; cursor:pointer; border-radius:4px;">Create Guild (100G)</button>
+            <button onclick="createGuild()" style="width:100%; background:#10b981; color:white; border:none; padding:8px; cursor:pointer; border-radius: 0;">Create Guild (100G)</button>
         </div>
         
         <div id="guild-manage-section" style="display:none; text-align:left;">
             <h3 id="guild-manage-name" style="margin-top:0; color:#fbbf24; text-align:center;"></h3>
+            
+            <div id="guild-manage-members" style="max-height:150px; overflow-y:auto; background:rgba(0,0,0,0.3); border-radius: 0; padding:5px; margin-bottom:10px;">
+                <em style="color:#666">Loading members...</em>
+            </div>
+            
             <div style="margin-bottom:10px;">
                 <input type="text" id="guild-invite-input" placeholder="Player Name to Invite" style="width: 100%; padding: 8px; margin-bottom: 5px; background: #222; color: #fff; border: 1px solid #555;">
-                <button onclick="inviteToGuild()" style="width:100%; background:#3b82f6; color:white; border:none; padding:6px; cursor:pointer; border-radius:4px;">Send Invite</button>
+                <button onclick="inviteToGuild()" style="width:100%; background:#3b82f6; color:white; border:none; padding:6px; cursor:pointer; border-radius: 0;">Send Invite</button>
             </div>
-            <button onclick="leaveGuild()" style="width:100%; background:#ef4444; color:white; border:none; padding:6px; cursor:pointer; border-radius:4px; margin-top:5px;">Leave Guild</button>
+            
+            <div id="guild-bank-section" style="margin-bottom:10px; border-top:1px solid #334155; border-bottom:1px solid #334155; padding:8px 0;">
+                <h4 style="margin:0 0 5px 0; color:#10b981; text-align:center;">🏦 Guild Bank</h4>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:12px; color:#aaa;">Balance: <span id="guild-bank-gold" style="color:#ffd700; font-weight:bold;">0G</span></span>
+                    <div style="display:flex; gap:4px;">
+                        <input type="number" id="guild-bank-amt" placeholder="Amt" style="width:50px; padding:4px; font-size:11px; background:#222; color:#fff; border:1px solid #555; border-radius: 0;">
+                        <button onclick="window.guildBankDeposit()" style="background:#10b981; color:white; border:none; padding:4px 6px; cursor:pointer; font-size:11px; border-radius: 0;">Deposit</button>
+                        <button onclick="window.guildBankWithdraw()" style="background:#f59e0b; color:white; border:none; padding:4px 6px; cursor:pointer; font-size:11px; border-radius: 0;">Withdraw</button>
+                    </div>
+                </div>
+            </div>
+            
+            <button onclick="leaveGuild()" style="width:100%; background:#ef4444; color:white; border:none; padding:6px; cursor:pointer; border-radius: 0; margin-top:5px;">Leave Guild</button>
         </div>
 
-        <button onclick="closeGuildModal()" style="margin-top:15px; background:#444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%; border-radius:4px;">Close</button>
+        <button onclick="closeGuildModal()" style="margin-top:15px; background:#444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%; border-radius: 0;">Close</button>
+    </div>
+
+    <div id="friends-modal" class="modal" style="width:350px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin-top:0; color:#10b981;">👥 Friends List</h3>
+            <span style="cursor:pointer; font-weight:bold; color:#64748b;" onclick="document.getElementById('friends-modal').style.display='none'; document.getElementById('overlay').style.display='none'">X</span>
+        </div>
+        <div id="friends-ui-list" style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 0; padding: 5px; margin-bottom: 10px;">
+            <em style="color:#666">No friends yet.</em>
+        </div>
+        <div style="display:flex; gap:5px;">
+            <input type="text" id="friend-add-input" class="auth-input" placeholder="Player Name" style="flex:1;">
+            <button onclick="window.addFriend()" class="btn-dialogue">Add Friend</button>
+        </div>
+    </div>
+
+    <div id="inspect-modal" class="modal" style="width:300px; text-align:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 id="inspect-name" style="margin-top:0; color:#8b5cf6;">🔍 Player</h3>
+            <span style="cursor:pointer; font-weight:bold; color:#64748b;" onclick="document.getElementById('inspect-modal').style.display='none'; document.getElementById('overlay').style.display='none'">X</span>
+        </div>
+        <p id="inspect-level-class" style="color:#aaa; font-size:12px; margin-top:-5px; margin-bottom:15px;">Level X Class</p>
+        
+        <div id="inspect-equip-grid" class="paperdoll" style="margin: 0 auto; transform: scale(0.8); transform-origin: top center; margin-bottom:-30px;">
+            <div id="inspect-amulet" class="eq-slot eq-amulet" title="Amulet">None</div>
+            <div id="inspect-helmet" class="eq-slot eq-helmet" title="Helmet">None</div>
+            <div class="eq-slot eq-empty"></div>
+            <div id="inspect-weapon" class="eq-slot eq-weapon" title="Weapon">None</div>
+            <div id="inspect-armor" class="eq-slot eq-armor" title="Armor">None</div>
+            <div id="inspect-shield" class="eq-slot eq-shield" title="Shield">None</div>
+            <div class="eq-slot eq-ring1"></div>
+            <div id="inspect-legs" class="eq-slot eq-legs" title="Legs">None</div>
+            <div class="eq-slot eq-ring2"></div>
+            <div id="inspect-boots" class="eq-slot eq-boots" title="Boots">None</div>
+        </div>
+    </div>
+
+    <div id="leaderboard-modal" class="modal" style="width:400px; text-align:center;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin-top:0; color:#f59e0b;">🏆 Global Leaderboards</h3>
+            <span style="cursor:pointer; font-weight:bold; color:#64748b;" onclick="document.getElementById('leaderboard-modal').style.display='none'; document.getElementById('overlay').style.display='none'">X</span>
+        </div>
+        <div id="leaderboard-ui-list" style="max-height: 250px; overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 0; padding: 10px; margin-bottom: 10px; text-align:left;">
+            <em style="color:#666">Loading rankings...</em>
+        </div>
     </div>
 
     <div id="settings-modal" class="modal" style="width:300px;">
@@ -213,7 +334,7 @@
         </div>
         <div style="margin-bottom: 15px;">
             <label style="color:#fff; font-weight:bold; display:block; margin-bottom:5px;">Chat Filter</label>
-            <select id="setting-chat-filter" style="width:100%; padding:8px; background:#222; color:#fff; border:1px solid #555; border-radius:4px;">
+            <select id="setting-chat-filter" style="width:100%; padding:8px; background:#222; color:#fff; border:1px solid #555; border-radius: 0;">
                 <option value="all">Show All Messages</option>
                 <option value="local">Hide Global Chat</option>
                 <option value="none">Mute All Chat</option>
@@ -223,49 +344,57 @@
             <label style="color:#fff; font-weight:bold; display:block; margin-bottom:5px;">Graphics</label>
             <label style="color:#aaa; font-size:12px;"><input type="checkbox" id="setting-particles" checked> Enable Particles/Weather</label>
         </div>
-        <button onclick="saveSettings()" style="margin-top:10px; width:100%; background:#10b981; color:white; border:none; padding:10px; border-radius:4px; cursor:pointer; font-weight:bold;">Save & Close</button>
+        <button onclick="saveSettings()" style="margin-top:10px; width:100%; background:#10b981; color:white; border:none; padding:10px; border-radius: 0; cursor:pointer; font-weight:bold;">Save & Close</button>
     </div>
 
-    <div id="bank-modal" class="modal" style="width:450px;">
-        <h2 style="margin-top:0; color:#fbbf24; text-align:center;">🏦 Royal Bank</h2>
+    <div id="bank-modal" class="modal" style="width:500px; padding:0; overflow:hidden; background:#1e1e2f; border:2px solid #fbbf24; border-radius: 0; text-align:left;">
+        <div style="background: #444; padding: 15px; border-bottom: 2px solid #fbbf24; text-align:center;">
+            <h2 style="margin:0; color:#fbbf24; font-size:24px; text-shadow:none; letter-spacing:normal;">🏦 Royal Bank</h2>
+        </div>
         
-        <div style="display:flex; justify-content:space-between; margin-bottom:10px; font-size:14px;">
-            <span>Wallet: <strong id="bank-wallet-gold" style="color:#ffd700;">0</strong>G</span>
-            <span>Bank: <strong id="bank-stored-gold" style="color:#ffd700;">0</strong>G</span>
-        </div>
-        <div style="display:flex; gap:10px; margin-bottom:15px;">
-            <input type="number" id="bank-gold-input" placeholder="Amount" style="flex:1; padding:8px; background:#222; color:#fff; border:1px solid #555;">
-            <button onclick="depositGold()" style="background:#10b981; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;">Deposit</button>
-            <button onclick="withdrawGold()" style="background:#ef4444; color:white; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;">Withdraw</button>
-        </div>
-
-        <div style="display:flex; gap:10px; margin-top:15px;">
-            <div style="flex:1; background:#222; padding:10px; height:200px; overflow-y:auto; border:1px solid #444;">
-                <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #444;">Inventory</h3>
-                <div id="bank-inv-list"></div>
+        <div style="padding: 20px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:15px; background:rgba(0,0,0,0.3); padding:10px; border-radius: 0; border:1px solid #334155;">
+                <span style="color:#e2e8f0;">Wallet: <strong id="bank-wallet-gold" style="color:#fbbf24; font-size:16px;">0</strong>G</span>
+                <span style="color:#e2e8f0;">Bank: <strong id="bank-stored-gold" style="color:#fbbf24; font-size:16px;">0</strong>G</span>
             </div>
-            <div style="flex:1; background:#222; padding:10px; height:200px; overflow-y:auto; border:1px solid #444;" ondragover="event.preventDefault()" ondrop="dropBankItem(event)">
-                <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #444;">Vault (<span id="bank-vault-count">0</span>/50)</h3>
-                <div id="bank-vault-list"></div>
+            <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <input type="number" id="bank-gold-input" placeholder="Amount" style="flex:1; padding:8px 12px; background:rgba(15,23,42,0.8); color:#fff; border:1px solid #475569; border-radius: 0;">
+                <button onclick="depositGold()" style="background:#10b981; color:white; border:none; padding:8px 15px; cursor:pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#059669'" onmouseout="this.style.background='#10b981'">Deposit</button>
+                <button onclick="withdrawGold()" style="background:#38bdf8; color:white; border:none; padding:8px 15px; cursor:pointer; border-radius: 0; font-weight:bold; transition:background 0.2s;" onmouseover="this.style.background='#0284c7'" onmouseout="this.style.background='#38bdf8'">Withdraw</button>
             </div>
-        </div>
 
-        <button onclick="closeBank()" style="margin-top:15px; background:#444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%; border-radius:4px;">Close Bank</button>
+            <div style="display:flex; gap:15px; margin-top:15px;">
+                <div style="flex:1; background:rgba(30,41,59,0.5); padding:15px; height:250px; overflow-y:auto; border:1px solid #475569; border-radius: 0;">
+                    <h3 style="margin-top:0; font-size:16px; color:#10b981; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">Inventory</h3>
+                    <div id="bank-inv-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+                </div>
+                <div style="flex:1; background:rgba(30,41,59,0.5); padding:15px; height:250px; overflow-y:auto; border:1px solid #475569; border-radius: 0;" ondragover="event.preventDefault()" ondrop="dropBankItem(event)">
+                    <h3 style="margin-top:0; font-size:16px; color:#38bdf8; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">Vault (<span id="bank-vault-count">0</span>/50)</h3>
+                    <div id="bank-vault-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+                </div>
+            </div>
+
+            <button onclick="closeBank()" style="margin-top:20px; width:100%; padding:10px 15px; background:#475569; color:white; border:none; border-radius: 0; font-weight:bold; cursor:pointer; transition:background 0.2s;" onmouseover="this.style.background='#ef4444'" onmouseout="this.style.background='#475569'">Close Bank</button>
+        </div>
     </div>
 
-    <div id="craft-modal" class="modal" style="width: 520px; max-width: 92vw; max-height: 82vh; overflow-y: auto;">
-        <h3 style="margin-top:0; color:#fbbf24;">⚒️ Workbench</h3>
-        <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">
-            Level <span id="craft-level">1</span> &middot;
-            <span id="craft-material-count">0</span> materials
+    <div id="craft-modal" class="modal" style="width:550px; padding:0; overflow:hidden; background:#1e1e2f; border:2px solid #f59e0b; border-radius: 0; text-align:left;">
+        <div style="background: #444; padding: 15px; border-bottom: 2px solid #f59e0b; text-align:center;">
+            <h2 style="margin:0; color:#fbbf24; font-size:24px; text-shadow:none; letter-spacing:normal;">⚒️ Workbench</h2>
         </div>
-        <div id="craft-list"></div>
-        <button onclick="closeCrafting()" style="margin-top:15px; background:#884444; color:white; border:none; padding:8px 15px; cursor:pointer; width:100%;">Leave Workbench</button>
+        <div style="padding: 20px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:15px; background:rgba(0,0,0,0.3); padding:10px; border-radius: 0; border:1px solid #78350f;">
+                <span style="color:#e2e8f0; font-size:14px;">Crafting Level <strong id="craft-level" style="color:#f59e0b; font-size:16px;">1</strong></span>
+                <span style="color:#e2e8f0; font-size:14px;">Materials: <strong id="craft-material-count" style="color:#38bdf8; font-size:16px;">0</strong></span>
+            </div>
+            <div id="craft-list" style="max-height: 400px; overflow-y: auto; background:rgba(30,41,59,0.5); padding:10px; border-radius: 0; border:1px solid #475569; display:flex; flex-direction:column; gap:8px;"></div>
+            <button onclick="closeCrafting()" style="margin-top:20px; width:100%; padding:10px 15px; background:#475569; color:white; border:none; border-radius: 0; font-weight:bold; cursor:pointer; transition:background 0.2s;" onmouseover="this.style.background='#ef4444'" onmouseout="this.style.background='#475569'">Leave Workbench</button>
+        </div>
     </div>
 
     <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2>⚔️ Tibia MMO - V2</h2>
-        <a href="changelog.html" target="_blank" style="color:#38bdf8; text-decoration:none; font-size:12px; font-weight:bold; background:#1e293b; padding:4px 8px; border-radius:4px; border:1px solid #334155;">📜 Patch Notes</a>
+        <a href="changelog.html" target="_blank" style="color:#38bdf8; text-decoration:none; font-size:12px; font-weight:bold; background:#1e293b; padding:4px 8px; border-radius: 0; border:1px solid #334155;">📜 Patch Notes</a>
     </div>
     <div style="font-size: 12px; color: #aaa; margin-bottom: 4px;">Move: WASD | Attack: Click | Talk/Shop: 'E' or Click | Spells: '1','2' | Epic: 'R' | Purify: 'P' | Potions: '3','4' | Mount: 'Z' | Fish: 'F' | Map: 'M'</div>
     
@@ -277,7 +406,7 @@
 
     <div style="position: absolute; top: 20px; right: 184px; display: flex; gap: 10px; z-index: 3;">
         <button id="audio-toggle" onclick="toggleAudio()" title="Toggle sound" aria-label="Toggle sound" style="position:relative; top:0; right:0;">&#128266;</button>
-        <button id="settings-toggle" onclick="openSettingsModal()" title="Settings" style="width:40px; height:40px; border-radius:50%; background:rgba(15,23,42,0.8); backdrop-filter:blur(8px); border:2px solid rgba(255,255,255,0.1); box-shadow:0 4px 15px rgba(0,0,0,0.5); color:#fff; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;">⚙️</button>
+        <button id="settings-toggle" onclick="openSettingsModal()" title="Settings" style="width:40px; height:40px; border-radius: 0; background:rgba(15,23,42,0.8); backdrop-filter:blur(8px); border:2px solid rgba(255,255,255,0.1); box-shadow: none; color:#fff; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;">⚙️</button>
     </div>
 
     <div id="game-wrapper">
@@ -290,13 +419,7 @@
             <div style="margin: 8px 0;">💰 <span id="gold-val" style="color:#ffd700; font-weight:bold;">0</span> Gold</div>
             <div id="status-val" style="color:#aaa; font-size:12px; margin-bottom:8px;">Status: Normal</div>
             
-            <button class="btn-spell" onclick="castPurify()" title="Clears poison and bleeding. 20 mana.">✨ Purify (Press 'P') - 20 MP</button>
-            <button class="btn-spell btn-skill" id="btn-skill" onclick="castSkill()" title="Your class's secondary spell — the same thing as pressing '2'. A healer instead casts Flash Heal on a target.">⚔️ Class Skill (Press '2') - 30 MP</button>
-            <button class="btn-spell" id="btn-evolve" onclick="requestEvolve()" disabled>✨ Evolve (Level 10)</button>
-            <div style="display:flex; gap:4px;">
-                <button class="btn-spell btn-item" onclick="useItem('Health Potion')">❤️ HP Potion ('3')</button>
-                <button class="btn-spell btn-item" onclick="useItem('Mana Potion')" style="background: linear-gradient(to bottom, #4444aa, #222288);">🔵 MP Potion ('4')</button>
-            </div>
+            <!-- Spell buttons moved to hotbar -->
             
             <div class="panel-box">
                 <h4>👕 Equipment</h4>
@@ -321,12 +444,13 @@
         </div>
 
         <div style="position: relative;">
-            <div id="target-info-panel" style="display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); background:rgba(15, 23, 42, 0.8); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:6px 12px; width:200px; text-align:center; z-index:10; backdrop-filter:blur(4px); box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+            <div id="target-info-panel" style="display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); background:rgba(15, 23, 42, 0.8); border:1px solid rgba(255,255,255,0.2); border-radius: 0; padding:6px 12px; width:200px; text-align:center; z-index:10; backdrop-filter:blur(4px); box-shadow: none;">
                 <div id="target-name" style="color:#fbbf24; font-weight:bold; font-size:14px; margin-bottom:4px; text-shadow:1px 1px 2px #000;">Target</div>
                 <div class="bar-container" style="height:12px; margin-bottom:0; background:rgba(0,0,0,0.6);">
                     <div id="target-hp-fill" class="bar-fill hp-fill" style="width:100%;"></div>
                     <div id="target-hp-text" class="bar-text" style="font-size:9px; top:1px;">100%</div>
                 </div>
+                <button id="target-inspect-btn" onclick="window.inspectTarget()" style="display:none; width:100%; background:#8b5cf6; color:white; border:none; padding:2px 0; border-radius: 0; font-size:10px; margin-top:4px; cursor:pointer;">🔍 Inspect</button>
             </div>
             <canvas id="gameCanvas" width="640" height="480" ondragover="event.preventDefault()" ondrop="window.dropOnGround(event)"></canvas>
         </div>
@@ -347,11 +471,13 @@
             <div class="panel-box">
                 <h4>🛡️ Guild</h4>
                 <div id="guild-list"><em style="color:#666">No Guild</em></div>
-                <button onclick="openGuildModal()" style="width:100%; margin-top:5px; background:#38bdf8; color:white; border:none; padding:4px; border-radius:4px; cursor:pointer; font-size:11px;">Manage Guild</button>
-                <button onclick="window.openAuctionModal()" style="width:100%; margin-top:5px; background:#8b5cf6; color:white; border:none; padding:4px; border-radius:4px; cursor:pointer; font-size:11px; font-weight: bold;">🏛️ Auction House</button>
+                <button onclick="openGuildModal()" style="width:100%; margin-top:5px; background:#38bdf8; color:white; border:none; padding:4px; border-radius: 0; cursor:pointer; font-size:11px;">Manage Guild</button>
+                <button onclick="window.openAuctionModal()" style="width:100%; margin-top:5px; background:#8b5cf6; color:white; border:none; padding:4px; border-radius: 0; cursor:pointer; font-size:11px; font-weight: bold;">🏛️ Auction House</button>
+                <button onclick="window.openFriendsModal()" style="width:100%; margin-top:5px; background:#10b981; color:white; border:none; padding:4px; border-radius: 0; cursor:pointer; font-size:11px; font-weight: bold;">👥 Friends List</button>
+                <button onclick="window.openLeaderboardModal()" style="width:100%; margin-top:5px; background:#f59e0b; color:white; border:none; padding:4px; border-radius: 0; cursor:pointer; font-size:11px; font-weight: bold;">🏆 Leaderboards</button>
             </div>
             <div style="margin-top:10px; display:flex; flex-direction:column; height: 100%;">
-                <div id="chat-tabs" style="display:flex; font-size:11px; font-weight:bold; cursor:pointer; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-bottom:none; border-radius:4px 4px 0 0;">
+                <div id="chat-tabs" style="display:flex; font-size:11px; font-weight:bold; cursor:pointer; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-bottom:none; border-radius: 0;">
                     <div onclick="setChatTab('all')" id="tab-all" style="flex:1; text-align:center; padding:4px; color:#fff; border-bottom:2px solid #3b82f6;">All</div>
                     <div onclick="setChatTab('global')" id="tab-global" style="flex:1; text-align:center; padding:4px; color:#aaa;">Global</div>
                     <div onclick="setChatTab('zone')" id="tab-zone" style="flex:1; text-align:center; padding:4px; color:#aaa;">Zone</div>
@@ -360,10 +486,60 @@
                     <div onclick="setChatTab('system')" id="tab-system" style="flex:1; text-align:center; padding:4px; color:#aaa;">System</div>
                 </div>
                 <div id="log-container"></div>
-                <input type="text" id="chat-input" placeholder="Press Enter to chat..." />
+                <div style="position: relative; display: flex;">
+                    <input type="text" id="chat-input" placeholder="Press Enter to chat..." style="flex:1;" />
+                    <button onclick="window.toggleEmoteMenu()" style="background:#475569; color:white; border:none; padding:0 8px; cursor:pointer; font-size:16px;">😀</button>
+                    <div id="emote-menu" style="display:none; position:absolute; bottom:100%; right:0; background:rgba(15,23,42,0.95); border:1px solid #334155; border-radius: 0; padding:6px; gap:8px; flex-wrap:wrap; width:160px; z-index:20; box-shadow: none;">
+                        <span onclick="window.sendEmote('👋')" style="cursor:pointer; font-size:20px;" title="Wave">👋</span>
+                        <span onclick="window.sendEmote('😂')" style="cursor:pointer; font-size:20px;" title="Laugh">😂</span>
+                        <span onclick="window.sendEmote('😭')" style="cursor:pointer; font-size:20px;" title="Cry">😭</span>
+                        <span onclick="window.sendEmote('😡')" style="cursor:pointer; font-size:20px;" title="Angry">😡</span>
+                        <span onclick="window.sendEmote('💃')" style="cursor:pointer; font-size:20px;" title="Dance">💃</span>
+                        <span onclick="window.sendEmote('🕺')" style="cursor:pointer; font-size:20px;" title="Dance">🕺</span>
+                        <span onclick="window.sendEmote('❤️')" style="cursor:pointer; font-size:20px;" title="Love">❤️</span>
+                        <span onclick="window.sendEmote('🍻')" style="cursor:pointer; font-size:20px;" title="Cheers">🍻</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
+    <div id="hotbar-container">
+        <div class="hotbar-slot" id="hotbar-slot-1" onclick="socket.send(JSON.stringify({ action: 'cast_spell', spellIndex: 1 }))" title="Primary Spell (key 1)">
+            <span class="hotkey-badge">1</span>
+            ⚔️
+            <div class="cooldown-overlay" id="cd-1"></div>
+        </div>
+        <div class="hotbar-slot" id="hotbar-slot-2" onclick="socket.send(JSON.stringify({ action: 'cast_spell', spellIndex: 2 }))" title="Secondary Spell (key 2)">
+            <span class="hotkey-badge">2</span>
+            🔥
+            <div class="cooldown-overlay" id="cd-2"></div>
+        </div>
+        <div class="hotbar-slot" id="hotbar-slot-r" onclick="socket.send(JSON.stringify({ action: 'cast_spell', spellIndex: 3 }))" title="Epic Spell (key R)">
+            <span class="hotkey-badge">R</span>
+            ⚡
+            <div class="cooldown-overlay" id="cd-r"></div>
+        </div>
+        <div class="hotbar-slot" id="hotbar-slot-hp" onclick="useItem('Health Potion')" title="Health Potion (key 3)">
+            <span class="hotkey-badge">3</span>
+            ❤️
+            <div class="cooldown-overlay" id="cd-hp"></div>
+        </div>
+        <div class="hotbar-slot" id="hotbar-slot-mp" onclick="useItem('Mana Potion')" title="Mana Potion (key 4)">
+            <span class="hotkey-badge">4</span>
+            🔵
+            <div class="cooldown-overlay" id="cd-mp"></div>
+        </div>
+        <div class="hotbar-slot" id="hotbar-slot-p" onclick="castPurify()" title="Purify (key P)">
+            <span class="hotkey-badge">P</span>
+            ✨
+            <div class="cooldown-overlay" id="cd-p"></div>
+        </div>
+        <div class="hotbar-slot" id="hotbar-slot-evolve" onclick="requestEvolve()" title="Evolve (Level 10, click only)" style="opacity: 0.5;">
+            🌟
+            <div class="cooldown-overlay" id="cd-evolve"></div>
+        </div>
+    </div>
+    
     <script src="/js/engine.js?v=3"></script>
     <script src="/js/ui.js?v=3"></script>
     <script src="/js/renderer.js?v=3"></script>

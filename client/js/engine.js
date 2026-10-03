@@ -27,6 +27,20 @@
         let floorTransitions = [];
         window.currentZ = 0;
 
+        function triggerCooldown(slotId, remainingMs) {
+            const slot = document.getElementById(slotId);
+            if (!slot) return;
+            let overlay = slot.querySelector('.cooldown-overlay');
+            if (overlay) {
+                // Restart animation
+                overlay.style.transition = 'none';
+                overlay.style.height = '100%';
+                void overlay.offsetWidth; // Force reflow
+                overlay.style.transition = `height ${remainingMs}ms linear`;
+                overlay.style.height = '0%';
+            }
+        }
+
         function getItemStats(name) {
             let tooltip = "";
             if (itemDict.materials && itemDict.materials[name]) {
@@ -491,6 +505,16 @@
                 if (data.type === 'fireball') audio.fireball();
                 else if (data.type === 'snipe') audio.shoot();
                 else audio.spellBlast();
+            }
+            else if (data.action === "spell_cooldown") {
+                let slotId = null;
+                if (data.spellIndex === 1) slotId = "hotbar-slot-1";
+                else if (data.spellIndex === 2) slotId = "hotbar-slot-2";
+                else if (data.spellIndex === 3) slotId = "hotbar-slot-r";
+                
+                if (slotId && data.remainingMs > 0) {
+                    triggerCooldown(slotId, data.remainingMs);
+                }
             }
 
             else if (data.action === "ground_sync") { groundItemsLocal = data.items; }
@@ -1200,7 +1224,7 @@
             // what the server expects to receive. Changing them is not a
             // refactor, it is a protocol change.
             if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 1 })); return; }
-            if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); triggerCooldown('hotbar-slot-4', 2000); return; }
+            if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); return; }
             if (e.key === "r" || e.key === "R") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 3 })); return; }
             // Purify used to be wired to "1" as well, which made it unreachable:
             // the cast_spell line above returned first, so pressing 1 cast the

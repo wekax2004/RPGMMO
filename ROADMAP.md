@@ -34,7 +34,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 2.3 | Terrain variation tiles | ✅ | Flowers and pebbles drawn procedurally on grass tiles. |
 | 2.4 | Dungeon ambiance / torch glow | ✅ | Floor-tinted background at `renderer.js:108`. |
 | 2.5 | Smooth movement interpolation | ✅ | `renderX`/`renderY` lerp. |
-| 2.6 | Idle animation frames | ⬜ | Single-frame sprites throughout. |
+| 2.6 | Idle animation frames | ✅ | Cycling through movement frames on a timer when idle. |
 | 2.7 | Death animation + particles | ✅ | Blood particle explosion on death, plus death modal. |
 | 2.8 | Chest/loot spawn particles | ✅ | |
 | 2.9 | Water animation | ✅ | Oscillating wave effect added to renderer. |
@@ -48,7 +48,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 3.2 | Grid inventory | ✅ | `.inv-grid` / `.inv-cell`. |
 | 3.3 | Item tooltips | ✅ | `showTooltip`, `moveTooltip`, rarity-safe via `escapeHtml`. |
 | 3.4 | Target info panel | ✅ | Name + HP bar. |
-| 3.5 | Cooldown indicators | 🔶 | **Server half done, client overlay still to build.** `spell_cooldown` is now sent on every cast *and* on every cooldown refusal, for the cheap and the epic slot. `readyAt` is an absolute timestamp rather than a duration, so a client countdown survives a dropped packet. Previously a basic spell on cooldown was a bare `return;` with nothing sent -- pressing the key did nothing the player could see. Still to do: the hotbar overlay that consumes it. |
+| 3.5 | Cooldown indicators | ✅ | Server sends `spell_cooldown`, client consumes and renders overlay over hotbar slot. |
 | 3.6 | Level-up celebration | ✅ | |
 | 3.7 | Death screen | ✅ | Covered by `tests/browser/test_class_preview.js`. |
 | 3.8 | Loading screen | ✅ | |

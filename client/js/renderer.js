@@ -3,10 +3,10 @@
         // falls back to the emoji renderer instead of throwing inside draw().
         const SPRITE_BASE = "/assets/";
         const SPRITE_FILES = {
-            warrior: "warrior_sprite.jpg",
-            mage: "mage_sprite.jpg",
-            ranger: "ranger_sprite.jpg",
-            healer: "healer_sprite.jpg",
+            warrior: "warrior_sprite.png",
+            mage: "mage_sprite.png",
+            ranger: "ranger_sprite.png",
+            healer: "healer_sprite.png",
             spider: "spider_sprite.jpg",
             skeleton: "skeleton_sprite.jpg",
             bear: "bear_sprite.jpg",
@@ -15,10 +15,11 @@
             goblin: "goblin_sprite.jpg",
             yeti: "yeti_sprite.jpg",
             dragon: "dragon_sprite.jpg",
-            chest: "chest_sprite.jpg",
+            chest: "chest_sprite.png",
             corpse: "corpse_sprite.jpg",
             npc: "npc_sprite.jpg",
             npc2: "npc_2_magenta_1790579483384.jpg",
+            npc_aria: "npc_aria_sprite.png",
             grass: "grass_sprite.jpg",
             grass2: "grass_sprite.jpg",
             sand: "sand_tile.jpg",
@@ -32,9 +33,13 @@
             bone: "bone_sprite.jpg",
             ladder: "ladder_sprite.jpg",
             stairs_up: "stairs_up_sprite.jpg",
-            merchant: "merchant_sprite.jpg",
-            banker: "banker_sprite.jpg",
-            king_arthur: "king_arthur_sprite.jpg",
+            merchant: "merchant_sprite.png",
+            banker: "banker_sprite.png",
+            king_arthur: "king_arthur_sprite.png",
+            npc_elara: "npc_elara.png",
+            npc_frost: "npc_frost.png",
+            npc_mordecai: "npc_mordecai.png",
+            npc_joe: "npc_joe.png",
             // Bosses, from the OpenTibia sprite pack (CC BY 4.0). These three
             // were the only mob types with no art at all and fell through to a
             // grey box. Sliced out of the pack's own sheets by
@@ -42,7 +47,11 @@
             // per-sprite provenance.
             spider_queen: "boss_spider_queen.png",
             ice_dragon: "boss_ice_dragon.png",
-            skeleton_king: "boss_skeleton_king.png"
+            skeleton_king: "boss_skeleton_king.png",
+            orc_warlord: "orc_warlord_sheet.png",
+            cave: "cave_sheet.png",
+            town_floor: "town_floor.jpg",
+            moon_flower: "moon_flower.png"
         };
         const loadedSprites = {};
         Object.keys(SPRITE_FILES).forEach(key => {
@@ -90,8 +99,12 @@
         }
 
         function draw() {
-            cameraX = player.x - SCREEN_W / 2 + 16;
-            cameraY = player.y - SCREEN_H / 2 + 16;
+            if (player.renderX === undefined) { player.renderX = player.x; player.renderY = player.y; }
+            player.renderX += (player.x - player.renderX) * 0.2;
+            player.renderY += (player.y - player.renderY) * 0.2;
+            
+            cameraX = player.renderX - SCREEN_W / 2 + 16;
+            cameraY = player.renderY - SCREEN_H / 2 + 16;
             cameraX = Math.max(0, Math.min(cameraX, MAP_W - SCREEN_W));
             cameraY = Math.max(0, Math.min(cameraY, MAP_H - SCREEN_H));
 
@@ -114,17 +127,20 @@
             const waterImg = getSprite("water");
 
             if (window.currentZ >= 0) {
-                // Draw regions
-                ctx.fillStyle = "#2c4021"; 
-                ctx.fillRect(800, 0, 1200, 1200); // Forest base
+                // Base map grass
                 if (grassImg) {
                     const offscreen = document.createElement('canvas');
                     offscreen.width = 256; offscreen.height = 256;
                     offscreen.getContext('2d').drawImage(grassImg, 0, 0, 256, 256);
                     const grassPattern = ctx.createPattern(offscreen, 'repeat');
                     ctx.fillStyle = grassPattern;
-                    ctx.fillRect(800, 0, 1200, 1200); // Forest pattern
+                    ctx.fillRect(0, 0, MAP_W, MAP_H);
+                } else {
+                    ctx.fillStyle = "#2c4021"; 
+                    ctx.fillRect(0, 0, MAP_W, MAP_H);
                 }
+                
+                // Draw regions
                 
                 ctx.fillStyle = "#6b5b40"; ctx.fillRect(2000, 0, 1200, 1600); // Eastern Ruins
                 ctx.fillStyle = "#2a3b32"; ctx.fillRect(0, 800, 1600, 1000); // Swamp
@@ -138,27 +154,23 @@
                 
                 ctx.fillStyle = "#111118"; ctx.fillRect(1600, 2600, 1600, 600); // Crypt
                 
-                // City safe zone
-                ctx.fillStyle = "#4a5d4e";
-                ctx.fillRect(0, 0, 800, 800); // City base
-                if (grassImg) {
-                    const offscreen = document.createElement('canvas');
-                    offscreen.width = 256; offscreen.height = 256;
-                    const oCtx = offscreen.getContext('2d');
-                    oCtx.drawImage(grassImg, 0, 0, 256, 256);
-                    
-                    // Stage 2: Terrain variations (flowers, pebbles)
-                    oCtx.fillStyle = "#ff69b4"; oCtx.fillRect(45, 60, 4, 4); // Pink flower
-                    oCtx.fillStyle = "#ffffff"; oCtx.fillRect(150, 190, 3, 3); // White flower
-                    oCtx.fillStyle = "#888888"; oCtx.fillRect(210, 80, 5, 4); // Pebble
-                    oCtx.fillStyle = "#ffff00"; oCtx.fillRect(90, 220, 4, 4); // Yellow flower
-                    
-                    const grassPattern = ctx.createPattern(offscreen, 'repeat');
-                    ctx.fillStyle = grassPattern;
-                    ctx.fillRect(0, 0, 800, 800); // City pattern
+                // City safe zone plaza pattern
+                const townFloorImg = getSprite("town_floor");
+                if (townFloorImg) {
+                    const townPattern = ctx.createPattern(townFloorImg, 'repeat');
+                    ctx.fillStyle = townPattern;
+                    ctx.fillRect(0, 0, 640, 640);
+                } else {
+                    ctx.fillStyle = "#333333";
+                    ctx.fillRect(0, 0, 640, 640);
                 }
+                // Add a border to the town edge
+                ctx.strokeStyle = "#1a1a1a";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(0, 0, 640, 640);
+                ctx.lineWidth = 1;
                 
-                ctx.fillStyle = "rgba(0, 255, 100, 0.15)"; ctx.fillRect(0, 0, 640, 640); // Safe zone aura
+                ctx.fillStyle = "rgba(0, 255, 100, 0.05)"; ctx.fillRect(0, 0, 640, 640); // Very faint safe zone aura
             }
 
             ctx.strokeStyle = "rgba(0,0,0,0.1)";
@@ -182,10 +194,25 @@
                     else { ctx.fillStyle = "#1b3e15"; ctx.fillRect(obs.x, obs.y, 32, 32); }
                 } 
                 else if (obs.type === "rock") { ctx.fillStyle = "#757575"; ctx.beginPath(); ctx.arc(obs.x + 16, obs.y + 16, 14, 0, Math.PI*2); ctx.fill(); } 
-                else if (obs.type === "wall") { ctx.fillStyle = "#222"; ctx.fillRect(obs.x, obs.y, 32, 32); }
-                else if (obs.type === "ruin_wall") { ctx.fillStyle = "#4a4a40"; ctx.fillRect(obs.x, obs.y, 32, 32); }
+                else if (obs.type === "wall") { 
+                    ctx.fillStyle = "#5c5c5c"; ctx.fillRect(obs.x, obs.y, 32, 32); 
+                    ctx.fillStyle = "#7a7a7a"; ctx.fillRect(obs.x, obs.y, 32, 4);
+                    ctx.fillStyle = "#3d3d3d"; ctx.fillRect(obs.x, obs.y+28, 32, 4);
+                    ctx.fillStyle = "#6e6e6e"; ctx.fillRect(obs.x, obs.y, 4, 32);
+                    ctx.fillStyle = "#4a4a4a"; ctx.fillRect(obs.x+28, obs.y, 4, 32);
+                }
+                else if (obs.type === "ruin_wall") { 
+                    ctx.fillStyle = "#4a4a40"; ctx.fillRect(obs.x, obs.y, 32, 32); 
+                    ctx.fillStyle = "#5c5c50"; ctx.fillRect(obs.x, obs.y, 32, 4);
+                    ctx.fillStyle = "#2a2a20"; ctx.fillRect(obs.x, obs.y+28, 32, 4);
+                    ctx.fillStyle = "#4f4f45"; ctx.fillRect(obs.x, obs.y, 4, 32);
+                    ctx.fillStyle = "#3a3a30"; ctx.fillRect(obs.x+28, obs.y, 4, 32);
+                }
                 else if (obs.type === "water") { 
-                    if (waterImg) { ctx.drawImage(waterImg, obs.x, obs.y, 32, 32); }
+                    if (waterImg) { 
+                        let waveOffset = Math.sin(Date.now() / 400 + obs.x + obs.y) * 3;
+                        ctx.drawImage(waterImg, 0, 0, 32, 32, obs.x, obs.y + waveOffset, 32, 32);
+                    }
                     else { ctx.fillStyle = "rgba(40, 150, 120, 0.7)"; ctx.fillRect(obs.x, obs.y, 32, 32); }
                 }
                 else if (obs.type === "cactus") { ctx.fillStyle = "#2b6b25"; ctx.fillRect(obs.x + 8, obs.y + 4, 16, 24); }
@@ -213,7 +240,7 @@
                 'Ancient Bone': getSprite("bone"),
                 'Leather': getSprite("leather"),
                 'Poison Mushroom': getSprite("mushroom"),
-                'Moonflower': getSprite("mushroom")
+                'Moon Flower': getSprite("moon_flower")
             };
             for (let id in gatherNodes) {
                 let n = gatherNodes[id];
@@ -230,6 +257,12 @@
                     const item = groundItemsLocal[i];
                     ctx.font = "20px Arial";
                     ctx.fillText("🎁", item.x + 2, item.y + 20);
+                    if (Math.random() < 0.05 && window.particleSetting !== false && typeof particles !== 'undefined') {
+                        particles.push({
+                            x: item.x + Math.random() * 16 + 8, y: item.y + Math.random() * 16 + 8,
+                            vx: 0, vy: -0.5, life: 1.0, color: "rgba(251, 191, 36, 0.8)", size: Math.random() * 2 + 1, gravity: -0.02
+                        });
+                    }
                 }
             }
             for (let id in clientCorpses) {
@@ -249,6 +282,12 @@
                 } else {
                     ctx.font = "24px Arial"; ctx.fillText("🎁", c.x + 4, c.y + 24);
                 }
+                if (Math.random() < 0.05 && window.particleSetting !== false && typeof particles !== 'undefined') {
+                    particles.push({
+                        x: c.x + Math.random() * 32, y: c.y + Math.random() * 32,
+                        vx: 0, vy: -0.5, life: 1.0, color: "rgba(251, 191, 36, 0.8)", size: Math.random() * 2 + 1, gravity: -0.02
+                    });
+                }
             }
             for (let id in npcsLocal) {
                 let npc = npcsLocal[id];
@@ -266,11 +305,11 @@
                     if (npc.name === "Merchant Bob") spr = getSprite("merchant");
                     else if (npc.name === "Banker Vault") spr = getSprite("banker");
                     else if (npc.name === "King Arthur") spr = getSprite("king_arthur");
-                    else if (npc.name === "Trainer Aria") spr = getSprite("warrior");
-                    else if (npc.name === "Scout Elara") spr = getSprite("ranger");
-                    else if (npc.name === "Hermit Frost") spr = getSprite("healer");
-                    else if (npc.name === "Sage Mordecai") spr = getSprite("mage");
-                    else if (npc.name === "Mayor Joe") spr = getSprite("banker");
+                    else if (npc.name === "Trainer Aria") spr = getSprite("npc_aria");
+                    else if (npc.name === "Scout Elara") spr = getSprite("npc_elara");
+                    else if (npc.name === "Hermit Frost") spr = getSprite("npc_frost");
+                    else if (npc.name === "Sage Mordecai") spr = getSprite("npc_mordecai");
+                    else if (npc.name === "Mayor Joe") spr = getSprite("npc_joe");
                     else {
                         const npcSprite = getSprite("npc");
                         const npc2Sprite = getSprite("npc2");
@@ -321,6 +360,9 @@
 
                 // Map elite monsters to their base sprites
                 let spriteKey = m.type.startsWith('elite_') ? m.type.substring(6) : m.type;
+                if (spriteKey === 'spider_queen') spriteKey = 'spider';
+                if (spriteKey === 'skeleton_king') spriteKey = 'skeleton';
+                if (spriteKey === 'ice_dragon') spriteKey = 'dragon';
                 
                 const mobSprite = getSprite(spriteKey);
                 if (mobSprite) {
@@ -328,10 +370,12 @@
                     // Increase size if it's a boss
                     const renderSize = isBoss ? size * 1.5 : 32;
                     const offset = isBoss ? (renderSize - size) / 2 : 0;
-                    if (['spider', 'skeleton', 'dragon', 'bear', 'bandit', 'minotaur', 'goblin', 'yeti', 'ranger', 'healer'].includes(spriteKey) || mobSprite.width !== mobSprite.height) { // Only slice if it's actually a spritesheet
+                    if (mobSprite.width !== mobSprite.height) { // Only slice if it's actually a spritesheet
                         const fw = mobSprite.width / 3;
                         const fh = mobSprite.height / 4;
-                        const sx = (m.moveFrame || 0) * fw;
+                        const isIdle = Math.abs(m.renderX - m.x) < 1 && Math.abs(m.renderY - m.y) < 1;
+                        const frameIdx = isIdle ? [1, 0, 1, 2][Math.floor(Date.now() / 400) % 4] : (m.moveFrame || 0);
+                        const sx = frameIdx * fw;
                         const sy = (m.dir || 0) * fh;
                         ctx.drawImage(mobSprite, sx, sy, fw, fh, drawX - offset, drawY - offset, renderSize, renderSize);
                     } else {
@@ -342,12 +386,20 @@
                     ctx.font = isBoss ? "40px Arial" : "28px Arial";
                     ctx.fillText("👾", drawX, drawY + size - 4);
                 }
-                ctx.fillStyle = "red"; ctx.fillRect(drawX, drawY - 8, size, 4);
-                ctx.fillStyle = "#00ff00"; ctx.fillRect(drawX, drawY - 8, size * (m.hp / m.maxHp), 4);
+                // Draw Mob Health Bar
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.fillRect(drawX - 1, drawY - 9, size + 2, 6); // Border
+                ctx.fillStyle = "#b91c1c";
+                ctx.fillRect(drawX, drawY - 8, size, 4); // Red BG
+                ctx.fillStyle = "#22c55e"; // Bright green
+                ctx.fillRect(drawX, drawY - 8, size * (m.hp / m.maxHp), 4); // Current HP
                 
                 // Draw Mob Name
-                ctx.fillStyle = isBoss ? '#ff00ff' : (m.isElite ? '#ffff00' : '#ffaa88'); 
-                ctx.font = isBoss ? 'bold 12px Arial' : (m.isElite ? 'bold 10px Arial' : '10px Arial');
+                const nameColor = isBoss ? '#c084fc' : (m.isElite ? '#fbbf24' : '#f8fafc'); 
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.font = isBoss ? '900 13px Inter' : (m.isElite ? '800 11px Inter' : '700 11px Inter');
+                ctx.fillText(m.name, drawX + 1, drawY - 12 + 1); // Drop shadow
+                ctx.fillStyle = nameColor; 
                 ctx.fillText(m.name, drawX, drawY - 12);
                 
                 if (currentTargetId === m.id) { ctx.strokeStyle = "red"; ctx.lineWidth = 2; ctx.strokeRect(drawX, drawY, size, size); ctx.lineWidth = 1; }
@@ -472,8 +524,11 @@
                 }
                 
                 let yOffset = 0;
+                if (op.moveFrame === 1 || op.moveFrame === undefined) {
+                    yOffset = Math.sin(Date.now() / 400 + op.renderX) * 2;
+                }
                 if (op.isMounted) {
-                    yOffset = -10;
+                    yOffset -= 10;
                     ctx.font = "28px Arial";
                     ctx.fillText("🐎", op.renderX, op.renderY + 28);
                 }
@@ -483,7 +538,9 @@
                     if (true) { // All player classes are 3x4 spritesheets
                         const fw = opSprite.width / 3;
                         const fh = opSprite.height / 4;
-                        const sx = (op.moveFrame || 0) * fw;
+                        const isIdle = Math.abs(op.renderX - op.x) < 1 && Math.abs(op.renderY - op.y) < 1;
+                        const frameIdx = isIdle ? [1, 0, 1, 2][Math.floor(Date.now() / 400) % 4] : (op.moveFrame || 0);
+                        const sx = frameIdx * fw;
                         const sy = (op.dir || 0) * fh;
                         ctx.drawImage(opSprite, sx, sy, fw, fh, op.renderX - 8, op.renderY - 16 + yOffset, 48, 48);
                     } else {
@@ -495,23 +552,43 @@
                 }
                 drawEquipment(ctx, op.equipment, op.renderX, op.renderY);
                 
-                ctx.fillStyle = "white"; ctx.font = "bold 11px 'Inter'"; ctx.fillText(op.name, op.renderX - 5, op.renderY - 8);
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.font = "800 11px 'Inter'"; 
+                ctx.fillText(op.name, op.renderX - 5 + 1, op.renderY - 8 + 1); // Shadow
+                ctx.fillStyle = "white"; 
+                ctx.fillText(op.name, op.renderX - 5, op.renderY - 8);
                 if (op.guild) {
-                    ctx.fillStyle = "#38bdf8"; ctx.font = "10px 'Inter'"; ctx.fillText(`<${op.guild}>`, op.renderX - 5, op.renderY + 44);
+                    ctx.fillStyle = "rgba(0,0,0,0.8)";
+                    ctx.font = "700 10px 'Inter'"; 
+                    ctx.fillText(`<${op.guild}>`, op.renderX - 5 + 1, op.renderY + 44 + 1); // Shadow
+                    ctx.fillStyle = "#38bdf8"; 
+                    ctx.fillText(`<${op.guild}>`, op.renderX - 5, op.renderY + 44);
                 }
                 if (op.skulled) {
                     ctx.font = "12px Arial"; ctx.fillText("💀", op.renderX + 22, op.renderY - 8);
                 }
+                if (op.poison > 0) {
+                    ctx.font = "14px Arial"; ctx.fillText("🤢", op.renderX - 20, op.renderY + 10);
+                }
+                if (op.bleed > 0) {
+                    ctx.font = "14px Arial"; ctx.fillText("🩸", op.renderX - 20, op.renderY + 24);
+                }
+                if (op.stun) {
+                    ctx.font = "14px Arial"; ctx.fillText("💫", op.renderX + 10, op.renderY - 20);
+                }
                 if (currentTargetId === id) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(op.renderX, op.renderY, 32, 32); ctx.lineWidth = 1; }
             }
 
-            if (player.warmode) { ctx.fillStyle = "rgba(239, 68, 68, 0.4)"; ctx.beginPath(); ctx.arc(player.x + 16, player.y + 16, 16, 0, Math.PI * 2); ctx.fill(); }
+            if (player.warmode) { ctx.fillStyle = "rgba(239, 68, 68, 0.4)"; ctx.beginPath(); ctx.arc(player.renderX + 16, player.renderY + 16, 16, 0, Math.PI * 2); ctx.fill(); }
             
             let myYOffset = 0;
+            if (player.moveFrame === 1 || player.moveFrame === undefined) {
+                myYOffset = Math.sin(Date.now() / 400) * 2;
+            }
             if (player.isMounted) {
-                myYOffset = -10;
+                myYOffset -= 10;
                 ctx.font = "28px Arial";
-                ctx.fillText("🐎", player.x, player.y + 28);
+                ctx.fillText("🐎", player.renderX, player.renderY + 28);
             }
 
             const mySprite = getSprite(player.classType);
@@ -519,26 +596,60 @@
                 if (true) { // All player classes are 3x4 spritesheets
                     const fw = mySprite.width / 3;
                     const fh = mySprite.height / 4;
-                    const sx = (player.moveFrame || 0) * fw;
+                    const isIdle = Math.abs(player.renderX - player.x) < 1 && Math.abs(player.renderY - player.y) < 1;
+                    const frameIdx = isIdle ? [1, 0, 1, 2][Math.floor(Date.now() / 400) % 4] : (player.moveFrame || 0);
+                    const sx = frameIdx * fw;
                     const sy = (player.dir || 0) * fh;
-                    ctx.drawImage(mySprite, sx, sy, fw, fh, player.x - 8, player.y - 16 + myYOffset, 48, 48);
+                    ctx.drawImage(mySprite, sx, sy, fw, fh, player.renderX - 8, player.renderY - 16 + myYOffset, 48, 48);
                 } else {
-                    ctx.drawImage(mySprite, player.x - 8, player.y - 16 + myYOffset, 48, 48);
+                    ctx.drawImage(mySprite, player.renderX - 8, player.renderY - 16 + myYOffset, 48, 48);
                 }
             } else {
                 let myEmoji = player.classType === "warrior" ? "⚔️" : player.classType === "mage" ? "🧙" : player.classType === "ranger" ? "🏹" : "👼";
-                ctx.font = "24px Arial"; ctx.fillText(myEmoji, player.x + 4, player.y + 24 + myYOffset);
+                ctx.font = "24px Arial"; ctx.fillText(myEmoji, player.renderX + 4, player.renderY + 24 + myYOffset);
             }
-            drawEquipment(ctx, player.equipment, player.x, player.y);
+            drawEquipment(ctx, player.equipment, player.renderX, player.renderY);
             
-            ctx.fillStyle = "#fbbf24"; ctx.font = "bold 12px 'Inter'"; ctx.fillText(myName, player.x - 5, player.y - 8);
+            ctx.fillStyle = "rgba(0,0,0,0.8)";
+            ctx.font = "800 12px 'Inter'"; 
+            ctx.fillText(myName, player.renderX - 5 + 1, player.renderY - 8 + 1); // Shadow
+            ctx.fillStyle = "#fbbf24"; 
+            ctx.fillText(myName, player.renderX - 5, player.renderY - 8);
             if (player.guild) {
-                ctx.fillStyle = "#38bdf8"; ctx.font = "10px 'Inter'"; ctx.fillText(`<${player.guild}>`, player.x - 5, player.y + 44);
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.font = "700 10px 'Inter'"; 
+                ctx.fillText(`<${player.guild}>`, player.renderX - 5 + 1, player.renderY + 44 + 1); // Shadow
+                ctx.fillStyle = "#38bdf8"; 
+                ctx.fillText(`<${player.guild}>`, player.renderX - 5, player.renderY + 44);
             }
             if (player.skulled) {
-                ctx.font = "14px Arial"; ctx.fillText("💀", player.x + 24, player.y - 8);
+                ctx.font = "14px Arial"; ctx.fillText("💀", player.renderX + 24, player.renderY - 8);
             }
-            if (currentTargetId === myId) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(player.x, player.y, 32, 32); ctx.lineWidth = 1; }
+            if (player.poison > 0) {
+                ctx.font = "14px Arial"; ctx.fillText("🤢", player.renderX - 20, player.renderY + 10);
+            }
+            if (player.bleed > 0) {
+                ctx.font = "14px Arial"; ctx.fillText("🩸", player.renderX - 20, player.renderY + 24);
+            }
+            if (player.stun) {
+                ctx.font = "14px Arial"; ctx.fillText("💫", player.renderX + 10, player.renderY - 20);
+            }
+            if (currentTargetId === myId) { ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 2; ctx.strokeRect(player.renderX, player.renderY, 32, 32); ctx.lineWidth = 1; }
+
+            // --- Dungeon Torch Lighting Overlay ---
+            if (window.currentZ < 0) {
+                let grad = ctx.createRadialGradient(
+                    player.renderX + 16, player.renderY + 16, 48, 
+                    player.renderX + 16, player.renderY + 16, 350
+                );
+                grad.addColorStop(0, "rgba(0, 0, 0, 0)");
+                grad.addColorStop(0.5, "rgba(0, 0, 0, 0.6)");
+                grad.addColorStop(1, "rgba(0, 0, 0, 0.98)");
+                
+                // Overlay to darken the edges of the screen
+                ctx.fillStyle = grad;
+                ctx.fillRect(cameraX, cameraY, SCREEN_W, SCREEN_H);
+            }
 
             ctx.restore();
 
@@ -648,6 +759,23 @@
                 ctx.font = "bold 16px 'Inter', sans-serif";
                 ctx.textAlign = "center";
                 ctx.fillText(boss.name + " (" + Math.ceil(pct*100) + "%)", SCREEN_W / 2, 40);
+                ctx.textAlign = "left";
+            }
+            let perfTime = performance.now();
+            window.frameCount = (window.frameCount || 0) + 1;
+            if (!window.lastFpsTime) window.lastFpsTime = perfTime;
+            if (perfTime - window.lastFpsTime >= 1000) {
+                window.currentFps = window.frameCount;
+                window.frameCount = 0;
+                window.lastFpsTime = perfTime;
+            }
+            if (window.currentFps !== undefined) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+                ctx.fillRect(SCREEN_W - 70, 10, 60, 20);
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 12px 'Inter', sans-serif";
+                ctx.textAlign = "right";
+                ctx.fillText(window.currentFps + " FPS", SCREEN_W - 15, 24);
                 ctx.textAlign = "left";
             }
             

@@ -47,6 +47,14 @@
                 if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
             }
 
+            setVolume(val) {
+                if (this.master && !this.muted) {
+                    const now = this.ctx.currentTime;
+                    this.master.gain.cancelScheduledValues(now);
+                    this.master.gain.setTargetAtTime(Math.max(0, Math.min(1, val)), now, 0.02);
+                }
+            }
+
             setMuted(muted) {
                 this.muted = !!muted;
                 if (this.master) {
@@ -414,12 +422,27 @@
             else if(channel === "guild" || msg.startsWith("[Guild]")) { color = "#ff8800"; channel = "guild"; }
             else if(channel === "party" || msg.startsWith("[Party]")) { color = "#00ff00"; channel = "party"; }
             else if(channel === "zone" || msg.startsWith("[Zone]")) { color = "#00ffff"; channel = "zone"; }
+            else if(channel === "whisper" || msg.startsWith("[Whisper]")) { color = "#d946ef"; channel = "whisper"; }
             else if(channel === "global") { color = "#ffffff"; }
-            
             let timeStr = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             chatMessages.push({ text: msg, channel: channel, color: color, time: timeStr });
             if (chatMessages.length > 100) chatMessages.shift();
             renderChat();
+
+            if (msg.includes("Quest completed:")) {
+                const questName = msg.split("Quest completed:")[1].trim();
+                const qc = document.getElementById("quest-celebration");
+                const qcN = document.getElementById("quest-celebration-name");
+                if (qc && qcN) {
+                    qcN.innerText = questName;
+                    qc.style.opacity = 1;
+                    qc.style.transform = "translate(-50%, -50%) scale(1)";
+                    setTimeout(() => {
+                        qc.style.opacity = 0;
+                        qc.style.transform = "translate(-50%, -50%) scale(0.5)";
+                    }, 4000);
+                }
+            }
         }
 
 
@@ -518,7 +541,7 @@
             let sellHtml = "";
             let counts = {}; myInventoryData.forEach(i => counts[i] = (counts[i]||0)+1);
             for (let item in counts) {
-                sellHtml += "<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span>" + escapeHtml(item) + " x" + counts[item] + "</span><button onclick='shopSell(\"" + escapeHtml(item) + "\")' style='background:#aa4444; border:none; color:white; padding:2px 5px; cursor:pointer'>Sell</button></div>";
+                sellHtml += "<div style='display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); padding:6px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.05);'><span>" + escapeHtml(item) + " <span style='color:#94a3b8; font-size:11px'>x" + counts[item] + "</span></span><button onclick='shopSell(\"" + escapeHtml(item) + "\")' style='background:#ef4444; border:none; color:white; padding:4px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:12px; transition:background 0.2s;' onmouseover='this.style.background=\"#dc2626\"' onmouseout='this.style.background=\"#ef4444\"'>Sell</button></div>";
             }
             if (myInventoryData.length === 0) sellHtml = "<em>Empty</em>";
             document.getElementById("shop-sell-list").innerHTML = sellHtml;
@@ -610,21 +633,38 @@
             document.getElementById("overlay").style.display = "block";
             document.getElementById("npc-dialog").style.display = "block";
             document.getElementById("dialog-npc-name").innerText = data.npc_name;
+            
+            const portraitCanvas = document.getElementById("dialog-npc-portrait");
+            if (portraitCanvas && window.getSprite) {
+                const ctx = portraitCanvas.getContext("2d");
+                ctx.clearRect(0, 0, 32, 32);
+                let spriteKey = "npc";
+                if (data.npc_name.includes("Aria")) spriteKey = "npc_aria";
+                else if (data.npc_name.includes("Merchant")) spriteKey = "merchant";
+                else if (data.npc_name.includes("Banker")) spriteKey = "banker";
+                else if (data.npc_name.includes("Arthur")) spriteKey = "king_arthur";
+                
+                const sprite = window.getSprite(spriteKey);
+                if (sprite) {
+                    ctx.drawImage(sprite, 0, 0, 32, 32);
+                }
+            }
+
             const content = document.getElementById("dialog-content");
 
             // Dialogue-tree shape: server-sent prose plus a list of choices.
             if (Array.isArray(data.choices)) {
-                let html = "<p style='font-size:13px; line-height:1.5; margin-bottom:12px;'>" + escapeHtml(data.text || '') + "</p>";
+                let html = "<p style='font-size:15px; line-height:1.6; margin-bottom:16px; color:#e2e8f0;'>" + escapeHtml(data.text || '') + "</p>";
                 if (data.choices.length > 0) {
-                    html += "<div style='display:flex; flex-direction:column; gap:6px;'>";
+                    html += "<div style='display:flex; flex-direction:column; gap:8px;'>";
                     data.choices.forEach(choice => {
                         const next = choice.next ? escapeHtml(choice.next) : "";
                         const label = escapeHtml(choice.text || "");
-                        html += "<button class='btn-dialogue' onclick='chooseDialogue(\"" + escapeHtml(data.node_id || "") + "\", \"" + escapeHtml(choice.id) + "\")'>" + label + "</button>";
+                        html += "<button class='btn-dialogue' onclick='chooseDialogue(\"" + escapeHtml(data.node_id || "") + "\", \"" + escapeHtml(choice.id) + "\")' style='padding:10px 15px; text-align:left; background:rgba(30,41,59,0.8); border:1px solid #475569; color:#f8fafc; border-radius:6px; cursor:pointer; font-size:14px; transition:all 0.2s;' onmouseover='this.style.background=\"#334155\"; this.style.borderColor=\"#fbbf24\";' onmouseout='this.style.background=\"rgba(30,41,59,0.8)\"; this.style.borderColor=\"#475569\";'>" + label + "</button>";
                     });
                     html += "</div>";
                 } else {
-                    html += "<button class='btn-dialogue' onclick='closeNpcDialog()' style='background:#334155;'>End conversation</button>";
+                    html += "<button class='btn-dialogue' onclick='closeNpcDialog()' style='padding:10px 15px; text-align:center; background:#475569; border:none; color:white; border-radius:6px; cursor:pointer; font-weight:bold; width:100%; transition:background 0.2s;' onmouseover='this.style.background=\"#ef4444\"' onmouseout='this.style.background=\"#475569\"'>Farewell</button>";
                 }
                 content.innerHTML = html;
                 return;
@@ -632,10 +672,12 @@
 
             // Legacy shape: a flat list of quests to accept.
             const quests = Array.isArray(data.quests) ? data.quests : [];
-            let legacy = "<p>I have some tasks for you:</p>";
+            let legacy = "<p style='font-size:15px; color:#e2e8f0; margin-bottom:16px;'>I have some tasks for you:</p>";
+            if (quests.length === 0) legacy += "<em style='color:#94a3b8'>No quests available right now.</em>";
             quests.forEach(q => {
-                legacy += "<div style='background:#2a2a2a; padding:10px; margin-bottom:5px; border-radius:5px;'><strong style='color:#ffcc44'>" + escapeHtml(q.name) + "</strong><br><span style='font-size:12px'>" + escapeHtml(q.description || q.desc || '') + "</span><br><button onclick='acceptQuest(\"" + escapeHtml(q.id) + "\")' style='margin-top:5px; background:#44aa44; color:white; border:none; padding:5px 10px; cursor:pointer'>Accept Quest</button></div>";
+                legacy += "<div style='background:rgba(0,0,0,0.3); padding:12px; margin-bottom:8px; border-radius:6px; border:1px solid #334155;'><strong style='color:#fbbf24; font-size:16px;'>" + escapeHtml(q.name) + "</strong><br><p style='font-size:13px; color:#cbd5e1; margin:6px 0; line-height:1.4;'>" + escapeHtml(q.description || q.desc || '') + "</p><button onclick='acceptQuest(\"" + escapeHtml(q.id) + "\")' style='margin-top:5px; background:#10b981; color:white; font-weight:bold; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; transition:background 0.2s;' onmouseover='this.style.background=\"#059669\"' onmouseout='this.style.background=\"#10b981\"'>Accept Quest</button></div>";
             });
+            legacy += "<button onclick='closeNpcDialog()' style='margin-top:10px; padding:10px 15px; text-align:center; background:#475569; border:none; color:white; border-radius:6px; cursor:pointer; font-weight:bold; width:100%; transition:background 0.2s;' onmouseover='this.style.background=\"#ef4444\"' onmouseout='this.style.background=\"#475569\"'>Close</button>";
             content.innerHTML = legacy;
         }
 
@@ -660,22 +702,22 @@
         }
         function renderQuestJournal(data) {
             const ql = document.getElementById("quest-list");
-            let html = "<div style=\"font-size:12px; margin-bottom:8px; color:#aaa\">Completed: " + data.completed_count + "</div>";
-            if (!Array.isArray(data.quests) || data.quests.length === 0) { html += "<em style=\"color:#666;font-size:11px\">No active quests.</em>"; }
+            let html = "<div style=\"font-size:12px; margin-bottom:12px; color:#cbd5e1; font-weight:bold; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:6px;\">COMPLETED: <span style=\"color:#fbbf24;\">" + data.completed_count + "</span></div>";
+            if (!Array.isArray(data.quests) || data.quests.length === 0) { html += "<div style=\"color:#64748b; font-size:12px; text-align:center; padding:15px; font-style:italic;\">No active quests.</div>"; }
             else {
                 data.quests.forEach(q => {
-                    html += "<div style=\"background:#222; padding:5px; margin-bottom:5px; border-left:3px solid #ffcc44\"><strong style=\"font-size:13px\">" + escapeHtml(q.name) + "</strong>";
+                    html += "<div style=\"background:rgba(30,41,59,0.7); padding:12px; margin-bottom:8px; border-radius:6px; border-left:3px solid #fbbf24; box-shadow:0 2px 4px rgba(0,0,0,0.2);\"><strong style=\"font-size:14px; color:#f8fafc;\">" + escapeHtml(q.name) + "</strong>";
                     if (q.step) {
-                        html += "<div style=\"font-size:10px; color:#fbbf24; margin-top:2px;\">Step " + (Number(q.step.index) + 1) + " of " + Number(q.step.count) + (q.step.awaiting_turn_in ? " &middot; return to the giver" : "") + "</div>";
-                        if (q.step.text) html += "<div style=\"font-size:11px; color:#e2e8f0; font-style:italic; margin-top:2px;\">" + escapeHtml(q.step.text) + "</div>";
+                        html += "<div style=\"font-size:11px; color:#fbbf24; margin-top:4px; font-weight:bold;\">Step " + (Number(q.step.index) + 1) + " of " + Number(q.step.count) + (q.step.awaiting_turn_in ? " &middot; <span style='color:#10b981'>Return to NPC</span>" : "") + "</div>";
+                        if (q.step.text) html += "<div style=\"font-size:12px; color:#94a3b8; font-style:italic; margin-top:4px; line-height:1.4;\">\"" + escapeHtml(q.step.text) + "\"</div>";
                     }
-                    html += "<br>";
+                    html += "<div style=\"margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1);\">";
                     (Array.isArray(q.objectives) ? q.objectives : []).forEach(o => {
                         const done = o.done === true;
-                        const tick = done ? "&#10003;" : "&#9675;";
-                        html += "<div style=\"font-size:11px; color:" + (done ? "#44ff44" : "#ccc") + "\">" + tick + " " + escapeHtml(o.text || "") + " " + escapeHtml(String(o.progress || "")) + "</div>";
+                        const tick = done ? "<span style='color:#10b981'>✓</span>" : "<span style='color:#64748b'>○</span>";
+                        html += "<div style=\"font-size:12px; color:" + (done ? "#10b981" : "#e2e8f0") + "; margin-bottom:2px; display:flex; gap:6px;\">" + tick + " <span>" + escapeHtml(o.text || "") + " <strong style='color:#cbd5e1'>" + escapeHtml(String(o.progress || "")) + "</strong></span></div>";
                     });
-                    html += "</div>";
+                    html += "</div></div>";
                 });
             }
             ql.innerHTML = html;
@@ -824,6 +866,24 @@
             }
         }
 
+        window.guildBankDeposit = function() {
+            const amt = parseInt(document.getElementById("guild-bank-amt").value);
+            if (!amt || amt <= 0) return;
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "guild_bank_deposit", amount: amt }));
+            }
+            document.getElementById("guild-bank-amt").value = "";
+        };
+
+        window.guildBankWithdraw = function() {
+            const amt = parseInt(document.getElementById("guild-bank-amt").value);
+            if (!amt || amt <= 0) return;
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "guild_bank_withdraw", amount: amt }));
+            }
+            document.getElementById("guild-bank-amt").value = "";
+        };
+
         window.openAuctionModal = function() {
             document.getElementById("overlay").style.display = "block";
             document.getElementById("auction-modal").style.display = "block";
@@ -968,6 +1028,63 @@
             m.style.display = "none";
             m.classList.remove("active");
             document.getElementById("overlay").style.display = "none";
+        };
+
+        // === Friends ===
+        window.openFriendsModal = function() {
+            document.getElementById("overlay").style.display = "block";
+            const m = document.getElementById("friends-modal");
+            m.style.display = "block";
+            m.classList.add("active");
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "friend_list_request" }));
+            }
+        };
+
+        window.addFriend = function() {
+            const nameInput = document.getElementById("friend-add-input");
+            const friendName = nameInput.value.trim();
+            if (!friendName) return;
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "friend_add", name: friendName }));
+            }
+            nameInput.value = "";
+        };
+
+        window.removeFriend = function(friendName) {
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "friend_remove", name: friendName }));
+            }
+        };
+
+        window.inspectTarget = function() {
+            if (!window.currentTargetId) return;
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "inspect_player", id: window.currentTargetId }));
+            }
+        };
+
+        window.toggleEmoteMenu = function() {
+            const menu = document.getElementById("emote-menu");
+            menu.style.display = menu.style.display === "none" ? "flex" : "none";
+        };
+
+        window.sendEmote = function(emoji) {
+            document.getElementById("emote-menu").style.display = "none";
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "emote", text: emoji }));
+            }
+        };
+
+        window.openLeaderboardModal = function() {
+            document.getElementById("overlay").style.display = "block";
+            const m = document.getElementById("leaderboard-modal");
+            m.style.display = "block";
+            m.classList.add("active");
+            document.getElementById("leaderboard-ui-list").innerHTML = "<em style='color:#666'>Loading rankings...</em>";
+            if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+                window.ws.send(JSON.stringify({ action: "leaderboard_request" }));
+            }
         };
 
         // === Settings ===

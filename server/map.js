@@ -97,6 +97,9 @@ function placeTransition(z, x, y, type, targetZ, arrive) {
 
     floor.transitions.set(`${x},${y}`, { x, y, type, to: dest, arrive: entry });
     // Drawn, but never added to floor.obstacles -- see the note above.
+    // Ensure any previously generated obstacle/water is cleared so it is walkable.
+    floor.obstacles.delete(`${x},${y}`);
+    floor.waterTiles.delete(`${x},${y}`);
     // A transition can overwrite a previously drawn tile at the same spot, and
     // the terrain renderer keys on position, so drop the stale record rather
     // than leaving two entries for one tile.
@@ -199,11 +202,38 @@ function addStructure(startX, startY, width, height, type) {
 }
 
 function generateMap() {
-    // Generate some random structures first
+    // === BUILD THE STARTING TOWN ===
+    // City Walls (South and East borders of Safe Zone)
+    for (let x = 0; x <= CFG.SAFE_ZONE.w; x += CFG.TILE_SIZE) {
+        if (x !== 320 && x !== 352) { // Gate
+            obstacles.add(`${x},${CFG.SAFE_ZONE.h}`);
+            obstacleData.push({x: x, y: CFG.SAFE_ZONE.h, type: 'wall'});
+        }
+    }
+    for (let y = 0; y <= CFG.SAFE_ZONE.h; y += CFG.TILE_SIZE) {
+        if (y !== 320 && y !== 352) { // Gate
+            obstacles.add(`${CFG.SAFE_ZONE.w},${y}`);
+            obstacleData.push({x: CFG.SAFE_ZONE.w, y: y, type: 'wall'});
+        }
+    }
+
+    // Town Square / Fountain (using water)
+    obstacles.add(`384,384`); obstacleData.push({x: 384, y: 384, type: 'water'});
+    obstacles.add(`416,384`); obstacleData.push({x: 416, y: 384, type: 'water'});
+    obstacles.add(`384,416`); obstacleData.push({x: 384, y: 416, type: 'water'});
+    obstacles.add(`416,416`); obstacleData.push({x: 416, y: 416, type: 'water'});
+    waterTiles.add(`384,384`); waterTiles.add(`416,384`); waterTiles.add(`384,416`); waterTiles.add(`416,416`);
+
+    // Houses
+    addStructure(64, 64, CFG.TILE_SIZE * 4, CFG.TILE_SIZE * 4, 'wall');   // Top Left House
+    addStructure(64, 400, CFG.TILE_SIZE * 5, CFG.TILE_SIZE * 4, 'wall');  // Bottom Left House
+    addStructure(400, 64, CFG.TILE_SIZE * 4, CFG.TILE_SIZE * 5, 'wall');  // Top Right House
+
+    // Generate some random structures outside town
     for (let i=0; i<15; i++) {
         let sx = Math.floor(Math.random() * (CFG.MAP_WIDTH - 200) / CFG.TILE_SIZE) * CFG.TILE_SIZE;
         let sy = Math.floor(Math.random() * (CFG.MAP_HEIGHT - 200) / CFG.TILE_SIZE) * CFG.TILE_SIZE;
-        if (sx < CFG.SAFE_ZONE.w && sy < CFG.SAFE_ZONE.h) continue; // Don't build in City
+        if (sx <= CFG.SAFE_ZONE.w && sy <= CFG.SAFE_ZONE.h) continue; // Don't build in City
         addStructure(sx, sy, CFG.TILE_SIZE * 5, CFG.TILE_SIZE * 5, 'wall');
     }
 
