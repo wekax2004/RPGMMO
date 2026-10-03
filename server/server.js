@@ -60,6 +60,7 @@ const AOI = require('./aoi');
 const WHISPER = require('./whisper');
 const FRIENDS = require('./friends');
 const SOCIAL = require('./social');
+const GROUPING = require('./grouping');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -1609,199 +1610,19 @@ wss.on('connection', (ws) => {
                 });
                 return;
             }
-            // --- PARTY ACTIONS ---
-            if (data.action === 'party_create') {
-                const existingParty = PARTY.getParty(playerId);
-                const pid = existingParty ? existingParty.id : PARTY.createParty(playerId);
-                sendTo(player, { action: 'log', message: `🎉 Party created! ID: ${pid}` });
-                sendPartySync(PARTY.getParty(playerId));
-            }
-            if (data.action === 'party_invite') {
-                const targetPlayer = findPlayerByName(data.targetName || data.targetPlayer);
-                if (!targetPlayer) {
-                    sendProtocolError(player, 'Player not found.');
-                } else {
-                    const party = PARTY.getParty(playerId);
-                    if (!party) {
-                        sendProtocolError(player, 'Create a party first.');
-                    } else {
-                        const result = PARTY.inviteToParty(party.id, playerId, targetPlayer.id, players);
-                        if (!result.success) {
-                            sendProtocolError(player, result.message);
-                        } else {
-                            const invitePacket = {
-                                action: 'party_invited',
-                                inviter: player.charName,
-                                from: player.charName,
-                                fromPlayer: player.id,
-                                partyId: party.id
-                            };
-                            sendTo(targetPlayer, invitePacket);
-                            // Compatibility packet for the original browser.
-                            sendTo(targetPlayer, { ...invitePacket, action: 'party_invite' });
-                            sendTo(player, { action: 'log', message: `📨 Invited ${targetPlayer.charName} to party.` });
-                        }
-                    }
-                }
-            }
-            if (data.action === 'party_accept') {
-                const result = PARTY.acceptInvite(playerId, data.partyId, players);
-                if (!result.success) {
-                    sendProtocolError(player, result.message);
-                } else {
-                    result.party.members.forEach(memberId => {
-                        const member = players.get(memberId);
-                        if (member) sendTo(member, { action: 'log', message: `🎉 ${player.charName} joined the party!` });
-                    });
-                    sendPartySync(result.party);
-                }
-            }
-            if (data.action === 'party_decline') {
-                PARTY.declineInvite(playerId, data.partyId);
-            }
-            if (data.action === 'party_leave') {
-                const result = PARTY.leaveParty(playerId);
-                if (result.success) {
-                    sendPartySync(result.party);
-                    sendTo(player, { action: 'party_sync', id: null, leader: null, members: [], party: null });
-                    sendTo(player, { action: 'log', message: '👋 You left the party.' });
-                }
-            }
-
-            // --- TRADE ACTIONS ---
-            if (data.action === 'trade_request') {
-                const targetPlayer = findPlayerByName(data.targetName || data.targetPlayer);
-                if (!targetPlayer) {
-                    sendProtocolError(player, 'Player not found.');
-                } else if (dist3D(player.x, player.y, player.z, targetPlayer.x, targetPlayer.y, targetPlayer.z) > TRADE.TRADE_MAX_DISTANCE) {
-                    sendProtocolError(player, 'Too far to trade.');
-                } else {
-                    const result = TRADE.createTradeRequest(playerId, targetPlayer.id);
-                    if (!result.success) {
-                        sendProtocolError(player, result.message);
-                    } else {
-                        const requestPacket = {
-                            action: 'trade_requested',
-                            requestId: result.request.id,
-                            tradeRequestId: result.request.id,
-                            from: player.charName,
-                            fromPlayer: player.id,
-                            fromName: player.charName
-                        };
-                        sendTo(targetPlayer, requestPacket);
-                        sendTo(player, { action: 'log', message: `📨 Trade request sent to ${targetPlayer.charName}.` });
-                    }
-                }
-            }
-            if (data.action === 'trade_accept') {
-                const fromReference = data.fromPlayer || data.from || data.fromName;
-                const fromPlayer = findPlayerByName(fromReference) || (players.has(fromReference) ? players.get(fromReference) : null);
-                const result = TRADE.acceptTradeRequest(
-                    playerId,
-                    data.requestId || data.tradeRequestId,
-                    fromPlayer ? fromPlayer.id : fromReference
-                );
-                if (!result.success) {
-                    sendProtocolError(player, result.message);
-                } else {
-                    const requester = players.get(result.trade.player1Id);
-                    const target = players.get(result.trade.player2Id);
-                    if (!requester || !target || dist3D(requester.x, requester.y, requester.z, target.x, target.y, target.z) > TRADE.TRADE_MAX_DISTANCE) {
-                        TRADE.cancelTrade(result.tradeId);
-                        sendProtocolError(player, 'Players are too far apart to trade.');
-                    } else {
-                        sendTo(requester, { action: 'trade_open', tradeId: result.tradeId, partnerName: target.charName });
-                        sendTo(target, { action: 'trade_open', tradeId: result.tradeId, partnerName: requester.charName });
-                        syncTrade(result.tradeId, 'trade_update');
-                    }
-                }
-            }
-            if (data.action === 'trade_decline') {
-                const fromReference = data.fromPlayer || data.from;
-                const fromPlayer = findPlayerByName(fromReference) || (players.has(fromReference) ? players.get(fromReference) : null);
-                TRADE.declineTradeRequest(playerId, data.requestId, fromPlayer ? fromPlayer.id : fromReference);
-            }
-            if (data.action === 'trade_add_item' || data.action === 'trade_offer') {
-                const tradeId = data.tradeId || TRADE.getTradeIdForPlayer(playerId);
-                const trade = TRADE.activeTrades.get(tradeId);
-                if (!trade) {
-                    sendProtocolError(player, 'Trade not found.');
-                } else {
-                    const items = data.action === 'trade_offer'
-                        ? (Array.isArray(data.items) ? data.items : [])
-                        : (data.item ? [data.item] : []);
-                    const gold = data.action === 'trade_offer' ? data.gold : undefined;
-                    const result = TRADE.stageTradeOffer(tradeId, playerId, items, gold, players);
-                    if (!result.success) {
-                        sendProtocolError(player, result.message);
-                    } else {
-                        syncTrade(tradeId, 'trade_update');
-                    }
-                }
-            }
-            if (data.action === 'trade_remove_item') {
-                const tradeId = data.tradeId || TRADE.getTradeIdForPlayer(playerId);
-                const result = TRADE.removeItemFromTrade(tradeId, playerId, data.item);
-                if (!result.success) sendProtocolError(player, result.message);
-                else syncTrade(tradeId, 'trade_update');
-            }
-            if (data.action === 'trade_set_gold') {
-                const tradeId = data.tradeId || TRADE.getTradeIdForPlayer(playerId);
-                const result = TRADE.setTradeGold(tradeId, playerId, data.amount);
-                if (!result.success) sendProtocolError(player, result.message);
-                else syncTrade(tradeId, 'trade_update');
-            }
-            if (data.action === 'trade_lock') {
-                const tradeId = data.tradeId || TRADE.getTradeIdForPlayer(playerId);
-                const result = TRADE.lockTrade(tradeId, playerId);
-                if (!result.success) {
-                    sendProtocolError(player, result.message);
-                } else {
-                    syncTrade(tradeId, 'trade_update');
-                    if (result.bothLocked) sendTradeSyncAll(TRADE.activeTrades.get(tradeId), 'trade_locked');
-                }
-            }
-            if (data.action === 'trade_confirm') {
-                const tradeId = data.tradeId || TRADE.getTradeIdForPlayer(playerId);
-                const tradeBeforeExecution = TRADE.activeTrades.get(tradeId);
-                const result = TRADE.confirmTrade(tradeId, playerId);
-                if (!result.success) {
-                    sendProtocolError(player, result.message);
-                } else if (result.bothConfirmed && tradeBeforeExecution) {
-                    const execResult = TRADE.executeTrade(tradeId, players);
-                    if (!execResult.success) {
-                        [tradeBeforeExecution.player1Id, tradeBeforeExecution.player2Id].forEach(id => {
-                            const participant = players.get(id);
-                            if (participant) sendProtocolError(participant, execResult.message);
-                        });
-                    } else {
-                        [execResult.player1Id, execResult.player2Id].forEach(id => {
-                            const participant = players.get(id);
-                            if (participant) {
-                                sendTo(participant, { action: 'trade_complete', tradeId });
-                                sendTo(participant, { action: 'log', message: '✅ Trade completed!' });
-                                sendTo(participant, { action: 'trade_close' });
-                                recalcPlayerStats(participant);
-                                sendPlayerStatus(participant);
-                            }
-                        });
-                    }
-                } else {
-                    syncTrade(tradeId, 'trade_update');
-                }
-            }
-            if (data.action === 'trade_cancel') {
-                const tradeId = data.tradeId || TRADE.getTradeIdForPlayer(playerId);
-                const trade = TRADE.activeTrades.get(tradeId);
-                if (trade && (trade.player1Id === playerId || trade.player2Id === playerId)) {
-                    [trade.player1Id, trade.player2Id].forEach(id => {
-                        const participant = players.get(id);
-                        if (participant) sendTo(participant, { action: 'trade_close', tradeId });
-                    });
-                    TRADE.cancelTrade(tradeId);
-                } else if (trade) {
-                    sendProtocolError(player, 'You are not a participant in this trade.');
-                }
+            // --- PARTY and TRADE ---
+            // Extracted to server/grouping.js; see that file for why these two
+            // live together and why the duplicate action names are deliberate.
+            if (GROUPING.GROUPING_ACTIONS.has(data.action)) {
+                GROUPING.handleGrouping({
+                    data, player, playerId, players,
+                    PARTY, TRADE, TRADE_MAX_DISTANCE: TRADE.TRADE_MAX_DISTANCE,
+                    sendTo, sendProtocolError,
+                    findPlayerByName, dist3D,
+                    sendPartySync, syncTrade, sendTradeSyncAll,
+                    recalcPlayerStats, sendPlayerStatus
+                });
+                return;
             }
 
             // --- SUBCLASS EVOLUTION ---
