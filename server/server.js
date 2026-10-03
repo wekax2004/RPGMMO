@@ -63,6 +63,7 @@ const SOCIAL = require('./social');
 const GROUPING = require('./grouping');
 const COMBAT_ACTIONS = require('./combat_actions');
 const DODGE = require('./dodge');
+const COMBO = require('./combo');
 const INVENTORY = require('./inventory');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
@@ -1401,6 +1402,11 @@ wss.on('connection', (ws) => {
                     // not a syntax error.
                     stamina: DODGE.STAMINA_MAX, lastStaminaTick: Date.now(),
                     blocking: false, dodgeReadyAt: 0,
+                    // Combo state (roadmap 5.1). Built here for the same reason as
+                    // stamina: a missing field is undefined at runtime no matter what a
+                    // normaliser returns, and `undefined.hits` throws on the first hit
+                    // rather than failing visibly at login.
+                    combo: COMBO.initialCombo(),
                     persistenceDirty: false
                 });
                 clearTimeout(loginReservationTimers.get(loginKey));

@@ -811,6 +811,13 @@
                 addLog(`⏳ ${data.message || "Slow down."}`);
                 audio.error();
             }
+            else if (data.action === "combo") {
+                // Drives the combo meter that has been sitting unused in
+                // test_client.html since it was written. `triggerCombo` owns the
+                // fade-out, so the server only has to say what the count is -- which
+                // is why it sends a bare `hits` and no timing.
+                if (typeof window.triggerCombo === "function") window.triggerCombo(data.hits);
+            }
             else if (data.action === "open_shop") {
                 document.getElementById("overlay").style.display = "block";
                 document.getElementById("shop-modal").style.display = "block";

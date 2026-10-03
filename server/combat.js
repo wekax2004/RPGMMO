@@ -17,6 +17,7 @@ const PARTY = require('./party');
 const SC = require('./subclasses');
 const SKILLS = require('./skills');
 const RARITY = require('./rarity');
+const COMBO = require('./combo');
 const { bosses, spawnBoss } = require('./bosses');
 
 /**
@@ -208,15 +209,47 @@ function createCombat(deps) {
         if (typeof awardSkill === 'function') awardSkill(player, 'sword', SKILLS.COMBAT_XP.bossHit);
     }
 
+    /**
+     * Registers one damaging action and tells the client when a combo is worth
+     * showing (roadmap 5.1).
+     *
+     * The server owns the count; the client owns how long to display it. That split
+     * is what lets the existing `window.triggerCombo` in test_client.html be driven
+     * with no client change at all -- it already had a fade-out timer and had simply
+     * never been called.
+     *
+     * `announce` is guarded because `killMob` runs during teardown in a few tests and
+     * the constructor there has no sender. A missing announce is invisible; a missing
+     * `sendTo` is a crash on the first hit.
+     */
+    function announceCombo(player, targetId) {
+        const result = COMBO.registerHit(player, targetId);
+        if (!result.advanced) return result;
+        const shown = COMBO.describe(player);
+        if (shown && typeof sendTo === 'function') {
+            sendTo(player, { action: 'combo', hits: shown.hits, targetId: shown.targetId });
+        }
+        return result;
+    }
+
     // --- Spell damage helper --------------------------------------------
 
     // Damages one mob and resolves the kill. Bound to the casting player so
     // every reward (gold, loot, XP) goes to them.
+    //
+    // This is the single choke point every damaging spell passes through, which is
+    // why the combo registers here rather than at each spell: a combo that counted
+    // only some spells would be worse than none, because the player would be
+    // building a chain from the ones that happened to be wired up.
     function hitMobFor(player) {
         return function hitMob(m, dmg) {
             m.hp -= dmg;
             broadcastToFloor(m.z, { action: 'fct', x: m.x+16, y: m.y, text: `-${dmg}`, color: '#ff8866' });
             broadcastToFloor(MAP_NORMALIZE(m.z), { action: 'mob_update', id: m.id, type: m.type, name: m.name, x: m.x, y: m.y, z: MAP_NORMALIZE(m.z), hp: m.hp, maxHp: m.maxHp, alive: true, isElite: m.isElite });
+            // Registered before the kill resolves, so the final hit of a combo still
+            // counts. Registering after would mean the last blow never lands in the
+            // meter, and a combo would always stop one short of what the player did.
+            announceCombo(player, m.id);
             if (m.hp <= 0) killMob(player, m);
         };
     }
@@ -519,6 +552,10 @@ function createCombat(deps) {
                             target.hp -= damage; applyLifesteal(player, damage);
                             broadcastToFloor(MAP_NORMALIZE(player.z), { action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                             broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ff8800' });
+                            // PvP counts, keyed on the victim's id like any other
+                            // target. Without it a duel -- the one fight a player
+                            // is most likely to chain deliberately -- shows no combo.
+                            announceCombo(player, target.id);
                             checkPlayerDeath(target, player.charName);
                             if (player.classType === 'warrior') trainMelee(player);
                             // Attacking someone who is not already flagged
@@ -550,6 +587,9 @@ function createCombat(deps) {
                         broadcastToFloor(MAP_NORMALIZE(player.z), { action: 'spell', type: player.classType, sx: player.x, sy: player.y, tx: target.x, ty: target.y });
                         broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `-${damage}`, color: '#ffffff' });
                         broadcastToFloor(MAP_NORMALIZE(target.z), { action: 'mob_update', id: player.targetId, x: target.x, y: target.y, z: MAP_NORMALIZE(target.z), hp: target.hp, maxHp: target.maxHp, alive: true, isElite: target.isElite, name: target.name, type: target.type });
+                        // Melee counts too. A combo meter that only tracked spells
+                        // would feel broken to a warrior, who has no spells to chain.
+                        announceCombo(player, player.targetId);
                         if (target.hp <= 0) killMob(player, target);
                         if (player.classType === 'warrior') trainMelee(player);
                     }
