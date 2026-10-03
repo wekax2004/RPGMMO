@@ -173,7 +173,7 @@ test('every key named on a HUD button is actually bound', () => {
     // can be matched against a function identifier. Leaving them on made
     // REACHED_INDIRECTLY.castSkill unreachable and the check reported the
     // Class Skill button as broken even though it is correct.
-    const bareFn = (s) => s.replace(/\(\)$/, '');
+    const bareFn = (s) => s.replace(/\(.*\)$/, '');
 
     const buttonKeys = [];
     for (const m of HTML.matchAll(/<button[^>]*onclick="([^"]+)"[^>]*>[^<]*\(Press '(\w)'\)/g)) {
@@ -181,6 +181,11 @@ test('every key named on a HUD button is actually bound', () => {
     }
     for (const m of HTML.matchAll(/<button[^>]*onclick="([^"]+)"[^>]*title="([^"]*?\s\(([A-Za-z0-9])\))"/g)) {
         buttonKeys.push({ key: m[3], fn: bareFn(m[1]), where: 'tooltip' });
+    }
+    // The action hotbar replaced the HUD buttons. A slot advertises its key in a
+    // <span class="hotkey-badge">; a slot with no badge claims no key.
+    for (const m of HTML.matchAll(/<div class="hotbar-slot"[^>]*onclick="([^"]+)"[^>]*>\s*<span class="hotkey-badge">(\w)<\/span>/g)) {
+        buttonKeys.push({ key: m[2], fn: bareFn(m[1]), where: 'hotbar badge' });
     }
     assert.ok(buttonKeys.length > 0, 'no HUD button advertises a key, so this check found nothing');
 
@@ -274,15 +279,41 @@ test('the help bar lists the keys that are bound', () => {
         [...new Set(missing)].map(k => `'${k}'`).join(', '));
 });
 
-test('no HUD button name collides with a different function than its key', () => {
-    // "Class Skill (Press '2')" calls castSkill, which sends a spellIndex-less
-    // cast_spell; the server reads a missing index as the secondary spell. So for
-    // a warrior the button and the key agree. For a healer they do not: the
-    // button casts Flash Heal, the key casts Holy Smite. That divergence is real
-    // and is now stated in the button's title rather than left for a player to
-    // discover by noticing the button did something else.
+test('every spell hotbar slot sends the spell index its key badge claims', () => {
+    // Replaces an older test that pinned a `castSkill()` button, which no longer
+    // exists. That button sent a spellIndex-LESS cast_spell, and the server reads a
+    // missing index as the secondary spell -- so the button and key 2 disagreed for
+    // a healer, and the old test asserted the disagreement was at least documented.
+    //
+    // The hotbar rewrite removed the divergence at the source rather than explaining
+    // it: each slot now sends an explicit index, and the mapping is readable. So this
+    // asserts the stronger property -- no slot can drift from its badge without a
+    // failure -- instead of asserting that a known mismatch has a tooltip.
     const html = HTML;
-    assert.match(html, /onclick="castSkill\(\)"[^>]*title="[^"]*healer/i,
-        'the healer divergence between the Class Skill button and key 2 should be ' +
-        'documented on the button');
+    const slots = [...html.matchAll(
+        /<div class="hotbar-slot" id="hotbar-slot-([a-z0-9]+)"[\s\S]*?onclick="socket\.send\(JSON\.stringify\(\{ action: 'cast_spell', spellIndex: (\d+) \}\)\)"/g
+    )];
+    assert.ok(slots.length >= 3,
+        `expected at least three spell slots, found ${slots.length}` +
+        '   <-- the hotbar is spelled differently again; update this matcher');
+
+    // Slot 1 -> index 1, slot 2 -> index 2, slot r -> index 3 (the epic).
+    const expected = { '1': '1', '2': '2', 'r': '3' };
+    const wrong = [];
+    for (const [, slotId, spellIndex] of slots) {
+        if (!(slotId in expected)) continue;
+        if (expected[slotId] !== spellIndex) wrong.push(`slot ${slotId} sends index ${spellIndex}`);
+    }
+    assert.deepStrictEqual(wrong, [],
+        'a hotbar slot whose click sends a different spell than its badge shows is a ' +
+        'player pressing the key for one thing and getting another:\n  ' + wrong.join('\n  '));
+});
+
+test('a spell slot never sends an index-less cast_spell', () => {
+    // The specific defect the old button had. The server resolves a missing index to
+    // the secondary spell, so an index-less cast from a button is a silent mismatch
+    // rather than an error, and nothing anywhere reports it.
+    assert.ok(!/cast_spell(?:'|\")\s*\}\)\)/.test(HTML),
+        'a cast_spell packet with no spellIndex falls back to the secondary spell; ' +
+        'every caller must state which spell it means');
 });
