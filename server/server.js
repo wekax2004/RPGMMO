@@ -61,6 +61,7 @@ const WHISPER = require('./whisper');
 const FRIENDS = require('./friends');
 const SOCIAL = require('./social');
 const GROUPING = require('./grouping');
+const COMBAT_ACTIONS = require('./combat_actions');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
 // one client spending its whole budget cannot cost anyone else theirs.
@@ -1656,25 +1657,18 @@ wss.on('connection', (ws) => {
                 }
             }
 
-            // --- HEALER SPECIAL: Heal Spell ---
-            if (data.action === 'cast_heal') {
-                if (player.classType !== 'healer' || player.mana < 25) return;
-                let target = player;
-                if (data.targetPlayerId) {
-                    target = players.get(data.targetPlayerId);
-                    // Cross-floor healing is not a thing. dist3D returns Infinity
-                    // across a floor boundary, so this one comparison also stops
-                    // a player on the surface healing someone standing in the
-                    // dungeon at the same X/Y.
-                    if (!target || dist3D(player.x, player.y, player.z, target.x, target.y, target.z) > 192) {
-                        sendProtocolError(player, 'Heal target is out of range.');
-                        return;
-                    }
-                }
-                player.mana -= 25;
-                const healAmt = COMBAT.applyCombatModifiers(player, 40 + player.level * 2, 'heal');
-                target.hp = Math.min(target.maxHp, target.hp + healAmt);
-                broadcastToFloor(target.z, { action: 'fct', x: target.x+16, y: target.y, text: `+${healAmt} HP`, color: '#44ff44' });
+            // --- COMBAT VERBS ---
+            // Extracted to server/combat_actions.js. That file holds the gates
+            // -- class check, mana cost, range, target -- not the damage maths,
+            // which combat.js has always owned. See it for why two of the gates
+            // refuse silently.
+            if (COMBAT_ACTIONS.COMBAT_ACTION_NAMES.has(data.action)) {
+                COMBAT_ACTIONS.handleCombatActions({
+                    data, player, players, corpses,
+                    COMBAT, CFG, MAP,
+                    sendTo, sendProtocolError, broadcastToFloor, dist3D
+                });
+                return;
             }
 
             if (data.action === 'accept_quest') {
@@ -1788,21 +1782,6 @@ wss.on('connection', (ws) => {
                 }
             }
             
-            if (data.action === 'attack') { player.targetId = data.target_id; }
-            if (data.action === 'interact_corpse') {
-                const c = corpses.get(data.id);
-                if (c && dist3D(player.x, player.y, player.z, c.x, c.y, c.z) <= 64) {
-                    if (c.gold > 0) {
-                        player.gold += c.gold;
-                        sendTo(player, { action: 'log', message: `Looted ${c.gold} gold from ${c.ownerName}'s corpse!` });
-                        sendTo(player, { action: 'fct', x: player.x, y: player.y, text: `+${c.gold} Gold`, color: '#ffd700' });
-                        c.gold = 0;
-                        broadcastToFloor(MAP.normalizeZ(c.z), { action: 'corpse_remove', id: data.id });
-                        corpses.delete(data.id);
-                    }
-                }
-            }
-
             if (data.action === 'drop_item') {
                 // Accept either field name so the client can use whichever it
                 // already has a control for.
@@ -2099,18 +2078,6 @@ wss.on('connection', (ws) => {
                     sendTo(player, { action: 'log', message: `🪙 Sold ${data.item} for ${sellPrice}G.` });
                     sendTo(player, { action: 'shop_sync', gold: player.gold });
                 }
-            }
-
-            if (data.action === 'cast_purify') {
-                if (player.mana >= CFG.PURIFY_MANA_COST) {
-                    player.mana -= CFG.PURIFY_MANA_COST;
-                    player.poisonStacks = 0; player.bleedStacks = 0;
-                    broadcastToFloor(player.z, { action: 'fct', x: player.x+16, y: player.y, text: 'PURIFIED', color: '#4488ff' });
-                }
-            }
-
-            if (data.action === 'cast_spell') {
-                COMBAT.castSpell(player, data.spellIndex);
             }
 
             if (data.action === 'bank_deposit_gold') {
