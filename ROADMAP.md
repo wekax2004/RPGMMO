@@ -21,7 +21,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 1.1 | Duplicate keybindings | ✅ | `tests/unit/keybindings.test.js` (7), 12 mutations. The plan's advice was wrong: deleting lines 837-839 removed the class primary spell and the epic's only binding. Fixed the opposite way and pinned it. |
 | 1.2 | Remove 6 dead Python scripts | ✅ | Plus `client/warrior.jpg`. PROJECT.md claimed all six hardcoded a dead IDE path; only two did. Doc corrected. |
 | 1.3 | Remove 49 unreferenced assets | ❌ | Deliberately not done. It is 116 files / 81.1 MB. Six of the seven "timestamped duplicates" are *not* byte-identical to their twins, and for some art the working tree is the only copy. `audit_unreferenced_assets.py` reports rather than deletes, for good reason. |
-| 1.4 | Resolve rpg-import licensing | 🔶 | **Untracked, but the licensing question is open, not closed.** `git rm -r --cached` plus a `.gitignore` entry landed in `f7ae4bf`: the 67 files / 56.3 MB are gone from the index and the files are intact on disk. **They are still in history** — commit `f624f26` contains all 67 and `origin/main` still serves them, so a clone still gets them. Only a rewrite changes that. The new information is that the bundled `THIRD_PARTY_NOTICE.md` attributes the art to `github.com/wekax2004/RPG` at commit `acf42ef` and calls it "the project's own art assets" — if RPG is the owner's own repository, there is no third-party licensing issue at all and the remaining question is only repository size. |
+| 1.4 | Resolve rpg-import licensing | ✅ | **No third-party licensing issue existed.** Raised six times and answered: the 67 files / 56.3 MB come from `github.com/wekax2004/RPG`, which is the owner's own repository, as the bundled `THIRD_PARTY_NOTICE.md` itself states ("the project's own art assets"). Own art carries no attribution obligation, so there was never anything to resolve. The untracking in `f7ae4bf` was a repository-size decision, not a licensing one. The one real third-party dependency in the project is the OpenTibia sprite pack (CC BY 4.0), attributed in `CREDITS.md` — that obligation is separate and is being met. |
 | 1.5 | Remove `client/warrior.jpg` | ✅ | 556 KB, referenced by nothing. |
 | 1.6 | Double `</head>` | ✅ | Already fixed before this review; `head`/`body` pair correctly at lines 3, 7, 9, 328. |
 
@@ -29,8 +29,8 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 2.1 | Unique NPC sprites | 🔶 | King Arthur done (owner-generated AI art, tracked, provenance in CREDITS.md). Trainer Aria, Scout Elara, Hermit Frost, Sage Mordecai, Mayor Joe still reuse class sprites. |
-| 2.2 | Wire NPC sprites into `renderer.js` | ✅ | Name-based lookup at `renderer.js:253-260`. |
+| 2.1 | Unique NPC sprites | ✅ | All 8 NPCs have generated unique sprites (Trainer Aria, Scout Elara, Hermit Frost, Sage Mordecai, Mayor Joe, King Arthur, Banker, Merchant). |
+| 2.2 | Wire NPC sprites into `renderer.js` | ✅ | Name-based lookup at `renderer.js:285-320`. |
 | 2.3 | Terrain variation tiles | ✅ | Flowers and pebbles drawn procedurally on grass tiles. |
 | 2.4 | Dungeon ambiance / torch glow | ✅ | Floor-tinted background at `renderer.js:108`. |
 | 2.5 | Smooth movement interpolation | ✅ | `renderX`/`renderY` lerp. |
@@ -48,7 +48,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 3.2 | Grid inventory | ✅ | `.inv-grid` / `.inv-cell`. |
 | 3.3 | Item tooltips | ✅ | `showTooltip`, `moveTooltip`, rarity-safe via `escapeHtml`. |
 | 3.4 | Target info panel | ✅ | Name + HP bar. |
-| 3.5 | Cooldown indicators | ⬜ | Server sends no `spell_cooldown`. |
+| 3.5 | Cooldown indicators | 🔶 | **Server half done, client overlay still to build.** `spell_cooldown` is now sent on every cast *and* on every cooldown refusal, for the cheap and the epic slot. `readyAt` is an absolute timestamp rather than a duration, so a client countdown survives a dropped packet. Previously a basic spell on cooldown was a bare `return;` with nothing sent -- pressing the key did nothing the player could see. Still to do: the hotbar overlay that consumes it. |
 | 3.6 | Level-up celebration | ✅ | |
 | 3.7 | Death screen | ✅ | Covered by `tests/browser/test_class_preview.js`. |
 | 3.8 | Loading screen | ✅ | |
@@ -76,10 +76,10 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 5.1 | Combo system | ⬜ | |
+| 5.1 | Combo system | ✅ | `server/combo.js`. `client/test_client.html` had carried `window.triggerCombo` and a meter since it was written and **nothing ever called it** -- the UI was finished, the driver did not exist. Now a `combo` packet on each increment; the client owns the fade-out, the server owns the count. Consecutive hits on the SAME target: switching target, expiring, or an untargeted AoE tick all break the chain. Registered before the kill resolves so the last blow counts. Three call sites (spells via `hitMobFor`, auto-attack, PvP). 14 unit tests + `combo_probe.js`. Known limitation: the server cannot retract an announced combo, so a switch after 3x briefly shows 3x. |
 | 5.2 | Mob AI: flee, call for help, patrol | 🔶 | Aggro and approach exist; nothing else. |
-| 5.3 | Dodge / block | ⬜ | |
-| 5.4 | Status effect visuals | 🔶 | Local player sprite now displays emoji icons (🤢, 🩸, 💫) for poison, bleed, and stun. Other players/mobs don't yet sync status. |
+| 5.3 | Dodge / block | ✅ | `server/dodge.js`. Before this, armour was a flat `max(1, damage - def)`, so a Tower Shield took exactly **1 damage from everything** — unkillable but unable to fight — and no attack could ever be avoided. Dodge (stamina, charged on failure too, 700 ms recovery, elite penalty) and block (free, bounded by shield def). A dodged hit returns before the poison/bleed/stun rolls. Stamina regenerates in the loop, not the damage path, and sends a packet only when it changed. 17 unit tests + `dodge_probe.js`. **Three bugs only the socket probe found:** a temporal-dead-zone `ReferenceError` that broke *every login* while the unit suite and `node --check` stayed green; a missing `require` in `combat_actions.js`; and block that silently did nothing, because the caller already counts the shield's def as armour so the reduction had nothing left to take. |
+| 5.4 | Status effect visuals | ✅ | `renderer.js` had drawn poison/bleed/stun markers off *other* players for some time, reading `op.poison`/`op.bleed`/`op.stun` -- and the roster never carried them, so a poisoned opponent looked completely healthy to everyone watching. Pure server gap; the client was already ready. `stun` is a boolean so the client never has to reason about a timer. Verified by a bystander in `status_probe.js`. |
 | 5.5 | Damage number styling | ✅ | Floating combat text (fct) scales dynamically for heals/crits and has shadow outlines. |
 | 5.6 | PvP arena | ⬜ | |
 | 5.7 | 4 abilities per class | 🔶 | 2 active + 1 epic (key R). |
