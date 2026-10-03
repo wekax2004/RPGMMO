@@ -102,7 +102,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 → 2605 (testing.js) → 2853 → 2679 → **2646**. Done: `testing.js`, `social.js` (8 actions, probe 10 checks), `grouping.js` (15 party+trade actions, probe 30 checks), `combat_actions.js` (5 combat verbs, probe 12 checks — gates only; `combat.js` has always owned the damage maths). Every extraction was snapshotted over real sockets before *and* after and the two runs' verdicts diffed — a source-level test can stay green while the packets change. Remaining: the inventory/equipment block (~240), shop/crafting/bank (~240), NPC dialogue (~110), and `move` (~95, most invariant-dense — may be deferred). `server.js` stays the entry point owning sockets, tick and player state; dependencies reach it via a `ctx` object rather than imports, so nothing mutable is exported. |
+| 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 → 2605 (testing.js) → 2853 → 2679 → 2646 → **2520**. Done: `testing.js`, `social.js` (8 actions, probe 10), `grouping.js` (15 party+trade, probe 30), `combat_actions.js` (5 combat verbs, probe 12), `inventory.js` (6 inventory/equipment/ground actions, probe 23). Every extraction was snapshotted over real sockets before *and* after and the two runs' verdicts diffed — a source-level test can stay green while the packets change. Remaining: shop/crafting/bank (~240), NPC dialogue (~110), `move` (~95, most invariant-dense — may be deferred). `server.js` stays the entry point owning sockets, tick and player state; dependencies reach it via a `ctx` object rather than imports, so nothing mutable is exported. |
 | 7.2 | Spatial AoI | ✅ | **Players and mobs.** Players: `server/aoi.js`, radius 1000 = the minimap's own `MINIMAP_RADIUS`, so nothing visible changes. Measured over real sockets: **47,850 vs 93,480 bytes**, 49% less. Mobs: **SHIPPED OFF** — see below. |
 | 7.3 | Rate limiting beyond auth | ✅ | `server/ratelimit.js`, 7 budget classes, Ollama bounded. 14 mutations + 6 wiring mutations. |
 | 7.4 | `ui.js` XSS audit | ✅ | Found a stored XSS in the auction renderer. `xss_sinks` (5) + `chat_render` (14), 16 mutations. |
@@ -225,6 +225,31 @@ Transitions are derived in `map.js placeTraversalTiles()` by pairing adjacent fl
 It reads like it controls how a floor is entered, and anyone trusting it will be
 wrong. Either implement it or delete it.
 
+**A "before and after" snapshot that only reads the latest state cannot see a change
+in packet count, and one slipped through.** `inventory_probe.js` asserts on the last
+`status` packet received. A status is already pushed roughly every 300 ms, so a
+handler that *starts* sending one still produces a correct-looking final inventory
+and the probe compares equal.
+
+The extraction had added `sendPlayerStatus` after `equip_item` and `unequip_item`,
+on the reasonable theory that an inventory change should push the inventory. Nothing
+in the probe could see it. `tests/bots/equip_status_count.js` counts packets instead
+of reading the latest one, and showed equip going from 4 status packets to 5. The
+extra send bought nothing and was removed.
+
+Two rules came out of it:
+
+- **A snapshot needs a second probe that counts, not just one that reads state.**
+  Anything asserting on "the latest X" is blind to "how many X".
+- **The before/after diff is only as good as what it compares.** Two probes comparing
+  the same blind spot will agree on a behaviour change and call it a pass.
+
+**`dismountPlayer` broadcasts `mount_changed`, and `toggle_mount` broadcasts it
+again**, so every dismount sends the packet twice. Wasteful rather than wrong, and
+left alone on purpose: a refactor that quietly changes the packet count is not a
+refactor. `inventory_probe.js` asserts the duplication explicitly, so it cannot be
+removed or doubled silently in either direction.
+
 **Four probes have now each failed first for a reason that was the probe's fault,
 and the pattern is worth recording.** A test written to compare a "before" and an
 "after" run is read hardest when it disagrees, and the tempting move is to loosen the
@@ -249,17 +274,27 @@ check until it agrees. All four of these were the check being wrong:
   plenty. `test_grant_gold`, by contrast, *does* set (`player.gold = amount`), which is
   why the same probe's gold checks worked while its mana checks did not.
 
-Two distinct traps, and the second one is more dangerous:
+And one more, from item 4, which is the worst shape of all:
+
+- **A comment and a test agreed with each other and both were wrong.** My first draft of
+  `inventory.js` claimed `mountPlayer` enforces an inventory precondition, and the first
+  probe asserted that claim. `mountPlayer` only checks whether the player is *already*
+  mounted — there is no mount item in the catalogue to check against. Because the code
+  matched the comment and the test matched the comment, nothing disagreed until the probe
+  ran against the real server. **Two agreeing wrong assertions are harder to catch than
+  one wrong assertion**, because agreement is the signal people trust.
+
+Three distinct traps:
 
 1. **Reading a field without reading whose field it is** — the per-viewer trade snapshot,
    and the friends `persistPlayer` anchor that survived twice.
 2. **Reading a field without reading what fills it, or whether it adds or sets** — the
    `protocol_error` array that is always empty, and `test_grant_mana` versus
    `test_grant_gold`.
+3. **Writing the test from the comment rather than the code** — the mount precondition.
 
-Both produce a check that fails for the wrong reason and is then "fixed" by loosening
-it. All four were fixed by correcting the check. A snapshot that has to be loosened to
-agree with the thing it is snapshotting is no longer a snapshot.
+All were fixed by going back to the code. A snapshot that has to be loosened to agree
+with the thing it is snapshotting is no longer a snapshot.
 
 **A fountain buried the descent ladder, and it is fixed. Kept because the diagnosis
 was wrong twice before it was right.**
