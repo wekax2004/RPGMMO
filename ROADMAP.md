@@ -21,7 +21,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 1.1 | Duplicate keybindings | ✅ | `tests/unit/keybindings.test.js` (7), 12 mutations. The plan's advice was wrong: deleting lines 837-839 removed the class primary spell and the epic's only binding. Fixed the opposite way and pinned it. |
 | 1.2 | Remove 6 dead Python scripts | ✅ | Plus `client/warrior.jpg`. PROJECT.md claimed all six hardcoded a dead IDE path; only two did. Doc corrected. |
 | 1.3 | Remove 49 unreferenced assets | ❌ | Deliberately not done. It is 116 files / 81.1 MB. Six of the seven "timestamped duplicates" are *not* byte-identical to their twins, and for some art the working tree is the only copy. `audit_unreferenced_assets.py` reports rather than deletes, for good reason. |
-| 1.4 | Resolve rpg-import licensing | ❌ | **Owner's decision, raised five times.** 67 files / 56.3 MB, no upstream LICENSE, published on `origin/main` since `f624f26`. Untracking is reversible; a history rewrite is not. |
+| 1.4 | Resolve rpg-import licensing | 🔶 | **Untracked, but the licensing question is open, not closed.** `git rm -r --cached` plus a `.gitignore` entry landed in `f7ae4bf`: the 67 files / 56.3 MB are gone from the index and the files are intact on disk. **They are still in history** — commit `f624f26` contains all 67 and `origin/main` still serves them, so a clone still gets them. Only a rewrite changes that. The new information is that the bundled `THIRD_PARTY_NOTICE.md` attributes the art to `github.com/wekax2004/RPG` at commit `acf42ef` and calls it "the project's own art assets" — if RPG is the owner's own repository, there is no third-party licensing issue at all and the remaining question is only repository size. |
 | 1.5 | Remove `client/warrior.jpg` | ✅ | 556 KB, referenced by nothing. |
 | 1.6 | Double `</head>` | ✅ | Already fixed before this review; `head`/`body` pair correctly at lines 3, 7, 9, 328. |
 
@@ -66,7 +66,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 | 4.3 | Dialogue trees for all 8 NPCs | 🔶 | King Arthur only; others fall back to a flat list. |
 | 4.4 | More mob types | ✅ | 6 types + 3 bosses + pack spawning. |
 | 4.5 | More boss encounters | 🔶 | 3 bosses, not 7. |
-| 4.6 | Rare item drops | ⬜ | |
+| 4.6 | Rare item drops | ✅ | `server/rarity.js`. A second roll on top of the flat per-mob-type table, keyed on floor tier and elite rather than mob type. Sends a new `loot_rare` packet carrying the tier and colour, so the client's sparkle effect has something to key on and the floating text and the effect cannot disagree. Pool is filtered by depth **before** the roll — filtering after would divide every chance by the pool size. 5 rare + 3 legendary items, all real catalogue entries. 16 unit tests + `tools/mutate_rarity.js` 14/14; `tests/bots/rare_drop_probe.js` observes a real drop on z=-3 over a socket. Fixed 3 bugs while building it, including `tier` never being recorded on a mob, which made the whole feature inert. |
 | 4.7 | Achievements | ⬜ | |
 | 4.8 | Daily quests | ⬜ | |
 | 4.9 | Pet system | ⬜ | |
@@ -249,6 +249,27 @@ again**, so every dismount sends the packet twice. Wasteful rather than wrong, a
 left alone on purpose: a refactor that quietly changes the packet count is not a
 refactor. `inventory_probe.js` asserts the duplication explicitly, so it cannot be
 removed or doubled silently in either direction.
+
+**The worst probe failure mode is one that blames the feature for the probe's own bug.**
+Five attempts were needed to get `rare_drop_probe.js` to observe a real drop, and four
+of them failed for reasons in the harness, not the server:
+
+- It read its own floor from `b.currentZ`, which `BotClient` never sets, so it never
+  descended and reported "no downward transition from here".
+- It looked up transitions on `b.transitions`, also never set. It asked an empty object
+  and concluded the map was wrong.
+- It counted loop iterations as kills. A loop that killed nothing and one that killed
+  twelve were indistinguishable, so a run reported "38 kills" while most killed nothing.
+- It spawned extra mobs on z=-3, which already has 16 by config, clustered on one tile.
+  It added a 17th to a pile already killing the player every second, then reported
+  "the roll is not firing".
+- Its tier assertion matched the word `tier` in the *comment* explaining the tier field,
+  so deleting the field left the prose behind and two mutations survived.
+
+Every one of those produced a confident, specific, wrong diagnosis. The fix each time
+was to **measure something** — a packet count, a real kill counter counted from the XP
+text, an actual walk to the tile — rather than to read the failure message and believe
+it. A probe that explains away its own bugs is worse than no probe.
 
 **Four probes have now each failed first for a reason that was the probe's fault,
 and the pattern is worth recording.** A test written to compare a "before" and an
