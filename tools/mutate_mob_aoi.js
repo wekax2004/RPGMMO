@@ -204,17 +204,31 @@ const MUTATIONS = [
         // accumulates a frozen ghost of every mob it has passed -- so removing this
         // branch must break the build.
         //
-        // Anchored on the whole branch including its guard. The handler was rewritten
-        // once already, from a bare `delete` to a guarded
-        // `if (data.id && mobs[data.id])`, and both earlier anchors stopped matching.
+        // Anchored on the whole branch including its guard. The handler has been rewritten
+        // twice now -- from a bare `delete` to a guarded
+        // `if (data.id && mobs[data.id])`, then to one that also clears the HUD's
+        // selected target -- and each earlier anchor stopped matching. The harness
+        // reports that as a SKIP rather than a catch, which is the right call: an
+        // anchor that silently matches nothing is an assertion that tests nothing.
         name: 'the client stops handling mob_forget, leaving every client with ghost mobs',
         file: ENGINE,
         from: '            else if (data.action === "mob_forget") {\n' +
             '                if (data.id && mobs[data.id]) {\n' +
             '                    delete mobs[data.id];\n' +
             '                }\n' +
+            '                if (data.id && currentTargetId === data.id) currentTargetId = null;\n' +
             '            }',
         to: '            // mob_forget handler removed'
+    },
+    {
+        // The other half of forgetting. The mob leaves the roster, but without this the
+        // HUD's target panel keeps showing a mob that no longer exists. Reported as a
+        // gap rather than fixed at the time; it is here now so it cannot be dropped
+        // again without a failure.
+        name: 'a forgotten mob stays selected, so the HUD shows a mob that is gone',
+        file: ENGINE,
+        from: '                if (data.id && currentTargetId === data.id) currentTargetId = null;\n',
+        to: '                // target not cleared\n'
     },
     {
         // The other half of the gate: the handler must delete, not mark dead, or it

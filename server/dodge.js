@@ -80,23 +80,44 @@ function resolveIncoming({ attacker, defender, rawDamage, defense = 0, random = 
     }
 
     // --- block ---------------------------------------------------------------
-    let damage = Math.max(1, rawDamage - defense);
+    // Order matters, and getting it wrong makes block silently useless.
+    //
+    // The caller has ALREADY summed the shield's `def` into `defense`, because that is
+    // how armour has always worked in this codebase. So subtracting a share of the
+    // same shield afterwards double-counts it -- and worse, it double-counts it in the
+    // only direction that erases itself: a spider's 5-10 raw damage minus an Iron
+    // Shield's 6 defence is already at the floor of 1, so there is nothing left for a
+    // block to reduce and `blocked` stays false forever.
+    //
+    // That is not a tuning nit. It means the stance is accepted, announced, and then
+    // does nothing, which is the single worst failure mode a mechanic like this has:
+    // the player is told they are protected and is not. The first socket probe caught
+    // it, and no unit test did, because every unit test passed a shield's defence as
+    // `defense: 0` and so never reproduced the interaction with the caller's armour.
+    //
+    // So block reduces the RAW hit, before armour. The shield then contributes twice
+    // on purpose: once passively as armour, and once actively for standing behind it.
+    // That is how a shield is supposed to behave, and it is a decision rather than an
+    // accident -- a player who never blocks still gets the passive half.
+    let mitigated = rawDamage;
     let blocked = false;
     if (defender.blocking) {
         const shield = defender.equipment && defender.equipment.shield;
         const shieldDef = shield && ITEMS.shields[shield] ? ITEMS.shields[shield].def : 0;
         if (shieldDef > 0) {
-            // Half the shield's defence, capped. Not a percentage of the incoming
-            // hit, because that would make a weak shield against a boss swing
-            // irrelevant while still costing the player their stance.
-            const reduction = Math.min(shieldDef * BLOCK_SHIELD_FACTOR, damage - 1);
+            // Half the shield's defence, capped at all but one point so a blocked hit
+            // can never reach zero.
+            const reduction = Math.min(shieldDef * BLOCK_SHIELD_FACTOR, mitigated - 1);
             if (reduction > 0) {
-                damage -= reduction;
+                mitigated -= reduction;
                 blocked = true;
             }
         }
     }
 
+    // Armour applies after, and the floor of 1 is unchanged from before this feature
+    // existed.
+    const damage = Math.max(1, mitigated - defense);
     return { damage, dodged: false, blocked, staminaSpent };
 }
 

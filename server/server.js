@@ -1391,7 +1391,15 @@ wss.on('connection', (ws) => {
                     // no matter what any normaliser returns, and `undefined < 12` is
                     // false, so a player who never regenerated stamina could never dodge
                     // and would see no reason for it.
-                    stamina: DODGE.STAMINA_MAX, lastStaminaTick: now,
+                    //
+                    // `Date.now()` and not the `now` the packet handler computes: that
+                    // `now` is declared further down, inside the connection scope, so
+                    // referring to it here is a temporal-dead-zone ReferenceError thrown
+                    // on every login. The whole suite was green with it -- the unit tests
+                    // read this file as text and never execute it -- and every socket
+                    // probe timed out. `node --check` passes on a ReferenceError; it is
+                    // not a syntax error.
+                    stamina: DODGE.STAMINA_MAX, lastStaminaTick: Date.now(),
                     blocking: false, dodgeReadyAt: 0,
                     persistenceDirty: false
                 });

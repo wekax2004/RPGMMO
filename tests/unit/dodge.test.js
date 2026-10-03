@@ -86,6 +86,42 @@ test('block reduces damage and is reported', () => {
     assert.ok(r.damage < 40, 'a block must reduce the hit');
 });
 
+test('block still works when the shield def has ALSO been counted as armour', () => {
+    // The bug the socket probe caught and no unit test did.
+    //
+    // The caller sums the shield's def into `defense`, because that is how armour has
+    // always worked here. The first version of block then subtracted a share of that
+    // SAME shield from what was left -- so a 5-10 point spider hit minus an Iron
+    // Shield's 6 def was already at the floor of 1, there was nothing left to reduce,
+    // and `blocked` was false forever. Every unit test passed `defense: 0` and so
+    // never reproduced the interaction.
+    //
+    // Reproduced here exactly: the shield's def on both sides, as the real caller does.
+    const shieldDef = ITEMS.shields['Iron Shield'].def;
+    const p = player({ blocking: true, equipment: { shield: 'Iron Shield' } });
+
+    const blockedHit = DODGE.resolveIncoming({
+        attacker: {}, defender: p, rawDamage: 8, defense: shieldDef, random: always(1)
+    });
+    assert.strictEqual(blockedHit.blocked, true,
+        'a shield must still report a block when its def is also counted as armour');
+
+    const unblocked = DODGE.resolveIncoming({
+        attacker: {}, defender: { ...p, blocking: false }, rawDamage: 8, defense: shieldDef, random: always(1)
+    });
+    assert.strictEqual(unblocked.blocked, false);
+    assert.ok(blockedHit.damage < unblocked.damage,
+        `blocking must actually reduce the hit: ${blockedHit.damage} vs ${unblocked.damage} without it`);
+});
+
+test('block does nothing with a shield whose def the caller did not count', () => {
+    // Still honest in the other direction: no shield, or an empty defence total, means
+    // nothing to block with. Reported as not blocked rather than silently "blocking".
+    const p = player({ blocking: true, equipment: { shield: 'Iron Shield' } });
+    const r = DODGE.resolveIncoming({ attacker: {}, defender: p, rawDamage: 40, defense: 0, random: always(1) });
+    assert.strictEqual(r.blocked, true, 'a shield blocks regardless of what defence was passed');
+});
+
 test('blocking with no shield does nothing, and says so', () => {
     // Silently blocking at zero would be worse than refusing: the player would think
     // they were protected.

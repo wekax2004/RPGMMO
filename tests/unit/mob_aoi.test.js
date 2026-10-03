@@ -325,5 +325,19 @@ test('mob AoI is enabled only while the client can forget a mob', () => {
             'player walks past stays on their screen forever');
         assert.ok(!/alive\s*:\s*false/.test(branch),
             'mob_forget must not be routed through the death branch');
+
+        // And the HUD must stop showing it. Removing the mob from the cache while
+        // leaving it selected means the target panel keeps a name, a health bar and a
+        // distance for something the server has stopped sending -- a mob that walks out
+        // of range stays on screen as a ghost, precisely because the panel is separate
+        // state from the roster.
+        //
+        // This was reported as a gap and left unfixed for a while. A mutation for it
+        // survived the first time it was added, because no assertion covered it -- which
+        // is the whole point: "reported" and "pinned" are not the same thing, and only
+        // one of them stops it coming back.
+        assert.match(branch, /currentTargetId\s*===\s*data\.id/,
+            'forgetting a mob must also clear it as the selected target, or the HUD ' +
+            'keeps displaying a mob the server has stopped sending');
     }
 });

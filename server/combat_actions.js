@@ -41,6 +41,16 @@
  *   Every case returns rather than falling through, so an action this module
  *   claims cannot continue on to a later branch matching the same string.
  */
+
+// Added with the `toggle_block` case, and verified by RUNNING the module rather than
+// by checking that it parses. An earlier attempt wired this with a string replace
+// against a line that was not in the file, so nothing was inserted, `node --check`
+// passed happily, and the module threw "DODGE is not defined" on the first block any
+// player ever attempted. Syntax checking a module that only fails at runtime proves
+// nothing about it.
+const ITEMS = require('./items');
+const DODGE = require('./dodge');
+
 function handleCombatActions(ctx) {
     const {
         data, player, players, corpses,
