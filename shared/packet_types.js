@@ -11,7 +11,7 @@
  * which is exactly what happened when the list was maintained by hand: it
  * listed actions the server never handled and missed every feature added since.
  *
- * Generated: 66 inbound, 72 outbound.
+ * Generated: 66 inbound, 73 outbound.
  */
 
 const PACKET = {
@@ -122,6 +122,7 @@ const PACKET = {
         LOG: 'log',
         LOGIN_ERROR: 'login_error',
         LOGIN_FAIL: 'login_fail',
+        LOOT_RARE: 'loot_rare',
         MAP_DATA: 'map_data',
         MOB_FORGET: 'mob_forget',
         MOB_MOVE: 'mob_move',

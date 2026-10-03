@@ -14,7 +14,13 @@ module.exports = {
         'Steel Longsword': { type: 'weapon', bonus: 10 },
         'Elven Bow': { type: 'weapon', bonus: 12 },
         'Holy Staff': { type: 'weapon', bonus: 8 },
-        'Venom Fang Sabre': { type: 'weapon', bonus: 16 }
+        'Venom Fang Sabre': { type: 'weapon', bonus: 16 },
+        // Rare drops (roadmap 4.6). Listed here rather than in rarity.js alone,
+        // because rarity.js decides WHEN one drops and items.js decides what it IS.
+        // An item missing from this table would reach a player's bag as something no
+        // handler recognises -- not equippable, not usable, not worth anything.
+        'Frostbound Blade': { type: 'weapon', bonus: 30 },
+        'War Cleaver of the Warren': { type: 'weapon', bonus: 44 }
     },
     armor: {
         'Leather Tunic': { type: 'armor', def: 4 },
@@ -22,13 +28,18 @@ module.exports = {
         'Dragon Scale Armor': { type: 'armor', def: 20 },
         'Spider Silk Robes': { type: 'armor', def: 15 },
         'Plate Armor': { type: 'armor', def: 8 },
-        'Chain Mail': { type: 'armor', def: 6 }
+        'Chain Mail': { type: 'armor', def: 6 },
+        // Rare drops (roadmap 4.6). See the note in weapons.
+        'Spider Queen Carapace': { type: 'armor', def: 26 }
     },
     helmets: {
         'Leather Helmet': { type: 'helmet', def: 2 },
         'Crown of the Dead': { type: 'helmet', def: 10 },
         'Iron Helmet': { type: 'helmet', def: 4 },
-        'Dragon Helm': { type: 'helmet', def: 8 }
+        'Dragon Helm': { type: 'helmet', def: 8 },
+        // Rare drops (roadmap 4.6). See the note in weapons.
+        'Bonecrown Greathelm': { type: 'helmet', def: 17 },
+        'Crown of the Fallen King': { type: 'helmet', def: 28 }
     },
     legs: {
         'Leather Legs': { type: 'legs', def: 2 },
@@ -43,12 +54,20 @@ module.exports = {
     shields: {
         'Wooden Shield': { type: 'shield', def: 3 },
         'Iron Shield': { type: 'shield', def: 6 },
-        'Tower Shield': { type: 'shield', def: 10 }
+        'Tower Shield': { type: 'shield', def: 10 },
+        // Rare drops (roadmap 4.6). See the note in weapons.
+        'Owl Tower Buckler': { type: 'shield', def: 18 }
     },
     amulets: {
         'Wolf Tooth Chain': { type: 'amulet', maxHpBonus: 20 },
         'Dragon Heart Pendant': { type: 'amulet', maxHpBonus: 50 },
-        'Amulet of Healing': { type: 'amulet', maxHpBonus: 30 }
+        'Amulet of Healing': { type: 'amulet', maxHpBonus: 30 },
+        // Rare drops (roadmap 4.6). See the note in weapons.
+        'Amulet of the Frost Ward': { type: 'amulet', maxHpBonus: 75 },
+        // Frostmaw Pelt is not equipment. It is the crafting input for the deepest
+        // legendary, so it has to be a real catalogue entry or it is a dead item --
+        // carrying it around with nothing able to consume it.
+        'Frostmaw Pelt': { type: 'material', tier: 4, rare: true }
     },
     // Crafting inputs that are not equipment. They are not equippable or
     // usable; their only purpose is as recipe materials, which is what makes

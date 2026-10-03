@@ -16,6 +16,7 @@ const Q = require('./quests');
 const PARTY = require('./party');
 const SC = require('./subclasses');
 const SKILLS = require('./skills');
+const RARITY = require('./rarity');
 const { bosses, spawnBoss } = require('./bosses');
 
 /**
@@ -146,6 +147,42 @@ function createCombat(deps) {
         if (lootDropped) {
             sendTo(player, { action: 'inventory_update', inventory: player.inventory, gold: player.gold });
             player.persistenceDirty = true;
+        }
+
+        // Rare drops (roadmap 4.6). A second roll, keyed on the floor's tier and
+        // whether the mob was elite rather than on its type -- see rarity.js for why.
+        //
+        // Announced on its own packet rather than folded into the flat table's `fct`.
+        // A client cannot render "this was a lucky drop" from a floating string it
+        // has to re-parse, and it cannot colour a sparkle by a name. `loot_rare`
+        // carries the tier and the colour explicitly, so the effect and the chat
+        // line agree without either side hard-coding a list.
+        //
+        // `target.tier` is undefined for surface mobs, which default to 1 -- so a
+        // surface kill cannot roll anything from the tier-2-and-below pool.
+        const rareDrop = RARITY.rollRareDrop({ tier: target.tier || 1, isElite: !!target.isElite });
+        if (rareDrop) {
+            player.inventory.push(rareDrop.name);
+            player.persistenceDirty = true;
+            sendTo(player, { action: 'inventory_update', inventory: player.inventory, gold: player.gold });
+            broadcastToFloor(target.z, {
+                action: 'loot_rare',
+                id: target.id,
+                name: rareDrop.name,
+                rarity: rareDrop.rarity,
+                label: rareDrop.label,
+                color: rareDrop.color,
+                x: target.x,
+                y: target.y,
+                z: MAP_NORMALIZE(target.z)
+            });
+            broadcastToFloor(target.z, {
+                action: 'fct',
+                x: target.x + 16,
+                y: target.y - 20,
+                text: `${rareDrop.label}: ${rareDrop.name}`,
+                color: rareDrop.color
+            });
         }
 
         mobs.delete(target.id);

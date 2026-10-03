@@ -220,12 +220,18 @@ function spawnAdd(boss, type, mobs, broadcast, broadcastToFloor) {
         }[type] || { hp: 30, xp: 15 };
         
         const name = type.charAt(0).toUpperCase() + type.slice(1);
+        const minionFloor = MAP.normalizeZ(boss.z);
+        // A minion inherits its summoner's floor, and therefore its depth. The tier
+        // is read off that floor rather than defaulted, so the rare-drop roll in
+        // rarity.js does not treat a minion of a Frostmaw boss as a surface mob.
+        const floorSpec = (CFG.Z_FLOORS || []).find(f => f.z === minionFloor);
         const mob = {
             id, type, name, x, y,
             // A minion shares its summoner boss's floor, so it is announced to
             // the same one rather than to everyone.
-            z: MAP.normalizeZ(boss.z),
+            z: minionFloor,
             hp: stats.hp, maxHp: stats.hp,
+            tier: floorSpec && Number.isFinite(floorSpec.tier) ? floorSpec.tier : 1,
             xpReward: stats.xp, isElite: false, lastMoveTime: 0, lastAttackTime: 0
         };
         mobs.set(id, mob);

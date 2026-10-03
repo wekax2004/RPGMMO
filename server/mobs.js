@@ -66,6 +66,10 @@ function spawnMobPack(broadcast, size = 3) {
             mobs.set(id, {
                 id, type, name, x, y, z: CFG.Z_SURFACE,
                 hp: stats.hp, maxHp: stats.hp,
+                // Stated rather than left implicit. getMobStats was called without a
+                // tier, so the default of 1 applied and the surface is tier 1. See
+                // the note in spawnFloorPack for why this is recorded at all.
+                tier: 1,
                 xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
             });
             broadcast({ action: 'mob_update', id, type, name, x, y, z: CFG.Z_SURFACE, hp: stats.hp, maxHp: stats.hp, alive: true, isElite });
@@ -107,6 +111,12 @@ function spawnFloorPack(broadcast, options = {}) {
         mobs.set(id, {
             id, type, name, x: spot.x, y: spot.y, z,
             hp: stats.hp, maxHp: stats.hp,
+            // `tier` is recorded, not just fed to getMobStats. Stats are the only
+            // thing that used it, so it was a local and then it was a number nobody
+            // could ask about afterwards. Anything keyed on how deep a mob is -- the
+            // rare-drop roll in rarity.js -- needs to read it off the mob later, long
+            // after the spawn call that knew it.
+            tier,
             xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
         });
         broadcast({
@@ -141,13 +151,20 @@ function countMobsOn(z) {
 function spawnMobAt(x, y, type, broadcast, z = CFG.Z_SURFACE) {
     const resolved = KNOWN_MOB_TYPES.indexOf(type) !== -1 ? type : 'spider';
     const isElite = false;
-    const stats = getMobStats(resolved, isElite);
+    // Read the tier off the floor this mob is being placed on, rather than assuming
+    // the surface. This is the test-only spawn path, so a harness asking for a mob on
+    // z=-3 was previously getting tier-1 stats -- which also meant the rare-drop roll
+    // in rarity.js saw tier 1 and could never fire for a probe on a deep floor.
     const floor = MAP.normalizeZ(z);
+    const floorSpec = (CFG.Z_FLOORS || []).find(f => f.z === floor);
+    const tier = floorSpec && Number.isFinite(floorSpec.tier) ? floorSpec.tier : 1;
+    const stats = getMobStats(resolved, isElite, tier);
     const id = 'm_' + Math.random().toString(36).substr(2, 6);
     const name = resolved.charAt(0).toUpperCase() + resolved.slice(1);
     mobs.set(id, {
         id, type: resolved, name, x, y, z: floor,
         hp: stats.hp, maxHp: stats.hp,
+        tier,
         xpReward: stats.xp, isElite, lastMoveTime: 0, lastAttackTime: 0
     });
     if (typeof broadcast === 'function') {
