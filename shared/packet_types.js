@@ -11,7 +11,7 @@
  * which is exactly what happened when the list was maintained by hand: it
  * listed actions the server never handled and missed every feature added since.
  *
- * Generated: 66 inbound, 73 outbound.
+ * Generated: 67 inbound, 75 outbound.
  */
 
 const PACKET = {
@@ -69,6 +69,7 @@ const PACKET = {
         TEST_HEAL: 'test_heal',
         TEST_SPAWN_BOSS: 'test_spawn_boss',
         TEST_SPAWN_MOB: 'test_spawn_mob',
+        TOGGLE_BLOCK: 'toggle_block',
         TOGGLE_MOUNT: 'toggle_mount',
         TRADE_ACCEPT: 'trade_accept',
         TRADE_ADD_ITEM: 'trade_add_item',
@@ -97,6 +98,7 @@ const PACKET = {
         AUTH_SUCCESS: 'auth_success',
         BANK_OPEN: 'bank_open',
         BANK_UPDATE: 'bank_update',
+        BLOCK_CHANGED: 'block_changed',
         BOSS_AOE: 'boss_aoe',
         BOSS_SPAWNED: 'boss_spawned',
         CHAT: 'chat',
@@ -151,6 +153,7 @@ const PACKET = {
         SKILL_UPDATE: 'skill_update',
         SPELL: 'spell',
         SPELL_ANIM: 'spell_anim',
+        STAMINA: 'stamina',
         STATUS: 'status',
         TIME_SYNC: 'time_sync',
         TRADE_CLOSE: 'trade_close',

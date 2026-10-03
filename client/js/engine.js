@@ -73,6 +73,36 @@
         let packetQueue = [];
         window.CLIENT_READY = false;
 
+        // --- Connection loss / auto-reconnect (roadmap 7.7) ---
+        // Game state (player, mobs, auth token) is bound to this one socket, and
+        // the server keeps sessions in memory, so a dropped socket cannot be
+        // resumed in place. Instead: say so, poll until the server answers HTTP
+        // again, then reload into a clean title screen.
+        socket.addEventListener("close", () => {
+            if (window.__reconnecting) return;
+            window.__reconnecting = true;
+            const ov = document.createElement("div");
+            ov.id = "reconnect-overlay";
+            ov.setAttribute("role", "alert");
+            ov.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(8,10,18,0.88);backdrop-filter:blur(6px);color:#fff;font-family:'Outfit',sans-serif;text-align:center;";
+            ov.innerHTML = '<div style="font-size:40px;animation:pulse 1.5s infinite">📡</div>' +
+                '<div style="font-size:26px;font-weight:700;color:#fbbf24">Connection lost</div>' +
+                '<div id="reconnect-status" style="font-size:15px;color:#cbd5e1">Trying to reach the server…</div>';
+            document.body.appendChild(ov);
+            let attempts = 0;
+            const statusEl = ov.querySelector("#reconnect-status");
+            const poll = async () => {
+                attempts++;
+                try {
+                    const r = await fetch(window.location.pathname, { method: "HEAD", cache: "no-store" });
+                    if (r.ok) { statusEl.textContent = "Server is back — reloading…"; setTimeout(() => window.location.reload(), 400); return; }
+                } catch (e) { /* server still down */ }
+                statusEl.textContent = "Trying to reach the server… (attempt " + attempts + ")";
+                setTimeout(poll, Math.min(1500 + attempts * 500, 5000));
+            };
+            setTimeout(poll, 1000);
+        });
+
         socket.onmessage = (event) => {
             if (!window.CLIENT_READY) {
                 packetQueue.push(event);
@@ -164,15 +194,20 @@
 
                         const ctx = c.getContext('2d');
                         ctx.clearRect(0, 0, c.width, c.height);
-                        // Letterbox to the canvas: fit whole, centred, nearest-neighbour
-                        // so the pixel art stays hard rather than being smoothed.
-                        const scale = Math.min(c.width / img.width, c.height / img.height);
-                        const w = Math.max(1, Math.floor(img.width * scale));
-                        const h = Math.max(1, Math.floor(img.height * scale));
+                        ctx.imageSmoothingEnabled = false;
+
+                        // If it's a spritesheet, grab the first frame (width/3, height/4)
+                        let fw = img.width > 64 ? img.width / 3 : img.width;
+                        let fh = img.height > 64 ? img.height / 4 : img.height;
+                        
+                        const scale = Math.min(c.width / fw, c.height / fh);
+                        const w = Math.max(1, Math.floor(fw * scale));
+                        const h = Math.max(1, Math.floor(fh * scale));
                         const dx = Math.floor((c.width - w) / 2);
                         const dy = c.height - h;
-                        ctx.imageSmoothingEnabled = false;
-                        ctx.drawImage(img, dx, dy, w, h);
+                        
+                        // Draw just the top-left frame (facing down, idle)
+                        ctx.drawImage(img, 0, 0, fw, fh, dx, dy, w, h);
                     }
                     return pending;
                 };
@@ -267,8 +302,41 @@
                 if (!myGuild) { gList.innerHTML = "<em style='color:#666'>No Guild</em>"; }
                 else {
                     let h = "<b>" + escapeHtml(myGuild.name) + "</b><br/>Leader: " + escapeHtml(myGuild.leader) + "<br/>Members:<br/>";
-                    myGuild.members.forEach(m => h += "- " + escapeHtml(m) + "<br/>");
+                    myGuild.members.forEach(m => {
+                        let mName = typeof m === "string" ? m : m.name;
+                        let mRank = typeof m === "string" ? "member" : (m.rank || "member");
+                        let rankIcon = mName === myGuild.leader ? "👑" : (mRank === "officer" ? "⚔️" : "🛡️");
+                        h += "- " + rankIcon + " " + escapeHtml(mName) + "<br/>";
+                    });
                     gList.innerHTML = h;
+
+                    const bankGoldEl = document.getElementById("guild-bank-gold");
+                    if (bankGoldEl) bankGoldEl.innerText = (myGuild.bank || 0) + "G";
+
+                    const mgmtList = document.getElementById("guild-manage-members");
+                    if (mgmtList) {
+                        let mh = "";
+                        myGuild.members.forEach(m => {
+                            let mName = typeof m === "string" ? m : m.name;
+                            let mRank = typeof m === "string" ? "member" : (m.rank || "member");
+                            let rankIcon = mName === myGuild.leader ? "👑" : (mRank === "officer" ? "⚔️" : "🛡️");
+                            let btns = "";
+                            if (mName !== myGuild.leader) {
+                                // Safe JSON encoding for chat commands
+                                const promCmd = escapeHtml(JSON.stringify({action:'chat', text:'/guild promote ' + mName}));
+                                const demCmd = escapeHtml(JSON.stringify({action:'chat', text:'/guild demote ' + mName}));
+                                const kickCmd = escapeHtml(JSON.stringify({action:'chat', text:'/guild kick ' + mName}));
+                                btns = `<button onclick="window.ws.send(${promCmd})" style="background:#10b981; color:#fff; border:none; border-radius:3px; padding:2px 4px; font-size:9px; cursor:pointer;">Promote</button>
+                                        <button onclick="window.ws.send(${demCmd})" style="background:#f59e0b; color:#fff; border:none; border-radius:3px; padding:2px 4px; font-size:9px; cursor:pointer;">Demote</button>
+                                        <button onclick="window.ws.send(${kickCmd})" style="background:#ef4444; color:#fff; border:none; border-radius:3px; padding:2px 4px; font-size:9px; cursor:pointer;">Kick</button>`;
+                            }
+                            mh += `<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding:4px 0;">
+                                     <span style="font-size:12px; color:#e2e8f0;">${rankIcon} ${escapeHtml(mName)}</span>
+                                     <div style="display:flex; gap:4px;">${btns}</div>
+                                   </div>`;
+                        });
+                        mgmtList.innerHTML = mh;
+                    }
                 }
             }
             else if (data.action === "party_update" || data.action === "party_sync") {
@@ -363,7 +431,22 @@
                 else if (data.type === 'trap') { color = "rgba(100, 100, 100, 0.8)"; radius = 40; }
                 else if (data.type === 'heal') { color = "rgba(50, 255, 50, 0.6)"; radius = 40; }
                 else if (data.type === 'smite') { color = "rgba(255, 255, 100, 0.8)"; radius = 40; }
-                else if (data.type === 'meteor_strike' || data.type === 'holy_nova') {
+                
+                // Add particle burst for all standard spells
+                if (window.particleSetting !== false && typeof particles !== 'undefined') {
+                    for(let i=0; i<15; i++) {
+                        let angle = Math.random() * Math.PI * 2;
+                        let speed = 1 + Math.random() * 4;
+                        particles.push({ 
+                            x: data.x + 16, y: data.y + 16, 
+                            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, 
+                            life: 1.0, maxLife: 1.0, gravity: -0.05,
+                            color: color, size: Math.random() * 3 + 2 
+                        });
+                    }
+                }
+
+                if (data.type === 'meteor_strike' || data.type === 'holy_nova') {
                     // Epic AoE Spells
                     window.screenShake = 15; // Stage 8: Screen Shake
                     if (data.type === "meteor_strike") {
@@ -413,6 +496,12 @@
             else if (data.action === "ground_sync") { groundItemsLocal = data.items; }
             else if (data.action === "your_id") { myId = data.id; myName = data.name; window.myName = data.name; }
             else if (data.action === "force_position") { player.x = data.x; player.y = data.y; }
+            else if (data.action === "mob_forget") {
+                if (data.id && mobs[data.id]) {
+                    delete mobs[data.id];
+                }
+                if (data.id && currentTargetId === data.id) currentTargetId = null;
+            }
             else if (data.action === "mob_update") {
                 if (data.alive) { 
                     if(!mobs[data.id]) mobs[data.id] = { x: data.x, y: data.y, id: data.id, hp: data.hp, maxHp: data.maxHp, isElite: data.isElite, isBoss: data.isBoss, name: data.name, type: data.type, phase: data.phase || 1, renderX: data.x, renderY: data.y, dir: 0, moveFrame: 0 }; 
@@ -426,7 +515,20 @@
                         m.hp = data.hp; m.maxHp = data.maxHp; m.x = data.x; m.y = data.y; 
                     } 
                 }
-                else { delete mobs[data.id]; if (currentTargetId === data.id) currentTargetId = null; }
+                else { 
+                    if (mobs[data.id]) {
+                        // Death blood splatter explosion
+                        for(let i=0; i<15; i++) {
+                            particles.push({
+                                x: mobs[data.id].x + 16, y: mobs[data.id].y + 16,
+                                vx: (Math.random()-0.5)*8, vy: (Math.random()-0.5)*8 - 2,
+                                life: 1.0, color: "rgba(220, 20, 20, 0.9)", size: Math.random()*4 + 2, gravity: 0.1
+                            });
+                        }
+                    }
+                    delete mobs[data.id]; 
+                    if (currentTargetId === data.id) currentTargetId = null; 
+                }
             }
             else if (data.action === "phase_change") {
                 if (mobs[data.id]) mobs[data.id].phase = data.phase;
@@ -477,6 +579,29 @@
                 // Displaying a massive UI banner or shaking the screen
                 audio.spellBlast(); // Boom sound
                 addChat(Date.now(), "System", `⚠️ [GLOBAL ALERT] The terrifying ${data.name} has spawned!`);
+                
+                const bb = document.getElementById("boss-banner");
+                const bbN = document.getElementById("boss-banner-name");
+                if (bb && bbN) {
+                    bbN.innerText = data.name;
+                    bb.style.opacity = 1;
+                    bb.style.transform = "translate(-50%, -50%) scale(1)";
+                    
+                    // Screen shake
+                    const canvas = document.getElementById("gameCanvas");
+                    if (canvas) {
+                        canvas.style.transform = "translate(5px, 5px)";
+                        setTimeout(() => canvas.style.transform = "translate(-5px, -5px)", 50);
+                        setTimeout(() => canvas.style.transform = "translate(5px, -5px)", 100);
+                        setTimeout(() => canvas.style.transform = "translate(-5px, 5px)", 150);
+                        setTimeout(() => canvas.style.transform = "translate(0px, 0px)", 200);
+                    }
+                    
+                    setTimeout(() => {
+                        bb.style.opacity = 0;
+                        bb.style.transform = "translate(-50%, -50%) scale(0.5)";
+                    }, 5000);
+                }
             }
             else if (data.action === "auction_mailbox") {
                 if (data.gold > 0 || (data.items && data.items.length > 0)) {
@@ -647,6 +772,36 @@
                 else if (msg.includes("cannot") || msg.includes("Cannot") || msg.includes("must be near")) audio.error();
                 else if (msg.includes("Received:")) audio.loot();
             }
+            else if (data.action === "loot_rare") {
+                // The colour is interpolated into a style attribute below, so it is
+                // validated against a hex-triplet pattern rather than escaped.
+                // escapeHtml() is the wrong tool here: it would leave `"` and `;` -- the
+                // characters that actually matter in an attribute -- untouched, because
+                // those are legal HTML and it only escapes `&<>"'`. It does escape `"`,
+                // but a colour is not text, and the honest fix is to refuse anything that
+                // is not a colour at all. A packet field that reaches innerHTML must not
+                // be taken on trust even when the server is the one that set it.
+                const rarityColor = /^#[0-9a-fA-F]{6}$/.test(data.color || "")
+                    ? data.color
+                    : "#4da6ff";
+
+                // Generates a massive sparkle burst!
+                for(let i=0; i<30; i++) {
+                    particles.push({
+                        x: player.renderX + 16, y: player.renderY + 16,
+                        vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10 - 2,
+                        life: 1.0, color: rarityColor, size: Math.random()*4 + 2, gravity: 0.05
+                    });
+                }
+
+                // Add stylized message to chat
+                const itemName = escapeHtml(data.name);
+                const rarityLabel = escapeHtml(data.rarity.toUpperCase());
+                addLog(`<span style="color: ${rarityColor}; font-weight: bold; text-shadow: 0 0 5px ${rarityColor};">★ ${rarityLabel} DROP! You found ${itemName}! ★</span>`);
+
+                // Play level-up sound as fanfare
+                audio.levelUp();
+            }
             else if (data.action === "rate_limited") {
                 // The server is throttling this client. Shown as a normal log
                 // line so it reads as feedback rather than as a dropped packet,
@@ -665,7 +820,7 @@
                 let buyHtml = "";
                 for (let item in data.inventory) {
                     const price = data.inventory[item].price;
-                    buyHtml += "<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span>" + escapeHtml(item) + "</span><button onclick='shopBuy(\"" + escapeHtml(item) + "\")' style='background:#44aa44; border:none; color:white; padding:2px 5px; cursor:pointer'>" + price + "G</button></div>";
+                    buyHtml += "<div style='display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); padding:6px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.05);'><span>" + escapeHtml(item) + "</span><button onclick='shopBuy(\"" + escapeHtml(item) + "\")' style='background:#10b981; border:none; color:white; padding:4px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:12px; transition:background 0.2s;' onmouseover='this.style.background=\"#059669\"' onmouseout='this.style.background=\"#10b981\"'>" + price + " 💰</button></div>";
                 }
                 document.getElementById("shop-buy-list").innerHTML = buyHtml;
                 renderShopSellList();
@@ -698,6 +853,44 @@
             else if (data.action === "shop_sync") {
                 applyGold(data.gold);
                 renderShopSellList();
+            }
+            else if (data.action === "leaderboard_result") {
+                const lList = document.getElementById("leaderboard-ui-list");
+                if (lList) {
+                    if (!data.leaderboard || data.leaderboard.length === 0) {
+                        lList.innerHTML = "<em style='color:#666'>No rankings available.</em>";
+                    } else {
+                        lList.innerHTML = data.leaderboard.map((p, i) => {
+                            let rankIcon = (i === 0) ? "🥇" : (i === 1) ? "🥈" : (i === 2) ? "🥉" : `${i+1}.`;
+                            return `<div style="display:flex; justify-content:space-between; margin-bottom:6px; border-bottom:1px solid #334155; padding-bottom:4px; font-size:14px;">
+                                        <span><strong style="color:#f59e0b; margin-right:5px; width:20px; display:inline-block;">${rankIcon}</strong> <span style="color:#e2e8f0; font-weight:bold;">${escapeHtml(p.name)}</span></span>
+                                        <span style="color:#94a3b8; font-size:12px;">Lvl <span style="color:#fff; font-weight:bold;">${p.level}</span> ${escapeHtml(p.classType)}</span>
+                                    </div>`;
+                        }).join("");
+                    }
+                }
+            }
+            else if (data.action === "inspect_player_result") {
+                const p = data.player;
+                if (!p) return;
+                document.getElementById("overlay").style.display = "block";
+                document.getElementById("inspect-modal").style.display = "block";
+                document.getElementById("inspect-name").innerText = "🔍 " + escapeHtml(p.name);
+                document.getElementById("inspect-level-class").innerText = "Level " + p.level + " " + p.classType.charAt(0).toUpperCase() + p.classType.slice(1);
+                
+                const slots = ['helmet', 'amulet', 'weapon', 'shield', 'armor', 'legs', 'boots'];
+                slots.forEach(slot => {
+                    const el = document.getElementById("inspect-" + slot);
+                    if (el) {
+                        if (p.equipment && p.equipment[slot]) {
+                            el.innerText = p.equipment[slot];
+                            el.classList.add("filled");
+                        } else {
+                            el.innerText = slot.charAt(0).toUpperCase() + slot.slice(1);
+                            el.classList.remove("filled");
+                        }
+                    }
+                });
             }
         };
 
@@ -1000,7 +1193,7 @@
             // what the server expects to receive. Changing them is not a
             // refactor, it is a protocol change.
             if (e.key === "1") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 1 })); return; }
-            if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); return; }
+            if (e.key === "2") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 2 })); triggerCooldown('hotbar-slot-4', 2000); return; }
             if (e.key === "r" || e.key === "R") { socket.send(JSON.stringify({ action: "cast_spell", spellIndex: 3 })); return; }
             // Purify used to be wired to "1" as well, which made it unreachable:
             // the cast_spell line above returned first, so pressing 1 cast the
@@ -1008,6 +1201,9 @@
             // "Purify (Press '1')". The dead binding has been removed and
             // Purify now owns P, so the label tells the truth.
             if (e.key === "p" || e.key === "P") { castPurify(); return; }
+            // E is NOT bound to Evolve. An earlier hotbar pass did that and returned,
+            // which shadowed the E handler below (talk to NPC / loot corpse) so that
+            // neither could ever be reached from the keyboard. Evolve is click-only.
             if (e.key === "z" || e.key === "Z") { socket.send(JSON.stringify({ action: "toggle_mount" })); return; }
             if (e.key === "f" || e.key === "F") { socket.send(JSON.stringify({ action: "fish" })); return; }
             

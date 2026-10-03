@@ -62,6 +62,7 @@ const FRIENDS = require('./friends');
 const SOCIAL = require('./social');
 const GROUPING = require('./grouping');
 const COMBAT_ACTIONS = require('./combat_actions');
+const DODGE = require('./dodge');
 const INVENTORY = require('./inventory');
 
 // Per-class packet budgets. One limiter per class, each keying on player id, so
@@ -1384,7 +1385,15 @@ wss.on('connection', (ws) => {
                     skullExpiresAt: pData.skullExpiresAt || 0,
                     warmode: data.warmode === true,
                     targetId: null, lastAttackTime: 0, lastMoveTime: 0,
-                    poisonStacks: 0, lastPoisonTick: 0, bleedStacks: 0, lastBleedTick: 0, stunUntil: 0, persistenceDirty: false
+                    poisonStacks: 0, lastPoisonTick: 0, bleedStacks: 0, lastBleedTick: 0, stunUntil: 0,
+                    // Stamina and blocking (roadmap 5.3). Built here because this is the
+                    // login constructor: a field missing from it is undefined at runtime
+                    // no matter what any normaliser returns, and `undefined < 12` is
+                    // false, so a player who never regenerated stamina could never dodge
+                    // and would see no reason for it.
+                    stamina: DODGE.STAMINA_MAX, lastStaminaTick: now,
+                    blocking: false, dodgeReadyAt: 0,
+                    persistenceDirty: false
                 });
                 clearTimeout(loginReservationTimers.get(loginKey));
                 loginReservationTimers.delete(loginKey);
@@ -2285,9 +2294,20 @@ scheduleServerInterval(() => {
                 if (eq.shield && ITEMS.shields[eq.shield]) def += ITEMS.shields[eq.shield].def;
             }
 
-            const result = mobAttack(mob, closest, damageMultiplier, def); 
+            const result = mobAttack(mob, closest, damageMultiplier, def);
             if (result) {
-                broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y, text: `-${result.damage}`, color: '#ff4444' });
+                // A dodge prints DODGE and nothing else. Deliberately not a `-0`: a
+                // zero-damage number next to a dodge reads as a bug, and the client
+                // already renders floating combat text.
+                if (result.dodged) {
+                    broadcastToFloor(closest.z, { action: 'fct', x: closest.x + 16, y: closest.y, text: 'DODGE', color: '#88ccff' });
+                    sendTo(closest, { action: 'log', message: `💨 You dodged ${mob.name}'s attack!` });
+                } else {
+                    broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y, text: `-${result.damage}`, color: '#ff4444' });
+                    if (result.blocked) {
+                        broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: 'BLOCK', color: '#88ff88' });
+                    }
+                }
                 if (result.poisoned) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `POISON`, color: '#00ff00' });
                 if (result.bled) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `BLEED`, color: '#ff4444' });
                 if (result.stunned) broadcastToFloor(closest.z, { action: 'fct', x: closest.x+16, y: closest.y-20, text: `STUN`, color: '#ff88ff' });
@@ -2306,6 +2326,18 @@ scheduleServerInterval(() => {
     });
 
     players.forEach(p => {
+        // Stamina regen (roadmap 5.3). In the tick rather than the damage path, so it
+        // keeps running while nothing is being hit -- otherwise stamina would only
+        // recover during a fight and the mechanic would be unusable outside one.
+        if (now - (p.lastStaminaTick || 0) >= 1000) {
+            const gained = DODGE.regenStamina(p, now - (p.lastStaminaTick || now));
+            p.lastStaminaTick = now;
+            // Sent only when it actually changed, so a full-stamina player does not
+            // receive a status packet every second for nothing.
+            if (gained > 0) {
+                sendTo(p, { action: 'stamina', stamina: Math.floor(p.stamina), max: DODGE.STAMINA_MAX });
+            }
+        }
         if (p.poisonStacks > 0 && now - p.lastPoisonTick >= CFG.POISON_TICK_INTERVAL) {
             p.lastPoisonTick = now; p.hp -= p.poisonStacks * CFG.POISON_DMG_PER_STACK;
             broadcastToFloor(p.z, { action: 'fct', x: p.x+16, y: p.y, text: `-${p.poisonStacks * CFG.POISON_DMG_PER_STACK}`, color: '#00ff00' });

@@ -1,4 +1,5 @@
 const CFG = require('./config');
+const DODGE = require('./dodge');
 const { getZone, isWalkable } = require('./map');
 const MAP = require('./map');
 
@@ -227,9 +228,9 @@ function mobAttack(mob, player, damageMultiplier = 1.0, defense = 0) {
     const now = Date.now();
     const attackCooldown = mob.isElite ? CFG.MOB_ATTACK_COOLDOWN * 0.7 : CFG.MOB_ATTACK_COOLDOWN;
     if (now - (mob.lastAttackTime || 0) < attackCooldown) return null;
-    
+
     mob.lastAttackTime = now;
-    
+
     let damage = 5;
     if (mob.type === 'spider') damage = Math.floor(Math.random() * 5) + 5;
     if (mob.type === 'skeleton') damage = Math.floor(Math.random() * 6) + 6;
@@ -237,23 +238,43 @@ function mobAttack(mob, player, damageMultiplier = 1.0, defense = 0) {
     if (mob.type === 'minotaur') damage = Math.floor(Math.random() * 15) + 10;
     if (mob.type === 'bear') damage = Math.floor(Math.random() * 10) + 10;
     if (mob.type === 'yeti') damage = Math.floor(Math.random() * 18) + 12;
-    
+
     if (mob.isElite) damage = Math.floor(damage * 1.5);
-    
-    damage = Math.floor(damage * damageMultiplier); 
-    damage = Math.max(1, damage - defense); 
-    
+
+    damage = Math.floor(damage * damageMultiplier);
+
+    // Dodge and block (roadmap 5.3). One call, because the caller makes a single
+    // decision about this attack and two calls would let both fire on the same hit.
+    //
+    // Elites are harder to dodge, and the floor is a floor: the chance can reach 0 but
+    // never below it, so no attacker is guaranteed to hit.
+    const resolved = DODGE.resolveIncoming({
+        attacker: { dodgePenalty: mob.isElite ? 0.1 : 0 },
+        defender: player,
+        rawDamage: damage,
+        defense,
+        random: Math.random
+    });
+
+    // A dodge resolves the whole attack. Nothing below runs: no damage, and none of
+    // the on-hit effects, because the attack never connected. Applying poison to a
+    // player who was never touched would be a status effect with no cause.
+    if (resolved.dodged) {
+        return { damage: 0, dodged: true, blocked: false, poisoned: false, bled: false, stunned: false, staminaSpent: resolved.staminaSpent };
+    }
+
+    damage = resolved.damage;
     player.hp -= damage;
-    
+
     let poisoned = false, bled = false, stunned = false;
-    
+
     if (mob.type === 'spider' && Math.random() < CFG.POISON_CHANCE) { player.poisonStacks++; poisoned = true; }
     if ((mob.type === 'bandit' || mob.type === 'minotaur') && Math.random() < CFG.BLEED_CHANCE) { player.bleedStacks++; bled = true; }
-    if ((mob.type === 'bear' || mob.type === 'yeti') && Math.random() < CFG.STUN_CHANCE) { 
-        player.stunUntil = now + CFG.STUN_DURATION; stunned = true; 
+    if ((mob.type === 'bear' || mob.type === 'yeti') && Math.random() < CFG.STUN_CHANCE) {
+        player.stunUntil = now + CFG.STUN_DURATION; stunned = true;
     }
-    
-    return { damage, poisoned, bled, stunned };
+
+    return { damage, dodged: false, blocked: resolved.blocked, poisoned, bled, stunned, staminaSpent: resolved.staminaSpent };
 }
 
 module.exports = {

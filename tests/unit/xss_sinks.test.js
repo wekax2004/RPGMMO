@@ -262,6 +262,72 @@ function trustedBindings(src) {
         const assignments = [...src.matchAll(new RegExp(`\\b${name}\\s*=(?!=)`, 'g'))].length;
         if (assignments === 1) safe.add(name);
     }
+
+    // The rare-drop colour is validated by a SHAPE TEST against the incoming field:
+//
+//     const rarityColor = /^#[0-9a-fA-F]{6}$/.test(data.color || "") ? data.color : "#4da6ff";
+//
+// The validated arm is `data.color` itself, deliberately: the point of the test is
+// that the value has already been proven to be a hex triplet by the time the ternary
+// picks it. So the earlier draft's rule -- "a bare identifier in the validated arm is
+// therefore unsafe" -- is exactly backwards, and it rejects the one correct pattern
+// while accepting none of the wrong ones.
+//
+// What makes this safe is the SHAPE of the test, not the name of the arm. So the rule
+// is deliberately narrow and explicit rather than inferred:
+//
+//   - the condition must be a regex `.test()` whose pattern can only match the value
+//     it is given -- checked by requiring the pattern to be a hex-triplet matcher,
+//     since that is the only shape used here and a general regex could be
+//     `/.*/`, which validates nothing;
+//   - BOTH arms must be literals or a validated field reference, and the field must
+//     be the exact expression the test consumed;
+//   - the name must never be reassigned.
+//
+// Anything else falls through to the general rule and is reported. That is the
+// direction to err in: an unnecessary finding costs a comment, and a missing one
+// costs a stored XSS.
+//
+for (const m of src.matchAll(
+    /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\/(\^#\[0-9a-fA-F\]\{6\}\$)\/\.test\(([^)\n]*)\)\s*\?\s*([\s\S]*?)\s*:\s*([\s\S]*?);/g)) {
+    const [, name, , testedExpr, yesArm, noArm] = m;
+    const isHexTriplet = /^#[0-9a-fA-F]{6}$/;
+    const isPinnedLiteral = (s) => /^['"`][A-Za-z0-9#(),.\s_-]*['"`]$/.test(s.trim());
+    const isValidatedField = (s) => {
+        const t = s.trim().replace(/^\(?\s*/, '').replace(/^(data|packet)\./, '$1.');
+        // The arm must be the same field the test consumed, possibly with a `|| ""`.
+        const norm = (v) => v.replace(/\s*\|\|\s*""/, '').trim();
+        return norm(t) === norm(testedExpr.trim());
+    };
+    if (!isHexTriplet.test('#000000')) continue;   // the pattern is a hex matcher
+    if (!(isValidatedField(yesArm) || isPinnedLiteral(yesArm))) continue;
+    if (!isPinnedLiteral(noArm)) continue;
+    const assignments = [...src.matchAll(new RegExp(`\\b${name}\\s*=(?!=)`, 'g'))].length;
+    if (assignments === 1) safe.add(name);
+}
+    //
+    // `escapeHtml` is the wrong tool on a colour: it escapes `&<>"'`, which leaves the
+    // `;` and the rest of the declaration intact, so an "escaped" colour is still a
+    // style-attribute injection. The right answer is to accept only a hex triplet and
+    // fall back otherwise -- and then to say so here, because this guard reads source
+    // text and cannot follow the data flow.
+    //
+    // Deliberately narrow. A ternary whose "validated" arm is a bare identifier is NOT
+    // trusted even though the condition is a shape test, because
+    // `/re/.test(v) ? v : "#fff"` yields `v` itself whenever the test passes -- which is
+    // the vulnerability, not a mitigation of it. Both arms must be literals.
+    for (const m of src.matchAll(
+        /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\/\^[^\n]*?\/[^\n]*?\.test\([^)\n]*\)\s*\?\s*([\s\S]*?)\s*:\s*([\s\S]*?);/g)) {
+        const [, name, yesArm, noArm] = m;
+        const isPinnedLiteral = (s) => /^['"`][A-Za-z0-9#(),.\s_-]*['"`]$/.test(s.trim());
+        // The validated arm must not be a bare name: that is the unvalidated value
+        // dressed up as a validated one.
+        const validatedArm = yesArm.trim();
+        if (/^[A-Za-z_$][\w$.[\]]*$/.test(validatedArm)) continue;
+        if (!isPinnedLiteral(validatedArm) || !isPinnedLiteral(noArm)) continue;
+        const assignments = [...src.matchAll(new RegExp(`\\b${name}\\s*=(?!=)`, 'g'))].length;
+        if (assignments === 1) safe.add(name);
+    }
     return safe;
 }
 

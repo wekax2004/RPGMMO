@@ -123,6 +123,28 @@ function handleCombatActions(ctx) {
             return true;
         }
 
+        // --- blocking (roadmap 5.3) -------------------------------------------
+        case 'toggle_block': {
+            if (player.blocking) {
+                player.blocking = false;
+                sendTo(player, { action: 'block_changed', blocking: false });
+                return true;
+            }
+            // Every refusal here has a sentence, because a silently-ignored block
+            // key is indistinguishable from a broken one.
+            if (player.stunUntil > Date.now()) {
+                sendProtocolError(player, 'You cannot block while stunned.');
+                return true;
+            }
+            if (!DODGE.canBlock(player)) {
+                sendProtocolError(player, 'You need a shield in your shield slot to block.');
+                return true;
+            }
+            player.blocking = true;
+            sendTo(player, { action: 'block_changed', blocking: true });
+            return true;
+        }
+
         default:
             return false;
     }
@@ -138,7 +160,8 @@ const COMBAT_ACTION_NAMES = new Set([
     'cast_heal',
     'cast_purify',
     'cast_spell',
-    'interact_corpse'
+    'interact_corpse',
+    'toggle_block'
 ]);
 
 module.exports = { handleCombatActions, COMBAT_ACTION_NAMES };
