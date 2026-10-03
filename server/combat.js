@@ -266,6 +266,7 @@ function createCombat(deps) {
         if (now - (player.lastEpicSpellTime || 0) < CFG.EPIC_SPELL_COOLDOWN_MS) {
             const wait = Math.ceil((CFG.EPIC_SPELL_COOLDOWN_MS - (now - (player.lastEpicSpellTime || 0))) / 1000);
             sendTo(player, { action: 'fct', x: player.x, y: player.y, text: `${wait}s`, color: '#888' });
+            sendSpellCooldown(player, 3, (player.lastEpicSpellTime || 0) + CFG.EPIC_SPELL_COOLDOWN_MS);
             return null;
         }
         if (player.mana < CFG.EPIC_SPELL_MANA_COST) {
@@ -274,6 +275,8 @@ function createCombat(deps) {
         }
         player.mana -= CFG.EPIC_SPELL_MANA_COST;
         player.lastEpicSpellTime = now;
+        // Index 3 is the epic slot on both classes that have one; see castSpell.
+        sendSpellCooldown(player, 3, now + CFG.EPIC_SPELL_COOLDOWN_MS);
         trainSpell(player);
         const result = effect(player);
         if (typeof sendPlayerStatus === 'function') sendPlayerStatus(player);
@@ -349,6 +352,31 @@ function createCombat(deps) {
 
     // Warrior: Cleave / Charge. Mage: Fireball / Frost Nova.
     // Ranger: Multishot / Trap. Healer: Flash Heal / Holy Smite.
+    /**
+     * Tell the client when a spell slot will next be usable (roadmap 3.5).
+     *
+     * Sent on a successful cast AND on a cooldown refusal, because the refusal is
+     * the case that matters. A basic spell on cooldown used to return with no packet
+     * of any kind, so a player pressing the key saw nothing happen at all -- no
+     * message, no greyed button, nothing to tell them the spell exists. That is the
+     * same failure shape as a silently-ignored dodge input: the mechanic works, and
+     * the player has no way to learn that it does.
+     *
+     * `readyAt` is an absolute timestamp rather than a remaining duration so the
+     * client can render a countdown that stays correct across a dropped or late
+     * packet, instead of restarting a timer every time one arrives.
+     */
+    function sendSpellCooldown(player, spellIndex, readyAt) {
+        sendTo(player, {
+            action: 'spell_cooldown',
+            spellIndex: Number(spellIndex),
+            readyAt,
+            remainingMs: Math.max(0, readyAt - Date.now())
+        });
+    }
+
+    const BASIC_SPELL_COOLDOWN_MS = 1000;
+
     function castSpell(player, spellId) {
         const now = Date.now();
 
@@ -363,8 +391,13 @@ function createCombat(deps) {
             return null;
         }
 
-        if (now - (player.lastSpellTime || 0) < 1000) return; // 1 second cooldown
-        
+        // The refusal now speaks. Previously `return;` with nothing sent.
+        const sinceLast = now - (player.lastSpellTime || 0);
+        if (sinceLast < BASIC_SPELL_COOLDOWN_MS) {
+            sendSpellCooldown(player, spellId, (player.lastSpellTime || 0) + BASIC_SPELL_COOLDOWN_MS);
+            return;
+        }
+
         const cost = 20;
         if (player.mana < cost) {
             sendTo(player, { action: 'fct', x: player.x, y: player.y, text: 'OOM', color: '#888' });
@@ -372,6 +405,7 @@ function createCombat(deps) {
         }
         player.mana -= cost;
         player.lastSpellTime = now;
+        sendSpellCooldown(player, spellId, now + BASIC_SPELL_COOLDOWN_MS);
 
         // Magic XP is earned by the spell RESOLVING, not by pressing the
         // button. Awarding on every cast let a player stand still in the safe
