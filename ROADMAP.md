@@ -225,52 +225,42 @@ Transitions are derived in `map.js placeTraversalTiles()` by pairing adjacent fl
 It reads like it controls how a floor is entered, and anyone trusting it will be
 wrong. Either implement it or delete it.
 
-**AC5 (browser descent) currently fails, and the cause is a fountain - not the CSS.**
-An earlier version of this entry blamed the frontend session's responsive-layout CSS.
-**That was wrong**, and the correction is worth keeping because the CSS theory was
-stated twice with confidence before it was ever tested.
+**A fountain buried the descent ladder, and it is fixed. Kept because the diagnosis
+was wrong twice before it was right.**
 
-The real cause is an uncommitted `server/map.js` change that builds a starting town,
-which places water tiles at (288,288), (320,288), (288,320) and (320,320):
-```js
-obstacles.add(`288,288`); obstacleData.push({x: 288, y: 288, type: 'water'});
-```
-`CFG.LADDER_X` and `CFG.LADDER_Y` are both 288, so the town fountain lands exactly on
-the surface ladder. `MAP.isWalkable(288,288,0)` returns false, `getFloor(0).obstacles`
-contains the tile, and the descent cannot be triggered at all. Measured, all three
-consequences:
-```
-isWalkable(ladder)     false        <- the ladder is an obstacle
-isWalkable(320,320)    false        <- spawn point is inside the fountain too
-hasWaterNear(spawn,128) 3           <- so the spawn point is fishable
-```
-The third line is why `tests/unit/auction_mount_fish.test.js:397` fails ("spawn must
-not be fishable") and the first two are why `tests/unit/traversal.test.js:47` and
-`:125` fail. The `zlevels` mutation harness aborts outright for the same reason: it
-refuses to report "caught" against a red baseline.
+This entry originally blamed the frontend session's responsive-layout CSS for the
+AC5 browser-descent failure. **That was wrong.** The CSS theory was stated with
+confidence, twice, and was never tested.
 
-Proof it is the only cause: with `server/map.js` reverted and nothing else touched,
-the full unit suite is 340/340 stable over three consecutive runs and the `zlevels`
-harness reports 21/21. With the fountain present, the same tree is 337/340 and the
-failing three are exactly those three assertions.
-
-The fix is not mine to choose - where the town goes is a design decision. Two options:
-move the fountain off (288,288), or call `placeTraversalTiles()` *after* the town is
-built so transitions can clear their own tile. The second is the more robust one,
-because it makes any future decorative build unable to bury a ladder.
-
-**The browser suite runs again.** `client/js/renderer.js` used to throw a
-`SyntaxError: Identifier 'nowTime' has already been declared` (a `const` against a
-`let`), which made every module importing it fail to load. The frontend session fixed
-it; `node --check` passes and there is now a single `nowTime` at L382. AC5 therefore
-fails for the fountain reason above and nothing else, which the run confirms directly:
+The real cause was an uncommitted `server/map.js` change building a starting town,
+which put water tiles at (288,288), (320,288), (288,320) and (320,320). `CFG.LADDER_X`
+and `CFG.LADDER_Y` are both **288**, so the fountain landed exactly on the surface
+ladder, and (320,320) is the spawn point. Measured consequences at the time:
 
 ```
-✓ the client knows the ladder is a way down ([{"x":288,"y":288,"type":"ladder","to":-1}])
-✗ the second watcher walked down to the dungeon too (blocked at 320,320,z=0)
+isWalkable(288,288,0)   false     <- the ladder was an obstacle, descent impossible
+isWalkable(320,320,0)   false     <- players spawned inside the fountain
+hasWaterNear(320,320,32) 4        <- and the spawn point was fishable
 ```
 
-The client is told the ladder exists and can see it in its terrain, but cannot walk
-onto it, because the tile is an obstacle. The second watcher is a second, stronger
-symptom: it spawns at (320,320), which is also a fountain tile, and cannot move off
-it at all. A player logging in right now lands inside an obstacle.
+That is what broke `traversal.test.js:47` and `:125`, `auction_mount_fish.test.js:397`,
+and it aborted the `zlevels` mutation harness outright, which refuses to report
+"caught" against a red baseline. Proof it was the only cause: with `map.js` reverted
+and nothing else touched, the unit suite was 340/340 stable over three consecutive
+runs and `zlevels` reported 21/21.
+
+The frontend session moved the fountain to (384,384)-(416,416), off both the ladder
+and the spawn. Current state, all measured:
+
+```
+isWalkable(288,288,0)   true
+isWalkable(320,320,0)   true
+unit suite              340/340
+AC5 browser descent     34/34 PASS
+```
+
+The generic trap is still worth naming, because the next decorative build can hit it
+again: anything that adds to `floor.obstacles` after `placeTraversalTiles()` runs can
+bury a transition. `placeTransition()` only manages `obstacleData`; it never clears a
+tile from `obstacles`. A town builder that runs last and does not respect transitions
+will silently make the ladder unreachable, and no type check or syntax error says so.
