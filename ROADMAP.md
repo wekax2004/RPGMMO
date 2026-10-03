@@ -102,7 +102,7 @@ Last reviewed: 2026-10-02, at commit 074adf7 plus the server.js extraction.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 lines → 2605 (testing.js) → **2853** (AoI + mobs landed since): social handlers extracted to `server/social.js`, verified by `tests/bots/social_probe.js` (10 checks). Remaining: `testing.js` extension, `combat.js` (~260), `world.js` (~200, tick/traversal — most invariant-dense, may be deferred). `server.js` stays the entry point owning sockets, tick and player state; dependencies reach it via a `ctx` object rather than imports, so nothing mutable is exported. |
+| 7.1 | Split `server.js` | 🔶 | **In progress.** 2695 → 2605 (testing.js) → 2853 → **2679**. Done: `testing.js`, `social.js` (8 actions, `social_probe.js` 10 checks), `grouping.js` (15 party+trade actions, `grouping_probe.js` 30 checks). Both extractions were snapshotted over real sockets before *and* after, and the two runs' verdicts were diffed — a source-level test can stay green while the packets change. Remaining: `combat.js` (~260), `world.js` (~200, tick/traversal — most invariant-dense, may be deferred). `server.js` stays the entry point owning sockets, tick and player state; dependencies reach it via a `ctx` object rather than imports, so nothing mutable is exported. |
 | 7.2 | Spatial AoI | ✅ | **Players and mobs.** Players: `server/aoi.js`, radius 1000 = the minimap's own `MINIMAP_RADIUS`, so nothing visible changes. Measured over real sockets: **47,850 vs 93,480 bytes**, 49% less. Mobs: **SHIPPED OFF** — see below. |
 | 7.3 | Rate limiting beyond auth | ✅ | `server/ratelimit.js`, 7 budget classes, Ollama bounded. 14 mutations + 6 wiring mutations. |
 | 7.4 | `ui.js` XSS audit | ✅ | Found a stored XSS in the auction renderer. `xss_sinks` (5) + `chat_render` (14), 16 mutations. |
@@ -224,6 +224,26 @@ a 16x16 room. Difficulty rises with `tier` but density does not.
 Transitions are derived in `map.js placeTraversalTiles()` by pairing adjacent floors.
 It reads like it controls how a floor is entered, and anyone trusting it will be
 wrong. Either implement it or delete it.
+
+**Three probes have now each failed first for a reason that was the probe's fault,
+and the pattern is worth recording.** A test written to compare a "before" and an
+"after" run is read hardest when it disagrees, and the tempting move is to loosen the
+check until it agrees. All three of these were the check being wrong:
+
+- **Party chat arrives as `action:'chat'`, not `'log'`.** `grouping_probe.js` watched
+  only `'log'` and reported that a party message had not been delivered. It had.
+- **The trade snapshot is per-viewer.** `myOffer` means *my* offer from the
+  *recipient's* side, so Bob's copy of Alice's action shows Bob's empty offer and
+  Alice's item in `theirOffer`. The probe read Bob's packet and concluded the handler
+  staged nothing. It had staged it correctly, in the other field.
+- **An allowlist-style premise about a refusal.** The non-participant cancel reused the
+  id of a trade that had already been cancelled, so there was nothing to refuse and the
+  silence read as a missing participant guard.
+
+The middle one is the same trap as the friends `persistPlayer` mutation that survived
+twice in item 1: **reading a field without reading whose field it is.** All three were
+fixed by correcting the check, not by relaxing it. A snapshot that has to be loosened
+to agree with the thing it is snapshotting is no longer a snapshot.
 
 **A fountain buried the descent ladder, and it is fixed. Kept because the diagnosis
 was wrong twice before it was right.**
